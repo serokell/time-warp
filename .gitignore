@@ -1,0 +1,24 @@
+.stack-work
+*#
+*~
+#*
+TAGS
+stats
+wallet-db*
+bank-db/
+mintette-db/
+contacts-db/
+notary-db/
+gui-db/
+tmp/
+rscoin-deploy*/
+explorer-db/
+flycheck_*
+
+# heap dumps
+*.hp
+*.ps
+*.aux
+
+# MAC OS X
+.DS_Store
