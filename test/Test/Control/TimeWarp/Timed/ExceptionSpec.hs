@@ -5,32 +5,28 @@ module Test.Control.TimeWarp.Timed.ExceptionSpec
        ( spec
        ) where
 
-import           Control.Concurrent.STM      (atomically)
-import           Control.Concurrent.STM.TVar (TVar, modifyTVar, newTVarIO,
-                                              readTVarIO)
-import           Control.Exception.Base      (ArithException (Overflow),
-                                              AsyncException (ThreadKilled),
-                                              SomeException)
-import           Control.Monad.Catch         (catch, catchAll, throwM)
-import           Control.Monad.IO.Class      (liftIO)
-import           Control.Monad.Trans         (MonadIO)
-import           Test.Hspec                  (Spec, before, describe)
-import           Test.Hspec.QuickCheck       (prop)
-import           Test.QuickCheck             (NonNegative (..), Property)
-import           Test.QuickCheck.Monadic     (monadicIO)
-import           Test.QuickCheck.Property    (Result (reason), failed,
-                                              ioProperty, succeeded)
+import           Control.Concurrent.STM       (atomically)
+import           Control.Concurrent.STM.TVar  (TVar, modifyTVar, newTVarIO,
+                                               readTVarIO)
+import           Control.Exception.Base       (ArithException (Overflow),
+                                               AsyncException (ThreadKilled),
+                                               SomeException)
+import           Control.Monad.Catch          (catch, catchAll, throwM)
+import           Control.Monad.IO.Class       (liftIO)
+import           Control.Monad.Trans          (MonadIO)
+import           Test.Hspec                   (Spec, before, describe)
+import           Test.Hspec.QuickCheck        (prop)
+import           Test.QuickCheck              (NonNegative (..), Property)
+import           Test.QuickCheck.Monadic      (monadicIO)
+import           Test.QuickCheck.Property     (Result (reason), failed,
+                                               ioProperty, succeeded)
 
-import           Control.TimeWarp.Logging    (Severity (Error),
-                                              WithNamedLogger (getLoggerName),
-                                              initLogging)
-import           Control.TimeWarp.Timed      (Microsecond, TimedT, after, for,
-                                              fork_, invoke, runTimedT, sec,
-                                              wait)
+import           Control.TimeWarp.Logging     (Severity (Error), initLogging)
+import           Control.TimeWarp.Timed       (Microsecond, TimedT, after, for,
+                                               fork_, invoke, runTimedT, sec,
+                                               wait)
 
-
-instance WithNamedLogger IO where
-    getLoggerName = pure "dunno"
+import           Test.Control.TimeWarp.Common ()
 
 spec :: Spec
 spec =
