@@ -84,8 +84,11 @@ library
 test-suite time-warp-test
   main-is:             Test.hs
   other-modules:       Test.Control.TimeWarp.Rpc.MonadRpcSpec
+
                      , Test.Control.TimeWarp.Timed.ExceptionSpec
                      , Test.Control.TimeWarp.Timed.MonadTimedSpec
+
+                     , Test.Control.TimeWarp.Common
 
                      , Spec
   type:                exitcode-stdio-1.0

@@ -12,36 +12,35 @@ module Test.Control.TimeWarp.Timed.MonadTimedSpec
        , timeoutProp -- workaround warning, remove after it's used
        ) where
 
-import           Control.Concurrent.MVar     (newEmptyMVar, putMVar, takeMVar)
-import           Control.Concurrent.STM      (atomically)
-import           Control.Concurrent.STM.TVar (newTVarIO, readTVarIO, writeTVar)
-import           Control.Exception.Base      (Exception, SomeException)
-import           Control.Monad               (void)
-import           Control.Monad.Catch         (MonadCatch, catch, catchAll,
-                                              handleAll, throwM)
-import           Control.Monad.State         (StateT, execStateT, modify, put)
-import           Control.Monad.Trans         (MonadIO, liftIO)
-import           Data.Typeable               (Typeable)
-import           Numeric.Natural             (Natural)
-import           Test.Hspec                  (Spec, describe)
-import           Test.Hspec.QuickCheck       (prop)
-import           Test.QuickCheck             (NonNegative (..), Property,
-                                              counterexample, ioProperty, (===))
-import           Test.QuickCheck.Function    (Fun, apply)
-import           Test.QuickCheck.Monadic     (PropertyM, assert, monadic,
-                                              monitor, run)
-import           Test.QuickCheck.Poly        (A)
+import           Control.Concurrent.MVar      (newEmptyMVar, putMVar, takeMVar)
+import           Control.Concurrent.STM       (atomically)
+import           Control.Concurrent.STM.TVar  (newTVarIO, readTVarIO, writeTVar)
+import           Control.Exception.Base       (Exception, SomeException)
+import           Control.Monad                (void)
+import           Control.Monad.Catch          (MonadCatch, catch, catchAll,
+                                               handleAll, throwM)
+import           Control.Monad.State          (StateT, execStateT, modify, put)
+import           Control.Monad.Trans          (MonadIO, liftIO)
+import           Data.Typeable                (Typeable)
+import           Numeric.Natural              (Natural)
+import           Test.Hspec                   (Spec, describe)
+import           Test.Hspec.QuickCheck        (prop)
+import           Test.QuickCheck              (NonNegative (..), Property,
+                                               counterexample, ioProperty,
+                                               (===))
+import           Test.QuickCheck.Function     (Fun, apply)
+import           Test.QuickCheck.Monadic      (PropertyM, assert, monadic,
+                                               monitor, run)
+import           Test.QuickCheck.Poly         (A)
 
-import           Control.TimeWarp.Logging    (WithNamedLogger (getLoggerName))
-import           Control.TimeWarp.Timed      (Microsecond, MonadTimed (..),
-                                              MonadTimedError, RelativeToNow,
-                                              TimedIO, TimedT, TimedT, after,
-                                              for, fork_, invoke, mcs, now,
-                                              runTimedIO, runTimedT, schedule,
-                                              sec)
+import           Control.TimeWarp.Timed       (Microsecond, MonadTimed (..),
+                                               MonadTimedError, RelativeToNow,
+                                               TimedIO, TimedT, TimedT, after,
+                                               for, fork_, invoke, mcs, now,
+                                               runTimedIO, runTimedT, schedule,
+                                               sec)
 
-instance WithNamedLogger IO where
-    getLoggerName = pure "dunno"
+import           Test.Control.TimeWarp.Common ()
 
 spec :: Spec
 spec =

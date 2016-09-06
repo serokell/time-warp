@@ -6,25 +6,22 @@ module Test.Control.TimeWarp.Rpc.MonadRpcSpec
        ( spec
        ) where
 
-import           Control.Monad.State        (StateT, execStateT, modify)
-import           Network.MessagePack.Server (ServerT)
-import           Test.Hspec                 (Spec, describe, runIO)
-import           Test.Hspec.QuickCheck      (prop)
-import           Test.QuickCheck            (Property, Testable (property),
-                                             ioProperty)
-import           Test.QuickCheck.Monadic    (PropertyM, assert, monadic, run)
+import           Control.Monad.State          (StateT, execStateT, modify)
+import           Network.MessagePack.Server   (ServerT)
+import           Test.Hspec                   (Spec, describe, runIO)
+import           Test.Hspec.QuickCheck        (prop)
+import           Test.QuickCheck              (Property, Testable (property),
+                                               ioProperty)
+import           Test.QuickCheck.Monadic      (PropertyM, assert, monadic, run)
 
-import           Control.TimeWarp.Logging   (WithNamedLogger (getLoggerName))
-import           Control.TimeWarp.Rpc       (Client (..), Host, MonadRpc (..),
-                                             MsgPackRpc (..), NetworkAddress,
-                                             Port, PureRpc, call, method,
-                                             runMsgPackRpc, runPureRpc)
-import           Control.TimeWarp.Timed     (for, fork, fork_, killThread, ms,
-                                             runTimedIO, wait)
+import           Control.TimeWarp.Rpc         (Client (..), Host, MonadRpc (..),
+                                               MsgPackRpc (..), NetworkAddress,
+                                               Port, PureRpc, call, method,
+                                               runMsgPackRpc, runPureRpc)
+import           Control.TimeWarp.Timed       (for, fork, fork_, killThread, ms,
+                                               runTimedIO, wait)
 
--- TODO: copy-pasted :(
-instance WithNamedLogger IO where
-    getLoggerName = pure "MonadRpcSpec tests"
+import           Test.Control.TimeWarp.Common ()
 
 spec :: Spec
 spec =
