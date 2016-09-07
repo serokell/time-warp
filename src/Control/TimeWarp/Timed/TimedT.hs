@@ -3,6 +3,7 @@
 {-# LANGUAGE MultiParamTypeClasses     #-}
 {-# LANGUAGE RankNTypes                #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
+{-# LANGUAGE StandaloneDeriving        #-}
 {-# LANGUAGE TemplateHaskell           #-}
 {-# LANGUAGE UndecidableInstances      #-}
 {-# OPTIONS_GHC -fno-cse #-}
@@ -123,8 +124,7 @@ newtype Core m a = Core
 instance MonadTrans Core where
     lift = Core . lift
 
-instance (Monad m, WithNamedLogger m) => WithNamedLogger (Core m) where
-    getLoggerName = lift getLoggerName
+deriving instance (Monad m, WithNamedLogger m) => WithNamedLogger (Core m)
 
 instance MonadState s m => MonadState s (Core m) where
     get = lift get

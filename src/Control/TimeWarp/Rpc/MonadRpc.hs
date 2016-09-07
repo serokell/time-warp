@@ -41,7 +41,8 @@ import           Data.Time.Units            (TimeUnit, convertUnit)
 import qualified Network.MessagePack.Client as C
 import qualified Network.MessagePack.Server as S
 
-import           Control.TimeWarp.Logging   (WithNamedLogger (getLoggerName))
+import           Control.TimeWarp.Logging   (WithNamedLogger (getLoggerName,
+                                             changeLoggerName))
 import           Control.TimeWarp.Timed     (MonadTimed (timeout))
 
 type Port = Int
@@ -51,6 +52,8 @@ type NetworkAddress = (Host, Port)
 
 instance (Monad m, WithNamedLogger m) => WithNamedLogger (S.ServerT m) where
     getLoggerName = lift getLoggerName
+
+    changeLoggerName name = S.ServerT . changeLoggerName name . S.runServerT
 
 -- | Defines protocol of RPC layer
 class MonadThrow r => MonadRpc r where
