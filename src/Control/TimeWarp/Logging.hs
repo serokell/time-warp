@@ -64,6 +64,13 @@ newtype LoggerName = LoggerName
     { loggerName :: String
     } deriving (Show, IsString)
 
+instance Monoid LoggerName where
+    mempty  = ""
+ 
+    base `mappend` suffix
+        | null base = suffix
+        | otherwise = base + "-" + suffix
+
 convertSeverity :: Severity -> Priority
 convertSeverity Debug   = DEBUG
 convertSeverity Info    = INFO
