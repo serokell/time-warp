@@ -3,6 +3,7 @@
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE StandaloneDeriving    #-}
 {-# LANGUAGE ViewPatterns          #-}
 
 -- | This module contains MonadRpc which abstracts over RPC communication.
@@ -42,7 +43,7 @@ import qualified Network.MessagePack.Client as C
 import qualified Network.MessagePack.Server as S
 
 import           Control.TimeWarp.Logging   (WithNamedLogger (getLoggerName,
-                                             changeLoggerName))
+                                             modifyLoggerName))
 import           Control.TimeWarp.Timed     (MonadTimed (timeout))
 
 type Port = Int
@@ -50,10 +51,10 @@ type Host = ByteString
 type NetworkAddress = (Host, Port)
 
 
-instance (Monad m, WithNamedLogger m) => WithNamedLogger (S.ServerT m) where
-    getLoggerName = lift getLoggerName
+deriving instance (Monad m, WithNamedLogger m) => WithNamedLogger (S.ServerT m)
+    -- getLoggerName = lift getLoggerName
 
-    changeLoggerName name = S.ServerT . changeLoggerName name . S.runServerT
+    -- modifyLoggerName how = S.ServerT . modifyLoggerName how . S.runServerT
 
 -- | Defines protocol of RPC layer
 class MonadThrow r => MonadRpc r where

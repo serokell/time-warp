@@ -18,6 +18,7 @@ module Control.TimeWarp.Logging
 
          -- * Logging functions
        , WithNamedLogger (..)
+       , setLoggerName
        , logDebug
        , logError
        , logInfo
@@ -109,33 +110,36 @@ colorizer pr s = before ++ s ++ after
 class WithNamedLogger m where
     getLoggerName :: m LoggerName
 
-    changeLoggerName :: LoggerName -> m a -> m a
+    modifyLoggerName :: (LoggerName -> LoggerName) -> m a -> m a
+
+setLoggerName :: WithNamedLogger m => LoggerName -> m a -> m a
+setLoggerName = modifyLoggerName . const
 
 instance (Monad m, WithNamedLogger m) =>
          WithNamedLogger (ReaderT a m) where
     getLoggerName = lift getLoggerName
     
-    changeLoggerName name m =
-        ask >>= lift . changeLoggerName name . runReaderT m 
+    modifyLoggerName how m =
+        ask >>= lift . modifyLoggerName how . runReaderT m
 
 instance (Monad m, WithNamedLogger m) =>
          WithNamedLogger (StateT a m) where
     getLoggerName = lift getLoggerName
 
-    changeLoggerName name m =
-        get >>= lift . changeLoggerName name . evalStateT m
+    modifyLoggerName how m =
+        get >>= lift . modifyLoggerName how . evalStateT m
 
 instance (Monad m, WithNamedLogger m) =>
          WithNamedLogger (ExceptT e m) where
     getLoggerName = lift getLoggerName
 
-    changeLoggerName name = ExceptT . changeLoggerName name . runExceptT
+    modifyLoggerName how = ExceptT . modifyLoggerName how . runExceptT
 
 instance {-# OVERLAPPABLE #-} MonadReader LoggerName m =>
          WithNamedLogger m where
     getLoggerName = ask
 
-    changeLoggerName name = local $ const name
+    modifyLoggerName = local
 
 logDebug :: (WithNamedLogger m, MonadIO m)
          => T.Text -> m ()
