@@ -25,9 +25,11 @@ module Control.TimeWarp.Logging
        , logWarning
        ) where
 
-import           Control.Monad.Except      (ExceptT)
-import           Control.Monad.Reader      (MonadReader (ask), ReaderT)
-import           Control.Monad.State       (StateT)
+import           Control.Monad.Except      (ExceptT (..), runExceptT)
+import           Control.Monad.Reader      (MonadReader (ask, local), ReaderT,
+                                            runReaderT)
+import           Control.Monad.State       (MonadState (get), StateT,
+                                            evalStateT)
 import           Control.Monad.Trans       (MonadIO (liftIO), lift)
 
 import           Data.String               (IsString)
@@ -107,21 +109,33 @@ colorizer pr s = before ++ s ++ after
 class WithNamedLogger m where
     getLoggerName :: m LoggerName
 
+    changeLoggerName :: LoggerName -> m a -> m a
+
 instance (Monad m, WithNamedLogger m) =>
          WithNamedLogger (ReaderT a m) where
     getLoggerName = lift getLoggerName
+    
+    changeLoggerName name m =
+        ask >>= lift . changeLoggerName name . runReaderT m 
 
 instance (Monad m, WithNamedLogger m) =>
          WithNamedLogger (StateT a m) where
     getLoggerName = lift getLoggerName
 
+    changeLoggerName name m =
+        get >>= lift . changeLoggerName name . evalStateT m
+
 instance (Monad m, WithNamedLogger m) =>
          WithNamedLogger (ExceptT e m) where
     getLoggerName = lift getLoggerName
 
+    changeLoggerName name = ExceptT . changeLoggerName name . runExceptT
+
 instance {-# OVERLAPPABLE #-} MonadReader LoggerName m =>
          WithNamedLogger m where
     getLoggerName = ask
+
+    changeLoggerName name = local $ const name
 
 logDebug :: (WithNamedLogger m, MonadIO m)
          => T.Text -> m ()
