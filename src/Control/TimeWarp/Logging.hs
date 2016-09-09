@@ -19,6 +19,7 @@ module Control.TimeWarp.Logging
          -- * Logging functions
        , WithNamedLogger (..)
        , setLoggerName
+       , usingLoggerName
        , logDebug
        , logError
        , logInfo
@@ -26,6 +27,7 @@ module Control.TimeWarp.Logging
        , logWarning
        ) where
 
+import           Control.Monad.Catch       (MonadThrow, MonadCatch, MonadMask)
 import           Control.Monad.Except      (ExceptT (..), runExceptT)
 import           Control.Monad.Reader      (MonadReader (ask, local), ReaderT,
                                             runReaderT)
@@ -142,11 +144,19 @@ instance (Monad m, WithNamedLogger m) =>
 
     modifyLoggerName how = ExceptT . modifyLoggerName how . runExceptT
 
-instance {-# OVERLAPPABLE #-} MonadReader LoggerName m =>
-         WithNamedLogger m where
-    getLoggerName = ask
+newtype LoggerNameBox m a = LoggerNameBox
+    { loggerNameBoxEntry :: ReaderT LoggerName m a
+    } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
+                MonadMask)
 
-    modifyLoggerName = local
+usingLoggerName :: LoggerName -> LoggerNameBox m a -> m a
+usingLoggerName name = flip runReaderT name . loggerNameBoxEntry
+
+instance Monad m =>
+         WithNamedLogger (LoggerNameBox m) where
+    getLoggerName = LoggerNameBox ask
+
+    modifyLoggerName how = LoggerNameBox . local how . loggerNameBoxEntry
 
 logDebug :: (WithNamedLogger m, MonadIO m)
          => T.Text -> m ()
