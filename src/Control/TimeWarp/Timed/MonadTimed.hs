@@ -17,7 +17,7 @@ module Control.TimeWarp.Timed.MonadTimed
     , during, upto
     , interval
     , startTimer
-    , workWhile, work, workWhileMVarEmpty
+    , workWhile, work, workWhileMVarEmpty, workWhileMVarEmpty'
     , Microsecond
     , Millisecond
     , Second
@@ -98,14 +98,17 @@ invoke time action = wait time >> action
 -- | (Deprecated)
 --   Forks a temporal thread, which exists
 --   until preficate evaluates to False
-workWhile :: (MonadIO m, MonadTimed m) => m Bool -> m () -> m ()
-workWhile cond action = do
+workWhile' :: (MonadIO m, MonadTimed m) => Microsecond -> m Bool -> m () -> m ()
+workWhile' checkDelay cond action = do
     working <- liftIO $ newIORef True
     tid     <- fork $ action >> liftIO (writeIORef working False)
     fork_ $ do
         _ <- whileM ((&&) <$> cond <*> liftIO (readIORef working)) $
-            wait $ for 10 ms
+            wait $ for checkDelay mcs
         killThread tid
+
+workWhile :: (MonadIO m, MonadTimed m) => m Bool -> m () -> m ()
+workWhile = workWhile' $ interval 10 sec
 
 -- | Like workWhile, unwraps first layer of monad immediatelly
 --   and then checks predicate periocially
@@ -117,6 +120,11 @@ workWhileMVarEmpty
     :: (MonadTimed m, MonadIO m)
     => MVar a -> m () -> m ()
 workWhileMVarEmpty v = workWhile (liftIO . isEmptyMVar $ v)
+
+workWhileMVarEmpty'
+    :: (MonadTimed m, MonadIO m)
+    => Microsecond -> MVar a -> m () -> m ()
+workWhileMVarEmpty' delay v = workWhile' delay (liftIO . isEmptyMVar $ v)
 
 -- | Similar to fork, but without result
 fork_ :: MonadTimed m => m () -> m ()
