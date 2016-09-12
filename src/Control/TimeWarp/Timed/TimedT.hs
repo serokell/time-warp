@@ -61,9 +61,8 @@ import           Control.TimeWarp.Timed.MonadTimed (Microsecond, Millisecond,
 type Timestamp = Microsecond
 
 -- | Analogy to ThreadId for emulation
-newtype PureThreadId = PureThreadId
-    { getPureThreadId :: Integer
-    } deriving (Eq, Ord)
+newtype PureThreadId = PureThreadId Integer
+    deriving (Eq, Ord)
 
 -- | Private context for each pure thread
 data ThreadCtx c = ThreadCtx
