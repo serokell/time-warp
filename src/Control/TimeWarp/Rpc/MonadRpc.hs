@@ -2,8 +2,8 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE StandaloneDeriving    #-}
+{-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE ViewPatterns          #-}
 
 -- | This module contains MonadRpc which abstracts over RPC communication.
@@ -32,7 +32,9 @@ module Control.TimeWarp.Rpc.MonadRpc
        , serverTypeRestriction5
        ) where
 
-import           Control.Monad.Catch        (MonadThrow)
+import           Control.Monad.Catch        (MonadCatch (catch),
+                                             MonadThrow (throwM))
+import           Control.Monad.Trans        (lift)
 import           Data.ByteString            (ByteString)
 
 import           Data.MessagePack.Object    (MessagePack, Object (..), toObject)
@@ -126,3 +128,11 @@ serverTypeRestriction5
     :: Monad m
     => m ((f -> e -> d -> c -> b -> S.ServerT m a) -> (f -> e -> d -> c -> b -> S.ServerT m a))
 serverTypeRestriction5 = return id
+
+instance MonadThrow m => MonadThrow (S.ServerT m) where
+    throwM = lift . throwM
+
+instance MonadCatch m =>
+         MonadCatch (S.ServerT m) where
+    catch (S.ServerT action) handler =
+        S.ServerT $ action `catch` (S.runServerT . handler)
