@@ -34,9 +34,10 @@ import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Host, Method (..),
                                                 MonadRpc (execClient, serve),
                                                 NetworkAddress, RpcError (..),
                                                 methodBody, methodName)
-import           Control.TimeWarp.Timed        (Microsecond, MonadTimed, TimedT,
-                                                evalTimedT, for, localTime, mcs,
-                                                minute, runTimedT, wait)
+import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..),
+                                                TimedT, evalTimedT, for, mcs,
+                                                localTime, minute, runTimedT,
+                                                wait, PureThreadId)
 
 localhost :: Host
 localhost = "127.0.0.1"
@@ -96,11 +97,24 @@ $(makeLenses ''NetInfo)
 -- | Pure implementation of RPC
 newtype PureRpc m a = PureRpc
     { unwrapPureRpc :: StateT Host (TimedT (StateT (NetInfo (PureRpc m)) m)) a
-    } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadMask)
+    } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
+                MonadMask)
 
-deriving instance
-         (MonadCatch m, MonadThrow m, WithNamedLogger m, MonadIO m) =>
-         MonadTimed (PureRpc m)
+instance (MonadIO m, MonadCatch m, WithNamedLogger m) => 
+         MonadTimed (PureRpc m) where
+    type ThreadId (PureRpc m) = PureThreadId
+
+    localTime = PureRpc localTime
+
+    wait = PureRpc . wait
+
+    fork = PureRpc . fork . unwrapPureRpc
+
+    myThreadId = PureRpc myThreadId
+
+    killThread = PureRpc . killThread
+
+    timeout t = PureRpc . timeout t . unwrapPureRpc
 
 instance MonadTrans PureRpc where
     lift = PureRpc . lift . lift . lift

@@ -11,6 +11,7 @@ module Control.TimeWarp.Rpc.MsgPackRpc
        , runMsgPackRpc
        ) where
 
+import qualified Control.Concurrent            as C
 import           Control.Monad.Base            (MonadBase)
 import           Control.Monad.Catch           (MonadCatch, MonadMask,
                                                 MonadThrow)
@@ -27,12 +28,27 @@ import qualified Network.MessagePack.Server    as S
 
 import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Method (..),
                                                 MonadRpc (..))
-import           Control.TimeWarp.Timed        (MonadTimed, TimedIO)
+import           Control.TimeWarp.Timed        (MonadTimed (..), TimedIO)
 
 newtype MsgPackRpc a = MsgPackRpc
     { runMsgPackRpc :: TimedIO a
-    } deriving (Functor, Applicative, Monad, MonadIO, MonadBase IO, MonadThrow,
-                MonadCatch, MonadMask, MonadTimed)
+    } deriving (Functor, Applicative, Monad, MonadIO, MonadBase IO,
+                MonadThrow, MonadCatch, MonadMask)
+
+instance MonadTimed MsgPackRpc where
+    type ThreadId MsgPackRpc = C.ThreadId
+
+    localTime = MsgPackRpc localTime
+
+    wait = MsgPackRpc . wait
+
+    fork = MsgPackRpc . fork . runMsgPackRpc
+
+    myThreadId = MsgPackRpc myThreadId
+
+    killThread = MsgPackRpc . killThread
+
+    timeout t = MsgPackRpc . timeout t . runMsgPackRpc
 
 instance MonadBaseControl IO MsgPackRpc where
     type StM MsgPackRpc a = a
