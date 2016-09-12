@@ -5,8 +5,8 @@
 {-# LANGUAGE ScopedTypeVariables       #-}
 {-# LANGUAGE StandaloneDeriving        #-}
 {-# LANGUAGE TemplateHaskell           #-}
+{-# LANGUAGE TypeFamilies              #-}
 {-# LANGUAGE UndecidableInstances      #-}
-{-# OPTIONS_GHC -fno-cse #-}
 
 -- | This module contains TimedT transformer, which is pure implementation
 --   of MonadTimed.
@@ -16,6 +16,7 @@ module Control.TimeWarp.Timed.TimedT
        , runTimedT
        , evalTimedT
        , ThreadId
+       , PureThreadId
        ) where
 
 import           Control.Exception.Base            (AsyncException (ThreadKilled),
@@ -53,19 +54,21 @@ import qualified Data.Set                          as S
 import           Control.TimeWarp.Logging          (WithNamedLogger (..),
                                                     logDebug, logWarning)
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond, Millisecond,
-                                                    MonadTimed,
+                                                    MonadTimed (..),
                                                     MonadTimedError (MTTimeoutError),
-                                                    ThreadId (PureThreadId),
-                                                    for, fork, killThread,
-                                                    localTime, localTime, ms,
-                                                    myThreadId, timeout, wait)
+                                                    for, localTime, ms, timeout)
 
 type Timestamp = Microsecond
+
+-- | Analogy to ThreadId for emulation
+newtype PureThreadId = PureThreadId
+    { getPureThreadId :: Integer
+    } deriving (Eq, Ord)
 
 -- | Private context for each pure thread
 data ThreadCtx c = ThreadCtx
     { -- | Thread id
-      _threadId :: ThreadId
+      _threadId :: PureThreadId
       -- | Exception handlers stack. First is original handler,
       --   second is for continuation handler
     , _handlers :: [(Handler c (), Handler c ())]
@@ -99,7 +102,7 @@ data Scenario m c = Scenario
       --   when thread appears, its id is added to set
       --   when thread is "killThread"ed, its id is removed
       --   when thread finishes it's execution, id remains in set
-    , _aliveThreads   :: S.Set ThreadId
+    , _aliveThreads   :: S.Set PureThreadId
       -- | Number of created threads ever
     , _threadsCounter :: Integer
     }
@@ -177,7 +180,8 @@ instance (MonadCatch m, MonadIO m) => MonadCatch (TimedT m) where
 contHandler :: MonadThrow m => Handler m ()
 contHandler = Handler $ \(ContException e) -> throwM e
 
--- Posibly incorrect instance
+-- NOTE: This instance doesn't allow to block `ThreadKilledException`, 
+-- thrown then life of thread expires.
 instance (MonadIO m, MonadMask m) => MonadMask (TimedT m) where
     mask a = TimedT $ ReaderT $ \r -> ContT $ \c ->
         mask $ \u -> runContT (runReaderT (unwrapTimedT $ a $ q u) r) c
@@ -261,7 +265,7 @@ runTimedT timed = launchTimedT $ do
     -- In each layer (pair of handlers), ContException should be handled first
     catchesSeq = foldl' $ \act (h, hc) -> act `catches` [hc, h]
 
-getNextThreadId :: Monad m => TimedT m ThreadId
+getNextThreadId :: Monad m => TimedT m PureThreadId
 getNextThreadId = wrapCore . Core $ do
     tid <- PureThreadId <$> (use threadsCounter)
     threadsCounter += 1
@@ -294,6 +298,8 @@ threadKilledNotifier e
 
 instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
          MonadTimed (TimedT m) where
+    type ThreadId (TimedT m) = PureThreadId
+
     localTime = wrapCore $ Core $ use curTime
     -- | Take note, created thread may be killed by timeout
     --   only when it calls "wait"

@@ -24,8 +24,8 @@ import qualified System.Timeout                    as T
 
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond,
                                                     MonadTimed (..),
-                                                    MonadTimedError (MTTimeoutError),
-                                                    ThreadId (IOThreadId))
+                                                    MonadTimedError 
+                                                    (MTTimeoutError))
 
 newtype TimedIO a = TimedIO
     { getTimedIO :: ReaderT Microsecond IO a
@@ -40,19 +40,19 @@ instance MonadBaseControl IO TimedIO where
     restoreM = TimedIO . restoreM
 
 instance MonadTimed TimedIO where
+    type ThreadId TimedIO = C.ThreadId
+
     localTime = TimedIO $ (-) <$> lift curTime <*> ask
 
     wait relativeToNow = do
         cur <- localTime
         liftIO $ C.threadDelay $ fromIntegral $ relativeToNow cur
 
-    fork (TimedIO a) = TimedIO $ lift . fmap IOThreadId . C.forkIO . runReaderT a
-        =<< ask
+    fork (TimedIO a) = TimedIO $ lift . C.forkIO . runReaderT a =<< ask
 
-    myThreadId = TimedIO $ lift $ IOThreadId <$> C.myThreadId
+    myThreadId = TimedIO $ lift $ C.myThreadId
 
-    killThread (IOThreadId tid) = TimedIO $ lift $ C.killThread $ tid
-    killThread _ = error "Inproper ThreadId object (expected IOThreadId)"
+    killThread tid = TimedIO $ lift $ C.killThread $ tid
 
     timeout t (TimedIO action) = TimedIO $ do
         res <- liftIO . T.timeout (fromIntegral t) . runReaderT action =<< ask

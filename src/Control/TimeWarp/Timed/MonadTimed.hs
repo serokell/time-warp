@@ -8,8 +8,7 @@
 -- | This module defines time management monad and helpers.
 
 module Control.TimeWarp.Timed.MonadTimed
-    ( fork, fork_, wait, localTime, schedule, invoke, timeout
-    , killThread, myThreadId
+    ( fork_, schedule, invoke
     , minute , sec , ms , mcs
     , minute', sec', ms', mcs'
     , tu
@@ -22,13 +21,11 @@ module Control.TimeWarp.Timed.MonadTimed
     , Millisecond
     , Second
     , Minute
-    , MonadTimed
+    , MonadTimed (..)
     , RelativeToNow
     , MonadTimedError (..)
-    , ThreadId (..)
     ) where
 
-import qualified Control.Concurrent      as C
 import           Control.Concurrent.MVar (MVar, isEmptyMVar)
 import           Control.Exception       (Exception (..))
 import           Control.Monad           (void)
@@ -50,13 +47,6 @@ import           Data.Typeable           (Typeable)
 --   basing on current time point
 type RelativeToNow = Microsecond -> Microsecond
 
--- | Dirty hack, constructor depends on whether is it emulation or real mode
---   Alternative is to add in MonadTimed, and thus WorkMode, second typeclass
---   parameter
-data ThreadId = IOThreadId C.ThreadId
-              | PureThreadId Integer
-    deriving (Eq, Ord, Show)
-
 data MonadTimedError
     = MTTimeoutError Text
     deriving (Show, Typeable)
@@ -69,6 +59,8 @@ instance Buildable MonadTimedError where
 -- | Allows time management. Time is specified in microseconds passed
 --   from start point (origin).
 class MonadThrow m => MonadTimed m where
+    type ThreadId m :: *
+
     -- | Acquires time relative to origin point
     localTime :: m Microsecond
 
@@ -76,13 +68,13 @@ class MonadThrow m => MonadTimed m where
     wait :: RelativeToNow -> m ()
 
     -- | Creates another thread of execution, with same point of origin
-    fork :: m () -> m ThreadId
+    fork :: m () -> m (ThreadId m)
 
     -- | Acquires current thread id
-    myThreadId :: m ThreadId
+    myThreadId :: m (ThreadId m)
 
     -- | Arises ThreadKilled exception in specified thread
-    killThread :: ThreadId -> m ()
+    killThread :: ThreadId m -> m ()
 
     -- | Throws an TimeoutError exception if running an action exceeds running time
     timeout :: Microsecond -> m a -> m a
@@ -131,6 +123,8 @@ fork_ :: MonadTimed m => m () -> m ()
 fork_ = void . fork
 
 instance MonadTimed m => MonadTimed (ReaderT r m) where
+    type ThreadId (ReaderT r m) = ThreadId m
+
     localTime = lift localTime
 
     wait = lift . wait
@@ -143,7 +137,9 @@ instance MonadTimed m => MonadTimed (ReaderT r m) where
 
     timeout t m = lift . timeout t . runReaderT m =<< ask
 
-instance MonadTimed m => MonadTimed (StateT r m) where
+instance MonadTimed m => MonadTimed (StateT s m) where
+    type ThreadId (StateT s m) = ThreadId m
+
     localTime = lift localTime
 
     wait = lift . wait
