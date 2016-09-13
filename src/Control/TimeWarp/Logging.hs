@@ -69,7 +69,7 @@ newtype LoggerName = LoggerName
 
 instance Monoid LoggerName where
     mempty = ""
- 
+
     LoggerName base `mappend` LoggerName suffix
         | null base = LoggerName suffix
         | otherwise = LoggerName $ base ++ "." ++ suffix
@@ -128,7 +128,7 @@ setLoggerName = modifyLoggerName . const
 instance (Monad m, WithNamedLogger m) =>
          WithNamedLogger (ReaderT a m) where
     getLoggerName = lift getLoggerName
-    
+
     modifyLoggerName how m =
         ask >>= lift . modifyLoggerName how . runReaderT m
 

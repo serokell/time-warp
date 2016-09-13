@@ -56,8 +56,9 @@ import           Control.TimeWarp.Logging          (WithNamedLogger (..),
                                                     logDebug, logWarning)
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond, Millisecond,
                                                     MonadTimed (..),
-                                                    MonadTimedError (MTTimeoutError),
-                                                    for, localTime, ms, timeout)
+                                                    MonadTimedError
+                                                    (MTTimeoutError),
+                                                    for, localTime, ms, timeout,                                                    killThread, mcs)
 
 type Timestamp = Microsecond
 
@@ -178,7 +179,7 @@ instance (MonadCatch m, MonadIO m) => MonadCatch (TimedT m) where
 contHandler :: MonadThrow m => Handler m ()
 contHandler = Handler $ \(ContException e) -> throwM e
 
--- NOTE: This instance doesn't allow to block `ThreadKilledException`, 
+-- NOTE: This instance doesn't allow to block `ThreadKilledException`,
 -- thrown then life of thread expires.
 instance (MonadIO m, MonadMask m) => MonadMask (TimedT m) where
     mask a = TimedT $ ReaderT $ \r -> ContT $ \c ->
@@ -239,7 +240,7 @@ runTimedT timed = launchTimedT $ do
             maybeExc <- use $ asyncExceptions . to (M.lookup tid)
             asyncExceptions %= M.delete tid
             return maybeExc
-            
+
         let -- die if time has come
             maybeDie = traverse throwM maybeAsyncExc
             act      = maybeDie >> runInSandbox ctx (nextEv ^. action)
@@ -320,6 +321,8 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
                       ]
                 }
         wrapCore $ Core $ events %= PQ.insert Event {..}
+        wait $ for 1 mcs  -- real `forkIO` seems to yield execution
+                          -- to newly created thread
         return tid
     wait relativeToNow = do
         cur <- localTime
@@ -334,8 +337,8 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
         -- and finish execution
         TimedT $ lift $ ContT $ \c -> Core $ events %= PQ.insert (event $ c ())
     myThreadId = TimedT $ view threadId
-    killThread tid = wrapCore $ Core $ 
-        asyncExceptions %= M.alter (<|> Just (SomeException ThreadKilled)) tid
+    throwTo tid e = wrapCore $ Core $
+        asyncExceptions %= M.alter (<|> Just (SomeException e)) tid
     -- TODO: we should probably implement this similar to
     -- http://haddock.stackage.org/lts-5.8/base-4.8.2.0/src/System-Timeout.html#timeout
     timeout t action' = do

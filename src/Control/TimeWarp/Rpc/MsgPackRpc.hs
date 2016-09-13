@@ -46,7 +46,7 @@ instance MonadTimed MsgPackRpc where
 
     myThreadId = MsgPackRpc myThreadId
 
-    killThread = MsgPackRpc . killThread
+    throwTo tid = MsgPackRpc . throwTo tid
 
     timeout t = MsgPackRpc . timeout t . runMsgPackRpc
 

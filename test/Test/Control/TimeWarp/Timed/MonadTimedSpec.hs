@@ -38,7 +38,7 @@ import           Control.TimeWarp.Timed       (Microsecond, MonadTimed (..),
                                                TimedIO, TimedT, TimedT, after,
                                                for, fork_, invoke, mcs, now,
                                                runTimedIO, runTimedT, schedule,
-                                               sec)
+                                               sec, killThread)
 
 import           Test.Control.TimeWarp.Common ()
 
