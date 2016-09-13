@@ -15,6 +15,7 @@ module Control.TimeWarp.Logging
        , initLoggerByName
 
        , LoggerName (..)
+       , LoggerNameBox
 
          -- * Logging functions
        , WithNamedLogger (..)
