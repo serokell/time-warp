@@ -19,6 +19,7 @@ module Control.TimeWarp.Timed.TimedT
        , PureThreadId
        ) where
 
+import           Control.Applicative               ((<|>))
 import           Control.Exception.Base            (AsyncException (ThreadKilled),
                                                     Exception (fromException),
                                                     SomeException (..))
@@ -26,7 +27,7 @@ import           Control.Exception.Base            (AsyncException (ThreadKilled
 import           Control.Lens                      (makeLenses, to, use, view,
                                                     (%=), (%~), (&), (+=), (.=),
                                                     (<&>), (^.))
-import           Control.Monad                     (unless, void)
+import           Control.Monad                     (void)
 import           Control.Monad.Catch               (Handler (..), MonadCatch,
                                                     MonadMask, MonadThrow,
                                                     catch, catchAll, catches,
@@ -49,7 +50,7 @@ import           Data.Ord                          (comparing)
 import           Formatting                        (sformat, shown, (%))
 
 import qualified Data.PQueue.Min                   as PQ
-import qualified Data.Set                          as S
+import qualified Data.Map                          as M
 
 import           Control.TimeWarp.Logging          (WithNamedLogger (..),
                                                     logDebug, logWarning)
@@ -62,7 +63,7 @@ type Timestamp = Microsecond
 
 -- | Analogy to ThreadId for emulation
 newtype PureThreadId = PureThreadId Integer
-    deriving (Eq, Ord)
+    deriving (Eq, Ord, Show)
 
 -- | Private context for each pure thread
 data ThreadCtx c = ThreadCtx
@@ -96,12 +97,8 @@ data Scenario m c = Scenario
       _events         :: PQ.MinQueue (Event m c)
       -- | current virtual time
     , _curTime        :: Microsecond
-      -- | set of declared threads.
-      --   Implementation notes:
-      --   when thread appears, its id is added to set
-      --   when thread is "killThread"ed, its id is removed
-      --   when thread finishes it's execution, id remains in set
-    , _aliveThreads   :: S.Set PureThreadId
+      -- | For each thread, exception which has been thrown to it (if any has)
+    , _asyncExceptions :: M.Map PureThreadId SomeException
       -- | Number of created threads ever
     , _threadsCounter :: Integer
     }
@@ -113,7 +110,7 @@ emptyScenario =
     Scenario
     { _events = PQ.empty
     , _curTime = 0
-    , _aliveThreads = S.empty
+    , _asyncExceptions = M.empty
     , _threadsCounter = 0
     }
 
@@ -236,9 +233,15 @@ runTimedT timed = launchTimedT $ do
         -- awake the thread
         let ctx = nextEv ^. threadCtx
             tid = ctx ^. threadId
-        keepAlive <- wrapCore $ Core $ use $ aliveThreads . to (S.member tid)
+
+        -- extract possible exception thrown to this thread
+        maybeAsyncExc <- wrapCore $ Core $ do
+            maybeExc <- use $ asyncExceptions . to (M.lookup tid)
+            asyncExceptions %= M.delete tid
+            return maybeExc
+            
         let -- die if time has come
-            maybeDie = unless keepAlive $ throwM ThreadKilled
+            maybeDie = traverse throwM maybeAsyncExc
             act      = maybeDie >> runInSandbox ctx (nextEv ^. action)
             -- catch with handlers from handlers stack
             -- catch which is performed in instance MonadCatch is not enough,
@@ -268,9 +271,8 @@ runTimedT timed = launchTimedT $ do
 
 getNextThreadId :: Monad m => TimedT m PureThreadId
 getNextThreadId = wrapCore . Core $ do
-    tid <- PureThreadId <$> (use threadsCounter)
+    tid <- PureThreadId <$> use threadsCounter
     threadsCounter += 1
-    aliveThreads %= S.insert tid
     return tid
 
 -- | Just like `runTimedT` but makes it possible to get a result.
@@ -332,7 +334,8 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
         -- and finish execution
         TimedT $ lift $ ContT $ \c -> Core $ events %= PQ.insert (event $ c ())
     myThreadId = TimedT $ view threadId
-    killThread tid = wrapCore $ Core $ aliveThreads %= S.delete tid
+    killThread tid = wrapCore $ Core $ 
+        asyncExceptions %= M.alter (<|> Just (SomeException ThreadKilled)) tid
     -- TODO: we should probably implement this similar to
     -- http://haddock.stackage.org/lts-5.8/base-4.8.2.0/src/System-Timeout.html#timeout
     timeout t action' = do
