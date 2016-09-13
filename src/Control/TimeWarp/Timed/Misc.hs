@@ -16,7 +16,7 @@ import           Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimed,
                                                     startTimer, wait)
 
 -- | Repeats an action periodically.
---   If it fails, handler is invoked, determing delay for retrying.
+--   If it fails, handler is invoked, determining delay before retrying.
 --   Can be interrupted with asyncronious exception.
 repeatForever
     :: (MonadTimed m, MonadIO m, MonadCatch m)

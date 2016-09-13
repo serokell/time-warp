@@ -5,24 +5,31 @@
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE ViewPatterns           #-}
 
--- | This module defines time management monad and helpers.
+-- | This module defines typeclass `MonadTimed` with basic functions
+-- to work with time and threads.
 
 module Control.TimeWarp.Timed.MonadTimed
-    ( fork_, schedule, invoke
-    , minute , sec , ms , mcs
-    , minute', sec', ms', mcs'
-    , tu
-    , at, after, for, till, now
-    , during, upto
-    , interval
+    ( -- * Typeclass with basic functions
+      MonadTimed (..)
+    , RelativeToNow
+      -- * Helper functions
+    , schedule, invoke, timestamp, fork_
     , startTimer
     , workWhile, work, workWhileMVarEmpty, workWhileMVarEmpty'
+      -- ** Time measures
+    , minute , sec , ms , mcs, tu
+    , minute', sec', ms', mcs'
+      -- ** Time specifiers
+      -- $timespec
+    , after, for, at, till, now
+    , during, upto
+    , interval
+      -- * Time types
     , Microsecond
     , Millisecond
     , Second
     , Minute
-    , MonadTimed (..)
-    , RelativeToNow
+      -- * Exceptions
     , MonadTimedError (..)
     ) where
 
@@ -43,8 +50,12 @@ import           Data.Time.Units         (Microsecond, Millisecond, Minute,
                                           Second, TimeUnit (..), convertUnit)
 import           Data.Typeable           (Typeable)
 
--- | Defines some time point (relative to current time point)
---   basing on current time point
+-- | Defines some time point basing on current time point, relatively to now.
+-- That is, if current virtual time is 10µs, @const 15@ would refer to
+-- 10 + 15 = 25µs, while @(-) 15@ refers to 10 + (15 - 10) = 15µs.
+--
+-- (NOTE: calculating time relativelly to now seems pretty inconvinient,
+-- if someone agrees I'll fix it).
 type RelativeToNow = Microsecond -> Microsecond
 
 data MonadTimedError
@@ -57,39 +68,93 @@ instance Buildable MonadTimedError where
     build (MTTimeoutError t) = "timeout error: " <> build t
 
 -- | Allows time management. Time is specified in microseconds passed
---   from start point (origin).
+--   from start point (/origin/), this time is later called /virtual time/.
 class MonadThrow m => MonadTimed m where
+    -- | Type of thread identifier.
     type ThreadId m :: *
 
-    -- | Acquires time relative to origin point
+    -- | Acquires virtual time.
     localTime :: m Microsecond
 
-    -- | Waits till specified relative time
+    -- | Waits till specified relative time.
+    --
+    -- >>> runTimedT $ wait (for 1 sec) >> wait (for 5 sec) >> timestamp "now"
+    -- [6000000µs] now
+    -- >>> runTimedT $ wait (for 1 sec) >> wait (till 5 sec) >> timestamp "now"
+    -- [5000000µs] now
+    -- >>> runTimedT $ wait (for 10 minute 34 sec 52 ms) >> timestamp "now"
+    -- [634052000µs] now
     wait :: RelativeToNow -> m ()
 
-    -- | Creates another thread of execution, with same point of origin
+    -- | Creates another thread of execution, with same point of /origin/.
     fork :: m () -> m (ThreadId m)
 
-    -- | Acquires current thread id
+    -- | Acquires current thread id.
     myThreadId :: m (ThreadId m)
 
-    -- | Arises ThreadKilled exception in specified thread
+    -- | Arises ThreadKilled exception in specified thread.
     killThread :: ThreadId m -> m ()
 
-    -- | Throws an TimeoutError exception if running an action exceeds running time
+    -- | Throws an TimeoutError exception
+    -- if running an action exceeds running time.
     timeout :: Microsecond -> m a -> m a
 
--- | Executes an action somewhere in future
+-- | Executes an action somewhere in future in another thread.
+--
+-- @
+-- schedule time action = fork_ $ wait time >> action
+-- @
+--
+-- @
+-- example :: (MonadTimed m, MonadIO m) => m ()
+-- example = do
+--     wait (for 10 sec)
+--     schedule (after 3 sec) $ timestamp "This would happen at 13 sec"
+--     schedule (at 15 sec)   $ timestamp "This would happen at 15 sec"
+--     timestamp "And this happens immediately after start"
+-- @
 schedule :: MonadTimed m => RelativeToNow -> m () -> m ()
-schedule time action = fork_ $ wait time >> action
+schedule time action = fork_ $ invoke time action
 
--- | Executes an action at specified time in current thread
+-- | Executes an action at specified time in current thread.
+
+-- @
+-- invoke time action = wait time >> action
+-- @
+--
+-- @
+-- example :: (MonadTimed m, MonadIO m) => m ()
+-- example = do
+--     wait (for 10 sec)
+--     invoke (after 3 sec) $ timestamp "This would happen at 13 sec"
+--     invoke (after 3 sec) $ timestamp "This would happen at 16 sec"
+--     invoke (at 20 sec)   $ timestamp "This would happen at 20 sec"
+--     timestamp "This also happens at 20 sec"
+-- @
 invoke :: MonadTimed m => RelativeToNow -> m a -> m a
 invoke time action = wait time >> action
 
--- | (Deprecated)
---   Forks a temporal thread, which exists
---   until preficate evaluates to False
+-- | Prints current virtual time. For debug purposes.
+--
+-- >>> runTimedT $ wait (for 1 mcs) >> timestamp " Look current time here"
+-- [1µs] Look current time here
+timestamp :: (MonadTimed m, MonadIO m) => String -> m ()
+timestamp msg = localTime >>= \time -> liftIO . putStrLn $ concat
+    [ "["
+    , show time
+    , "] "
+    , msg
+    ]
+
+-- Forks a temporal thread, which exists until preficate evaluates to False.
+-- Another servant thread is used to periodically check that condition,
+-- beware of overhead.
+{-# DEPRECATED workWhile "May give sagnificant overhead, use with caution" #-}
+workWhile :: (MonadIO m, MonadTimed m) => m Bool -> m () -> m ()
+workWhile = workWhile' $ interval 10 sec
+
+-- Like `workWhile`, but also allows to specify delay between checks.
+{-# DEPRECATED workWhile' "May give sagnificant overhead, use with caution" #-}
 workWhile' :: (MonadIO m, MonadTimed m) => Microsecond -> m Bool -> m () -> m ()
 workWhile' checkDelay cond action = do
     working <- liftIO $ newIORef True
@@ -99,26 +164,29 @@ workWhile' checkDelay cond action = do
             wait $ for checkDelay mcs
         killThread tid
 
-workWhile :: (MonadIO m, MonadTimed m) => m Bool -> m () -> m ()
-workWhile = workWhile' $ interval 10 sec
-
 -- | Like workWhile, unwraps first layer of monad immediatelly
---   and then checks predicate periocially
+--   and then checks predicate periocially.
+{-# DEPRECATED work "May give sagnificant overhead, use with caution" #-}
 work :: (MonadIO m, MonadTimed m) => TwoLayers m Bool -> m () -> m ()
 work (getTL -> predicate) action = predicate >>= \p -> workWhile p action
 
 -- | Forks temporary thread which works while MVar is empty.
+-- Another servant thread is used to periodically check the state of MVar,
+-- beware of overhead.
+{-# DEPRECATED workWhileMVarEmpty "May give sagnificant overhead, use with caution" #-}
 workWhileMVarEmpty
     :: (MonadTimed m, MonadIO m)
     => MVar a -> m () -> m ()
 workWhileMVarEmpty v = workWhile (liftIO . isEmptyMVar $ v)
 
+-- | Like `workWhileMVarEmpty`, but allows to specify delay between checks.
+{-# DEPRECATED workWhileMVarEmpty' "May give sagnificant overhead, use with caution" #-}
 workWhileMVarEmpty'
     :: (MonadTimed m, MonadIO m)
     => Microsecond -> MVar a -> m () -> m ()
 workWhileMVarEmpty' delay v = workWhile' delay (liftIO . isEmptyMVar $ v)
 
--- | Similar to fork, but without result
+-- | Similar to `fork`, but doesn't return a result.
 fork_ :: MonadTimed m => m () -> m ()
 fork_ = void . fork
 
@@ -152,9 +220,6 @@ instance MonadTimed m => MonadTimed (StateT s m) where
 
     timeout t m = lift . timeout t . evalStateT m =<< get
 
--- * Some usefull functions below
-
--- | Defines measure for time periods
 mcs :: Microsecond -> Microsecond
 mcs = convertUnit
 
@@ -176,37 +241,70 @@ minute' = fromMicroseconds . round . (*) 60000000
 tu :: TimeUnit t => t -> Microsecond
 tu = convertUnit
 
--- | Time point by given absolute time (still relative to origin)
+-- $timespec
+-- Following functions are used together with time-controlling functions
+-- (`wait`, `invoke` and others) and serve for two reasons:
+--
+-- (1) Accumulate following time parts, allowing to write something like
+--
+-- @
+-- for 1 minute 2 sec 3 mcs
+-- @
+--
+-- Order of time parts is irrelevent.
+--
+-- (2) Defines, whether time is counted from /origin point/ or
+-- current time point.
+
+-- | Time point by given virtual time.
 at, till :: TimeAcc1 t => t
 at   = at' 0
 till = at' 0
 
--- | Time point relative to current time
+-- | Time point relative to current time.
 after, for :: TimeAcc1 t => t
 after = after' 0
 for   = after' 0
 
--- | Current time point
+-- | Current time point.
+--
+-- >>> runTimedT $ invoke now $ timestamp ""
+-- [0µs]
 now :: RelativeToNow
 now = const 0
 
 -- | Returns whether specified delay has passed
---   (timer starts when first monad layer is unwrapped)
+--   (timer starts when first monad layer is unwrapped).
 during :: TimeAcc2 t => t
 during = during' 0
 
--- | Returns whether specified time point has passed
+-- | Returns whether specified time point has passed.
 upto :: TimeAcc2 t => t
 upto = upto' 0
 
--- | Counts time since outer monad layer was unwrapped
+-- | Counts time since outer monad layer was unwrapped.
+--
+-- @
+-- example :: (MonadTimed m, MonadIO m) => m ()
+-- example = do
+--     wait (for 10 sec)
+--     timer <- startTimer
+--     wait (for 5 ms)
+--     passedTime <- timer
+--     liftIO . print $ passedTime
+-- @
+--
+-- >>> runTimedT example
+-- 5000µs
 startTimer :: MonadTimed m => m (m Microsecond)
 startTimer = do
     start <- localTime
     return $ subtract start <$> localTime
 
 -- | Returns a time in microseconds
---   Example: interval 1 sec :: Microsecond
+--
+-- >>> print $ interval 1 sec
+-- 1000000µs
 interval :: TimeAcc3 t => t
 interval = interval' 0
 

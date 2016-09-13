@@ -52,34 +52,48 @@ localhost = "127.0.0.1"
 data RpcStage = Request | Response
 
 -- @TODO Remove these hard-coded values
--- | Describes network nastyness
+-- | Describes network nastyness.
+--
+-- Examples:
+--
+-- * Always 1 second delay:
+--
+-- @
+-- Delays $ \\_ _ -> return $ Just (interval 1 sec)
+-- @
+--
+-- * Delay changes between 1 and 5 seconds (with granularity of 1 mcs):
+--
+-- @
+-- Delays $ \\_ _ -> do
+--     delay <- fromMicroseconds $ getRandomR $ both %~ toMicroseconds $ (interval 1 sec :: Microsecond, interval 5 sec)
+--     return $ Just delay
+-- @
+--
+-- * Connection established with probability of 1/6:
+--
+-- @
+-- Delays $ \\_ time -> do
+--     p <- getRandomR (0, 5)
+--     if p == 0
+--         then return $ Just 0
+--         else return Nothing
+-- @ 
 newtype Delays = Delays
-    { -- | Just delay if net packet delivered successfully
-      --   Nothing otherwise
-      -- TODO: more parameters
-      evalDelay :: RpcStage -> Microsecond -> Rand StdGen (Maybe Microsecond)
-      -- ^ I still think that this function is at right place
-      --   We just need to find funny syntax for creating complex description
-      --   of network nastinesses.
-      --   Maybe like this one:
-      {-
-        delays $ do
-                       during (10, 20) .= Probabitiy 60
-            requests . before 30       .= Delay (5, 7)
-            for "mintette2" $ do
-                during (40, 150)       .= Probability 30 <> DelayUpTo 4
-                responses . after 200  .= Disabled
-      -}
-      --   First what came to mind.
-      --   Or maybe someone has overall better solution in mind
+    { -- | Basing on current virtual time, returns `Just` delay, 
+      -- if connection should be considered as successfully established, 
+      -- and `Nothing` otherwise.
+      evalDelay :: RpcStage     
+                -> Microsecond
+                -> Rand StdGen (Maybe Microsecond) 
     }
 
 -- This is needed for QC
 instance Show Delays where
     show _ = "Delays"
 
+-- | Descirbes reliable network
 instance Default Delays where
-    -- | Descirbes reliable network
     def = Delays . const . const . return . Just $ 0
 
 -- | Keeps servers' methods

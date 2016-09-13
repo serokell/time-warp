@@ -134,7 +134,7 @@ instance MonadState s m => MonadState s (Core m) where
     state = lift . state
 
 -- | Pure implementation of MonadTimed.
---   It stores an event queue, on "wait" continuation is passed to that queue
+--   It stores an event queue, on `wait` continuation is passed to that queue
 newtype TimedT m a = TimedT
     { unwrapTimedT :: ReaderT (ThreadCtx (Core m)) (ContT () (Core m)) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow)
@@ -143,6 +143,8 @@ newtype TimedT m a = TimedT
 --   For example, StateT above TimedT will clone it's state on fork, thus
 --   all pure thread would have their own states. On the other hand,
 --   StateT below TimedT would share it's state between all threads.
+
+-- | TODO: about 0 duration actions
 instance MonadTrans TimedT where
     lift = TimedT . lift . lift . lift
 
@@ -271,7 +273,7 @@ getNextThreadId = wrapCore . Core $ do
     aliveThreads %= S.insert tid
     return tid
 
--- | Just like runTimedT but makes it possible to get a result.
+-- | Just like `runTimedT` but makes it possible to get a result.
 evalTimedT
     :: forall m a . (MonadIO m, MonadCatch m)
     => TimedT m a -> m a
