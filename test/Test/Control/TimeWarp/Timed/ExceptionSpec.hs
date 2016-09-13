@@ -22,9 +22,9 @@ import           Test.QuickCheck.Property     (Result (reason), failed,
                                                ioProperty, succeeded)
 
 import           Control.TimeWarp.Logging     (Severity (Error), initLogging)
-import           Control.TimeWarp.Timed       (Microsecond, TimedT, after, for,
-                                               fork_, invoke, runTimedT, sec,
-                                               wait)
+import           Control.TimeWarp.Timed       (Microsecond, TimedT, after,
+                                               fork_, fork, invoke, runTimedT,
+                                               sec, wait, for, throwTo)
 
 import           Test.Control.TimeWarp.Common ()
 
@@ -58,9 +58,13 @@ spec =
         describe "handler error" $
             prop "throws"
                 handlerThrow
-        describe "async error" $
+        describe "async error" $ do
             prop "shouldn't abort the execution"
                 asyncExceptionShouldntAbortExecution
+            prop "throwTo throws correct exception"
+                throwToThrowsCorrectException
+            prop "throwTo can kell thread"
+                throwToCanKillThread
 
 -- FIXME
 exceptionShouldAbortExecution
@@ -225,6 +229,26 @@ handlerThrow =
          in do act `catch` hnd1 `catch` hnd2
                checkPoint 2
 
+throwToThrowsCorrectException
+    :: Property
+throwToThrowsCorrectException =
+    ioProperty . withCheckPoints $
+    \checkPoint ->
+         runEmu $ do
+             tid <- fork $ catch (wait $ for 1 sec) $
+                 \(_ :: ArithException) -> checkPoint 1
+             throwTo tid Overflow
+             wait $ for 2 sec
+             checkPoint 2
+
+throwToCanKillThread
+    :: Property
+throwToCanKillThread =
+    ioProperty . withCheckPoints $
+    \checkPoint ->
+         runEmu $ do
+             tid <- fork $ wait (for 1 sec) >> checkPoint (-1)
+             throwTo tid Overflow
 
 runEmu :: TimedT IO () -> IO ()
 runEmu = runTimedT

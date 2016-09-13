@@ -78,14 +78,14 @@ data RpcStage = Request | Response
 --     if p == 0
 --         then return $ Just 0
 --         else return Nothing
--- @ 
+-- @
 newtype Delays = Delays
-    { -- | Basing on current virtual time, returns `Just` delay, 
-      -- if connection should be considered as successfully established, 
+    { -- | Basing on current virtual time, returns `Just` delay,
+      -- if connection should be considered as successfully established,
       -- and `Nothing` otherwise.
-      evalDelay :: RpcStage     
+      evalDelay :: RpcStage
                 -> Microsecond
-                -> Rand StdGen (Maybe Microsecond) 
+                -> Rand StdGen (Maybe Microsecond)
     }
 
 -- This is needed for QC
@@ -114,7 +114,7 @@ newtype PureRpc m a = PureRpc
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
                 MonadMask)
 
-instance (MonadIO m, MonadCatch m, WithNamedLogger m) => 
+instance (MonadIO m, MonadCatch m, WithNamedLogger m) =>
          MonadTimed (PureRpc m) where
     type ThreadId (PureRpc m) = PureThreadId
 
@@ -126,7 +126,7 @@ instance (MonadIO m, MonadCatch m, WithNamedLogger m) =>
 
     myThreadId = PureRpc myThreadId
 
-    killThread = PureRpc . killThread
+    throwTo tid = PureRpc . throwTo tid
 
     timeout t = PureRpc . timeout t . unwrapPureRpc
 

@@ -24,7 +24,7 @@ import qualified System.Timeout                    as T
 
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond,
                                                     MonadTimed (..),
-                                                    MonadTimedError 
+                                                    MonadTimedError
                                                     (MTTimeoutError))
 
 newtype TimedIO a = TimedIO
@@ -52,7 +52,7 @@ instance MonadTimed TimedIO where
 
     myThreadId = TimedIO $ lift $ C.myThreadId
 
-    killThread tid = TimedIO $ lift $ C.killThread $ tid
+    throwTo tid e = TimedIO $ lift $ C.throwTo tid e
 
     timeout t (TimedIO action) = TimedIO $ do
         res <- liftIO . T.timeout (fromIntegral t) . runReaderT action =<< ask

@@ -13,7 +13,7 @@ module Control.TimeWarp.Timed.MonadTimed
       MonadTimed (..)
     , RelativeToNow
       -- * Helper functions
-    , schedule, invoke, timestamp, fork_
+    , schedule, invoke, timestamp, fork_, killThread
     , startTimer
     , workWhile, work, workWhileMVarEmpty, workWhileMVarEmpty'
       -- ** Time measures
@@ -34,7 +34,8 @@ module Control.TimeWarp.Timed.MonadTimed
     ) where
 
 import           Control.Concurrent.MVar (MVar, isEmptyMVar)
-import           Control.Exception       (Exception (..))
+import           Control.Exception       (Exception (..),
+                                          AsyncException (ThreadKilled))
 import           Control.Monad           (void)
 import           Control.Monad.Catch     (MonadThrow)
 import           Control.Monad.Loops     (whileM)
@@ -92,8 +93,8 @@ class MonadThrow m => MonadTimed m where
     -- | Acquires current thread id.
     myThreadId :: m (ThreadId m)
 
-    -- | Arises ThreadKilled exception in specified thread.
-    killThread :: ThreadId m -> m ()
+    -- | Arises specified exception in specified thread.
+    throwTo :: Exception e => ThreadId m -> e -> m ()
 
     -- | Throws an TimeoutError exception
     -- if running an action exceeds running time.
@@ -190,6 +191,10 @@ workWhileMVarEmpty' delay v = workWhile' delay (liftIO . isEmptyMVar $ v)
 fork_ :: MonadTimed m => m () -> m ()
 fork_ = void . fork
 
+-- | Arises `ThreadKilled` exception in specified thread
+killThread :: MonadTimed m => ThreadId m -> m ()
+killThread = flip throwTo ThreadKilled
+
 instance MonadTimed m => MonadTimed (ReaderT r m) where
     type ThreadId (ReaderT r m) = ThreadId m
 
@@ -201,7 +206,7 @@ instance MonadTimed m => MonadTimed (ReaderT r m) where
 
     myThreadId = lift myThreadId
 
-    killThread = lift . killThread
+    throwTo tid = lift . throwTo tid
 
     timeout t m = lift . timeout t . runReaderT m =<< ask
 
@@ -216,7 +221,7 @@ instance MonadTimed m => MonadTimed (StateT s m) where
 
     myThreadId = lift myThreadId
 
-    killThread = lift . killThread
+    throwTo tid = lift . throwTo tid
 
     timeout t m = lift . timeout t . evalStateT m =<< get
 
