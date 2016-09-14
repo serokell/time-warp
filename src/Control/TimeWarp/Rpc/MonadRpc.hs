@@ -53,7 +53,7 @@ type NetworkAddress = (Host, Port)
 
 deriving instance (Monad m, WithNamedLogger m) => WithNamedLogger (S.ServerT m)
 
--- | Defines protocol of RPC layer
+-- | Defines protocol of RPC layer.
 class MonadThrow r => MonadRpc r where
     execClient :: MessagePack a => NetworkAddress -> Client a -> r a
     serve :: Port -> [Method r] -> r ()
@@ -105,7 +105,7 @@ instance Monad m => S.MethodType m Object where
     toBody res [] = return res
     toBody _   _  = error "Too many arguments!"
 
--- | Helps restrict method type
+-- * Helps restrict method type
 -- TODO: example of usage
 serverTypeRestriction0 :: Monad m => m (S.ServerT m a -> S.ServerT m a)
 serverTypeRestriction0 = return id
