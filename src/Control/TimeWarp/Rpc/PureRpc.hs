@@ -56,8 +56,6 @@ localhost = "127.0.0.1"
 --     -) Connection can't be refused, only be held on much time
 --        Status: not relevant until used with fixed timeout
 
-data RpcStage = Request | Response
-
 -- | Describes obstructions occured on executing rpc request.
 data ConnectionSuccess
     -- | Connection established in specified amout of time.
@@ -73,19 +71,19 @@ data ConnectionSuccess
 -- * Always 1 second delay:
 --
 -- @
--- Delays $ \\_ _ -> return $ ConnectedIn (interval 1 sec)
+-- Delays $ \\_ -> return $ ConnectedIn (interval 1 sec)
 -- @
 --
 -- * Delay varies between 1 and 5 seconds (with granularity of 1 mcs):
 --
 -- @
--- Delays $ \\_ _ -> ConnectedIn \<$\> getRandomTR (interval 1 sec, interval 5 sec)
+-- Delays $ \\_ -> ConnectedIn \<$\> getRandomTR (interval 1 sec, interval 5 sec)
 -- @
 --
 -- * For first 10 seconds connection is established with probability of 1/6:
 --
 -- @
--- Delays $ \\_ time -> do
+-- Delays $ \\time -> do
 --     p <- getRandomR (0, 5)
 --     if (p == 0) && (time <= interval 10 sec)
 --         then return $ ConnectedIn 0
@@ -94,8 +92,7 @@ data ConnectionSuccess
 newtype Delays = Delays
     { -- | Basing on current virtual time, returns delay in executing
       -- rpc request.
-      evalDelay :: RpcStage
-                -> Microsecond
+      evalDelay :: Microsecond
                 -> Rand StdGen ConnectionSuccess
     }
 
@@ -105,7 +102,7 @@ instance Show Delays where
 
 -- | Descirbes reliable network.
 instance Default Delays where
-    def = Delays . const . const . return . ConnectedIn $ 0
+    def = Delays . const . return . ConnectedIn $ 0
 
 -- | Return a randomly-selected time value in specified range.
 getRandomTR :: MonadRandom m => (Microsecond, Microsecond) -> m Microsecond
@@ -173,12 +170,12 @@ runPureRpc_ _randSeed _delays (PureRpc rpc) =
     net        = NetInfo{..}
     _listeners = Map.empty
 
--- TODO: use normal exceptions here.
 request :: (Monad m, MonadThrow m, MessagePack a)
         => Client a
-        -> (Listeners (PureRpc m), NetworkAddress)
+        -> Listeners (PureRpc m)
+        -> NetworkAddress
         -> PureRpc m a
-request (Client name args) (listeners', addr) =
+request (Client name args) listeners' addr =
     case Map.lookup (addr, name) listeners' of
         Nothing -> throwM $ ServerError $ toObject $ mconcat
             ["method \"", name, "\" not found at adress ", show addr]
@@ -194,11 +191,10 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
     execClient addr cli =
         PureRpc $
         do curHost <- get
-           unwrapPureRpc $ waitDelay Request
+           unwrapPureRpc $ waitDelay
            ls <- lift . lift $ use listeners
            put $ fst addr
-           answer <- unwrapPureRpc $ request cli (ls, addr)
-           unwrapPureRpc $ waitDelay Response
+           answer <- unwrapPureRpc $ request cli ls addr
            put curHost
            return answer
     serve port methods =
@@ -214,13 +210,13 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
 
 waitDelay
     :: (WithNamedLogger m, MonadThrow m, MonadIO m, MonadCatch m)
-    => RpcStage -> PureRpc m ()
-waitDelay stage =
+    => PureRpc m ()
+waitDelay =
     PureRpc $
     do delays' <- lift . lift $ use delays
        time    <- localTime
        delay   <- lift . lift $ randSeed %%=
-            runRand (evalDelay delays' stage time)
+            runRand (evalDelay delays' time)
        case delay of
            ConnectedIn connDelay -> wait (for connDelay mcs)
            NeverConnected        -> sleepForever
