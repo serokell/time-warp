@@ -35,13 +35,14 @@ import           Control.Monad.Cont                (ContT (..), runContT)
 import           Control.Monad.Loops               (whileM_)
 import           Control.Monad.Reader              (ReaderT (..), ask,
                                                     runReaderT)
-import           Control.Monad.State               (MonadState (get, put, state),
+import           Control.Monad.State               (MonadState
+                                                    (get, put, state),
                                                     StateT, evalStateT)
 import           Control.Monad.Trans               (MonadIO, MonadTrans, lift,
                                                     liftIO)
 import           Data.Function                     (on)
-import           Data.IORef                        (newIORef, readIORef,
-                                                    writeIORef)
+import           Data.IORef                        (IORef, newIORef,
+                                                    readIORef, writeIORef)
 import           Data.List                         (foldl')
 import           Data.Maybe                        (fromJust, isJust)
 import           Data.Monoid                       ((<>))
@@ -58,6 +59,7 @@ import           Control.TimeWarp.Timed.MonadTimed (Microsecond, Millisecond,
                                                     MonadTimedError
                                                     (MTTimeoutError),
                                                     for, localTime, ms, timeout,                                                    killThread, mcs)
+import           Control.TimeWarp.Timed.MVar       (MonadMVar (..))
 
 type Timestamp = Microsecond
 
@@ -95,9 +97,8 @@ instance Ord (Event m c) where
     compare = comparing _timestamp
 
 -- | Monitor like in java, with `wait` and `notify` capabilities
-newtype Lock = Lock
-    { getLockId :: Integer  -- ^ Lock id
-    } deriving (Eq, Ord, Show)
+newtype Lock = Lock Integer
+    deriving (Eq, Ord)
 
 data LocksInfo m c = LocksInfo
     { -- | Number of created locks ever
@@ -415,11 +416,11 @@ blockOn lock = do
 
 wakeUp :: Monad m => Lock -> TimedT m ()
 wakeUp lock =
-    wrapCore . Core $ do 
+    wrapCore . Core $ do
         time <- use curTime
-        maybeThread <- zoom locksInfo $ do 
+        maybeThread <- zoom locksInfo $ do
             maybeThreads <- use $ lockedThreads . to (M.lookup lock)
-            when (isJust maybeThreads) $ 
+            when (isJust maybeThreads) $
                 lockedThreads %= M.update maybeInit lock
             return $ last <$> maybeThreads
         when (isJust maybeThread) $
@@ -428,3 +429,53 @@ wakeUp lock =
   where
     maybeInit [] = Nothing
     maybeInit l  = Just $ init l
+
+-- | Primitive with `Control.Concurrent.MVar.MVar` functionality for `TimedT`
+data PureMVar a = PureMVar
+    { _putLock  :: Lock
+    , _takeLock :: Lock
+    , _value    :: IORef (Maybe a)
+    }
+
+$(makeLenses ''PureMVar)
+
+instance MonadIO m => MonadMVar (TimedT m) where
+    type MVar (TimedT m) = PureMVar
+    newEmptyMVar = do
+        l1 <- newLock
+        l2 <- newLock
+        v  <- liftIO $ newIORef Nothing
+        return PureMVar
+            { _putLock = l1
+            , _takeLock = l2
+            , _value = v
+            }
+    newMVar a = do
+        l1 <- newLock
+        l2 <- newLock
+        v  <- liftIO $ newIORef $ Just a
+        return PureMVar
+            { _putLock = l1
+            , _takeLock = l2
+            , _value = v
+            }
+    putMVar m a = do
+        let ref = m ^. value
+        v <- liftIO $ readIORef ref
+        if (isJust v)
+            then do
+                wakeUp  (m ^. takeLock)
+                blockOn (m ^. putLock)
+                putMVar m a
+            else liftIO $ writeIORef ref $ Just a
+    takeMVar m = do
+        let ref = m ^. value
+        v <- liftIO $ readIORef ref
+        if (isJust v)
+            then do
+                liftIO $ writeIORef ref Nothing
+                return $ fromJust v
+            else do
+                wakeUp  (m ^. putLock)
+                blockOn (m ^. takeLock)
+                takeMVar m
