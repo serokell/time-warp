@@ -24,8 +24,8 @@ import           Control.Exception.Base            (AsyncException
 
 import           Control.Lens                      (makeLenses, to, use, view,
                                                     (%=), (%~), (&), (+=), (.=),
-                                                    (<&>), (^.))
-import           Control.Monad                     (void)
+                                                    (<&>), (^.), zoom)
+import           Control.Monad                     (void, when)
 import           Control.Monad.Catch               (Handler (..), MonadCatch,
                                                     MonadMask, MonadThrow,
                                                     catch, catchAll, catches,
@@ -43,7 +43,8 @@ import           Data.Function                     (on)
 import           Data.IORef                        (newIORef, readIORef,
                                                     writeIORef)
 import           Data.List                         (foldl')
-import           Data.Maybe                        (fromJust)
+import           Data.Maybe                        (fromJust, isJust)
+import           Data.Monoid                       ((<>))
 import           Data.Ord                          (comparing)
 import           Formatting                        (sformat, shown, (%))
 
@@ -93,16 +94,33 @@ instance Eq (Event m c) where
 instance Ord (Event m c) where
     compare = comparing _timestamp
 
+-- | Monitor like in java, with `wait` and `notify` capabilities
+newtype Lock = Lock
+    { getLockId :: Integer  -- ^ Lock id
+    } deriving (Eq, Ord, Show)
+
+data LocksInfo m c = LocksInfo
+    { -- | Number of created locks ever
+      _locksCounter  :: Integer
+      -- | Threads, blocked on this lock
+      -- @TODO: make for efficient
+    , _lockedThreads :: M.Map Lock [Event m c]
+    }
+
+$(makeLenses ''LocksInfo)
+
 -- | Overall state for MonadTimed
 data Scenario m c = Scenario
-    { -- | set of sleeping threads
-      _events         :: PQ.MinQueue (Event m c)
-      -- | current virtual time
-    , _curTime        :: Microsecond
+    { -- | Set of sleeping threads
+      _events          :: PQ.MinQueue (Event m c)
+      -- | Current virtual time
+    , _curTime         :: Microsecond
       -- | For each thread, exception which has been thrown to it (if any has)
     , _asyncExceptions :: M.Map PureThreadId SomeException
       -- | Number of created threads ever
-    , _threadsCounter :: Integer
+    , _threadsCounter  :: Integer
+      -- | Information about locks
+    , _locksInfo       :: LocksInfo m c
     }
 
 $(makeLenses ''Scenario)
@@ -114,6 +132,11 @@ emptyScenario =
     , _curTime = 0
     , _asyncExceptions = M.empty
     , _threadsCounter = 0
+    , _locksInfo =
+        LocksInfo
+        { _locksCounter = 0
+        , _lockedThreads = M.empty
+        }
     }
 
 -- | Heart of TimedT monad
@@ -371,3 +394,37 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
                         Nothing -> waitForRes' ref tid end
                         Just r  -> return r
         delay = 10 :: Millisecond
+
+newLock :: Monad m => TimedT m Lock
+newLock = wrapCore . Core $ zoom locksInfo $ do
+    lid <- use locksCounter
+    locksCounter += 1
+    return $ Lock lid
+
+blockOn :: Monad m => Lock -> TimedT m ()
+blockOn lock = do
+    ctx <- TimedT ask
+    let event following =
+            Event
+            { _threadCtx = ctx
+            , _timestamp = -1
+            , _action = wrapCore following
+            }
+    TimedT . lift . ContT $ \c -> Core $ zoom locksInfo $
+        lockedThreads %= M.alter (<> Just [event $ c ()]) lock
+
+wakeUp :: Monad m => Lock -> TimedT m ()
+wakeUp lock =
+    wrapCore . Core $ do 
+        time <- use curTime
+        maybeThread <- zoom locksInfo $ do 
+            maybeThreads <- use $ lockedThreads . to (M.lookup lock)
+            when (isJust maybeThreads) $ 
+                lockedThreads %= M.update maybeInit lock
+            return $ last <$> maybeThreads
+        when (isJust maybeThread) $
+            let thread = fromJust maybeThread
+            in  events %= PQ.insert thread{ _timestamp = time }
+  where
+    maybeInit [] = Nothing
+    maybeInit l  = Just $ init l
