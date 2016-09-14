@@ -1,6 +1,6 @@
 name:                time-warp
 version:             0.1.0.0
-synopsis:            TODO
+synopsis:            execution emulation, time and threads management
 homepage:            http://gitlab.serokell.io/serokell-team/time-warp
 license:             GPL-3
 license-file:        LICENSE
@@ -12,18 +12,19 @@ cabal-version:       >=1.18
 
 library
   exposed-modules:     Control.TimeWarp.Logging
+
                      , Control.TimeWarp.Rpc
-                     , Control.TimeWarp.Timed
-  other-modules:       Control.TimeWarp.Rpc.Arbitrary
                      , Control.TimeWarp.Rpc.MonadRpc
                      , Control.TimeWarp.Rpc.MsgPackRpc
                      , Control.TimeWarp.Rpc.PureRpc
 
-                     , Control.TimeWarp.Timed.Arbitrary
-                     , Control.TimeWarp.Timed.Misc
+                     , Control.TimeWarp.Timed
                      , Control.TimeWarp.Timed.MonadTimed
+                     , Control.TimeWarp.Timed.Misc
                      , Control.TimeWarp.Timed.TimedIO
                      , Control.TimeWarp.Timed.TimedT
+  other-modules:       Control.TimeWarp.Rpc.Arbitrary
+                     , Control.TimeWarp.Timed.Arbitrary
   build-depends:       ansi-terminal
                      , base >=4.8 && <4.9
                      , base64-bytestring >= 1.0.0.1

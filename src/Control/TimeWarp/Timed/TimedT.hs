@@ -8,19 +8,17 @@
 {-# LANGUAGE TypeFamilies              #-}
 {-# LANGUAGE UndecidableInstances      #-}
 
--- | This module contains TimedT transformer, which is pure implementation
---   of MonadTimed.
-
+-- | This module contains pure implementation of MonadTimed.
 module Control.TimeWarp.Timed.TimedT
        ( TimedT
+       , PureThreadId
        , runTimedT
        , evalTimedT
-       , ThreadId
-       , PureThreadId
        ) where
 
 import           Control.Applicative               ((<|>))
-import           Control.Exception.Base            (AsyncException (ThreadKilled),
+import           Control.Exception.Base            (AsyncException
+                                                    (ThreadKilled),
                                                     Exception (fromException),
                                                     SomeException (..))
 
@@ -62,9 +60,12 @@ import           Control.TimeWarp.Timed.MonadTimed (Microsecond, Millisecond,
 
 type Timestamp = Microsecond
 
--- | Analogy to ThreadId for emulation
+-- | Analogy to `ThreadId` for emulation
 newtype PureThreadId = PureThreadId Integer
-    deriving (Eq, Ord, Show)
+    deriving (Eq, Ord)
+
+instance Show PureThreadId where
+    show (PureThreadId tid) = "PureThreadId " ++ show tid
 
 -- | Private context for each pure thread
 data ThreadCtx c = ThreadCtx
@@ -132,17 +133,15 @@ instance MonadState s m => MonadState s (Core m) where
     state = lift . state
 
 -- | Pure implementation of MonadTimed.
---   It stores an event queue, on `wait` continuation is passed to that queue
+-- Threads are emulated, whole execution takes place in a single (real) thread.
+-- This allows to execute whole scenarios on the spot.
+--
+-- Each action is considered 0-cost in performance, the only way to change
+-- current virtual time is to call `wait` or derived function.
 newtype TimedT m a = TimedT
     { unwrapTimedT :: ReaderT (ThreadCtx (Core m)) (ContT () (Core m)) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow)
 
--- | When stacking with other monads, take note of order of nesting.
---   For example, StateT above TimedT will clone it's state on fork, thus
---   all pure thread would have their own states. On the other hand,
---   StateT below TimedT would share it's state between all threads.
-
--- | TODO: about 0 duration actions
 instance MonadTrans TimedT where
     lift = TimedT . lift . lift . lift
 
@@ -179,8 +178,7 @@ instance (MonadCatch m, MonadIO m) => MonadCatch (TimedT m) where
 contHandler :: MonadThrow m => Handler m ()
 contHandler = Handler $ \(ContException e) -> throwM e
 
--- NOTE: This instance doesn't allow to block `ThreadKilledException`,
--- thrown then life of thread expires.
+-- NOTE: This instance is incorrect
 instance (MonadIO m, MonadMask m) => MonadMask (TimedT m) where
     mask a = TimedT $ ReaderT $ \r -> ContT $ \c ->
         mask $ \u -> runContT (runReaderT (unwrapTimedT $ a $ q u) r) c
@@ -217,7 +215,11 @@ launchTimedT t = flip evalStateT emptyScenario
   where
     vacuumCtx = error "Access to thread context from nowhere"
 
--- | Starts timed evaluation. Finishes when no more scheduled actions remain.
+-- | Starts timed evaluation. Finishes when no more active threads remain.
+--
+-- Might be slightly more efficient than `evalTimedT`
+-- (TODO: however this is not a sagnificant reason to use the function,
+-- suggest excluding it from export list)
 runTimedT :: (MonadIO m, MonadCatch m) => TimedT m () -> m ()
 runTimedT timed = launchTimedT $ do
     -- execute first action (main thread)
@@ -229,24 +231,23 @@ runTimedT timed = launchTimedT $ do
             (ev, evs') <- fromJust . PQ.minView <$> use events
             events .= evs'
             return ev
+        -- rewind current time
         wrapCore . Core $ curTime .= nextEv ^. timestamp
-
-        -- awake the thread
+        -- get some thread info
         let ctx = nextEv ^. threadCtx
             tid = ctx ^. threadId
-
         -- extract possible exception thrown to this thread
         maybeAsyncExc <- wrapCore $ Core $ do
             maybeExc <- use $ asyncExceptions . to (M.lookup tid)
             asyncExceptions %= M.delete tid
             return maybeExc
 
-        let -- die if time has come
+        let -- die if received async exception
             maybeDie = traverse throwM maybeAsyncExc
             act      = maybeDie >> runInSandbox ctx (nextEv ^. action)
             -- catch with handlers from handlers stack
-            -- catch which is performed in instance MonadCatch is not enough,
-            -- cause on "wait" "catch" scope finishes, we need to catch
+            -- `catch` which is performed in instance MonadCatch is not enough,
+            -- cause on `wait` `catch`'s scope finishes, we need to catch
             -- again here
         wrapCore $ (unwrapCore' ctx act) `catchesSeq` (ctx ^. handlers)
 
@@ -267,7 +268,7 @@ runTimedT timed = launchTimedT $ do
             }
 
     -- Apply all handlers from stack.
-    -- In each layer (pair of handlers), ContException should be handled first
+    -- In each layer (pair of handlers), ContException should be handled first.
     catchesSeq = foldl' $ \act (h, hc) -> act `catches` [hc, h]
 
 getNextThreadId :: Monad m => TimedT m PureThreadId
@@ -278,7 +279,7 @@ getNextThreadId = wrapCore . Core $ do
 
 -- | Just like `runTimedT` but makes it possible to get a result.
 evalTimedT
-    :: forall m a . (MonadIO m, MonadCatch m)
+    :: (MonadIO m, MonadCatch m)
     => TimedT m a -> m a
 evalTimedT timed = do
     ref <- liftIO $ newIORef Nothing

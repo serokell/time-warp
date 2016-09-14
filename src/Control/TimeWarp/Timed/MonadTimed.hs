@@ -7,6 +7,12 @@
 
 -- | This module defines typeclass `MonadTimed` with basic functions
 -- to work with time and threads.
+--
+-- #nesting-order
+-- When stacking with other monads, take note of order of nesting.
+-- For example, `StateT` above MonadTimed will clone it's state on fork, thus
+-- all pure thread would have their own states. On the other hand,
+-- `StateT` below `TimedT` would share it's state between all threads.
 
 module Control.TimeWarp.Timed.MonadTimed
     ( -- * Typeclass with basic functions
@@ -77,7 +83,9 @@ class MonadThrow m => MonadTimed m where
     -- | Acquires virtual time.
     localTime :: m Microsecond
 
-    -- | Waits till specified relative time.
+    -- | Waits for specified amount of time.
+    --
+    -- Use `for` to specify relative virtual time, and `till` for absolute one.
     --
     -- >>> runTimedT $ wait (for 1 sec) >> wait (for 5 sec) >> timestamp "now"
     -- [6000000µs] now
@@ -101,6 +109,8 @@ class MonadThrow m => MonadTimed m where
     timeout :: Microsecond -> m a -> m a
 
 -- | Executes an action somewhere in future in another thread.
+--
+-- Use `after` to specify relative virtual time, and `at` for absolute one.
 --
 -- @
 -- schedule time action = fork_ $ wait time >> action
@@ -137,7 +147,7 @@ invoke time action = wait time >> action
 
 -- | Prints current virtual time. For debug purposes.
 --
--- >>> runTimedT $ wait (for 1 mcs) >> timestamp " Look current time here"
+-- >>> runTimedT $ wait (for 1 mcs) >> timestamp "Look current time here"
 -- [1µs] Look current time here
 timestamp :: (MonadTimed m, MonadIO m) => String -> m ()
 timestamp msg = localTime >>= \time -> liftIO . putStrLn $ concat
@@ -243,6 +253,8 @@ ms'     = fromMicroseconds . round . (*) 1000
 sec'    = fromMicroseconds . round . (*) 1000000
 minute' = fromMicroseconds . round . (*) 60000000
 
+
+
 tu :: TimeUnit t => t -> Microsecond
 tu = convertUnit
 
@@ -250,16 +262,17 @@ tu = convertUnit
 -- Following functions are used together with time-controlling functions
 -- (`wait`, `invoke` and others) and serve for two reasons:
 --
--- (1) Accumulate following time parts, allowing to write something like
+-- (1) Defines, whether time is counted from /origin point/ or
+-- current time point.
+--
+-- (2) Accumulate following time parts, allowing to write something like
 --
 -- @
 -- for 1 minute 2 sec 3 mcs
 -- @
 --
--- Order of time parts is irrelevent.
+-- Order of time parts is irrelevant.
 --
--- (2) Defines, whether time is counted from /origin point/ or
--- current time point.
 
 -- | Time point by given virtual time.
 at, till :: TimeAcc1 t => t

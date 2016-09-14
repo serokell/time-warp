@@ -2,6 +2,7 @@
 
 module Control.TimeWarp.Timed.Misc
        ( repeatForever
+       , sleepForever
        ) where
 
 import           Control.Concurrent.STM.TVar       (newTVarIO, readTVarIO,
@@ -12,7 +13,7 @@ import           Control.Monad.STM                 (atomically)
 import           Control.Monad.Trans               (MonadIO, liftIO)
 
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimed,
-                                                    for, fork_, mcs, ms,
+                                                    for, fork_, mcs, ms, minute,
                                                     startTimer, wait)
 
 -- | Repeats an action periodically.
@@ -43,3 +44,8 @@ repeatForever period handler action = do
         case res of
             Nothing -> waitForRes nextDelay
             Just t  -> wait (for t mcs) >> continue
+
+-- | Sleep forever
+-- @TODO: would be better to use `MVar` to block thread
+sleepForever :: MonadTimed m => m ()
+sleepForever = wait (for 100500 minute) >> sleepForever

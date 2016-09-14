@@ -27,10 +27,11 @@ import           Control.TimeWarp.Timed.MonadTimed (Microsecond,
                                                     MonadTimedError
                                                     (MTTimeoutError))
 
+-- | Default implementation for `IO`, real mode.
 newtype TimedIO a = TimedIO
     { getTimedIO :: ReaderT Microsecond IO a
-    } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch
-               , MonadBase IO, MonadMask)
+    } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
+               MonadBase IO, MonadMask)
 
 instance MonadBaseControl IO TimedIO where
     type StM TimedIO a = a
@@ -58,7 +59,7 @@ instance MonadTimed TimedIO where
         res <- liftIO . T.timeout (fromIntegral t) . runReaderT action =<< ask
         maybe (throwM $ MTTimeoutError "Timeout has exceeded") return res
 
--- | Launches this timed action
+-- | Launches real mode.
 runTimedIO :: TimedIO a -> IO a
 runTimedIO = (curTime >>= ) . runReaderT . getTimedIO
 

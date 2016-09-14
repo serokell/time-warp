@@ -10,19 +10,25 @@ module Control.TimeWarp.Rpc.PureRpc
        ( PureRpc
        , runPureRpc
        , runPureRpc_
+       , ConnectionSuccess (..)
        , Delays (..)
+       , getRandomTR
        ) where
 
-import           Control.Lens                  (makeLenses, use, (%%=), (%=))
+import           Control.Lens                  (makeLenses, use, (%%=), (%=),
+                                                (%~), both)
 import           Control.Monad                 (forM_)
 import           Control.Monad.Catch           (MonadCatch, MonadMask,
                                                 MonadThrow, throwM)
-import           Control.Monad.Random          (Rand, runRand)
+import           Control.Monad.Random          (Rand, runRand,
+                                                MonadRandom (getRandomR))
 import           Control.Monad.State           (MonadState (get, put, state),
                                                 StateT, evalStateT)
 import           Control.Monad.Trans           (MonadIO, MonadTrans, lift)
 import           Data.Default                  (Default, def)
 import           Data.Map                      as Map
+import           Data.Time.Units               (toMicroseconds,
+                                                fromMicroseconds)
 import           System.Random                 (StdGen)
 
 import           Data.MessagePack              (Object)
@@ -36,8 +42,9 @@ import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Host, Method (..),
                                                 methodBody, methodName)
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..),
                                                 TimedT, evalTimedT, for, mcs,
-                                                localTime, minute, runTimedT,
-                                                wait, PureThreadId)
+                                                localTime, runTimedT,
+                                                wait, PureThreadId,
+                                                sleepForever)
 
 localhost :: Host
 localhost = "127.0.0.1"
@@ -51,6 +58,13 @@ localhost = "127.0.0.1"
 
 data RpcStage = Request | Response
 
+-- | Describes obstructions occured on executing rpc request.
+data ConnectionSuccess
+    -- | Connection established in specified amout of time.
+    = ConnectedIn Microsecond
+    -- | Connection would be never established, client hangs.
+    | NeverConnected
+
 -- @TODO Remove these hard-coded values
 -- | Describes network nastyness.
 --
@@ -59,47 +73,48 @@ data RpcStage = Request | Response
 -- * Always 1 second delay:
 --
 -- @
--- Delays $ \\_ _ -> return $ Just (interval 1 sec)
+-- Delays $ \\_ _ -> return $ ConnectedIn (interval 1 sec)
 -- @
 --
--- * Delay changes between 1 and 5 seconds (with granularity of 1 mcs):
+-- * Delay varies between 1 and 5 seconds (with granularity of 1 mcs):
 --
 -- @
--- Delays $ \\_ _ -> do
---     delay <- fromMicroseconds $ getRandomR $ both %~ toMicroseconds $ (interval 1 sec :: Microsecond, interval 5 sec)
---     return $ Just delay
+-- Delays $ \\_ _ -> ConnectedIn \<$\> getRandomTR (interval 1 sec, interval 5 sec)
 -- @
 --
--- * Connection established with probability of 1/6:
+-- * For first 10 seconds connection is established with probability of 1/6:
 --
 -- @
 -- Delays $ \\_ time -> do
 --     p <- getRandomR (0, 5)
---     if p == 0
---         then return $ Just 0
---         else return Nothing
+--     if (p == 0) && (time <= interval 10 sec)
+--         then return $ ConnectedIn 0
+--         else return NeverConnected
 -- @
 newtype Delays = Delays
-    { -- | Basing on current virtual time, returns `Just` delay,
-      -- if connection should be considered as successfully established,
-      -- and `Nothing` otherwise.
+    { -- | Basing on current virtual time, returns delay in executing
+      -- rpc request.
       evalDelay :: RpcStage
                 -> Microsecond
-                -> Rand StdGen (Maybe Microsecond)
+                -> Rand StdGen ConnectionSuccess
     }
 
--- This is needed for QC
+-- This is needed for QC.
 instance Show Delays where
     show _ = "Delays"
 
--- | Descirbes reliable network
+-- | Descirbes reliable network.
 instance Default Delays where
-    def = Delays . const . const . return . Just $ 0
+    def = Delays . const . const . return . ConnectedIn $ 0
 
--- | Keeps servers' methods
+-- | Return a randomly-selected time value in specified range.
+getRandomTR :: MonadRandom m => (Microsecond, Microsecond) -> m Microsecond
+getRandomTR = fmap fromMicroseconds . getRandomR . (both %~ toMicroseconds)
+
+-- | Keeps servers' methods.
 type Listeners m = Map.Map (NetworkAddress, String) ([Object] -> m Object)
 
--- | Keeps global network information
+-- | Keeps global network information.
 data NetInfo m = NetInfo
     { _listeners :: Listeners m
     , _randSeed  :: StdGen
@@ -108,7 +123,7 @@ data NetInfo m = NetInfo
 
 $(makeLenses ''NetInfo)
 
--- | Pure implementation of RPC
+-- | Pure implementation of RPC.
 newtype PureRpc m a = PureRpc
     { unwrapPureRpc :: StateT Host (TimedT (StateT (NetInfo (PureRpc m)) m)) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
@@ -158,7 +173,7 @@ runPureRpc_ _randSeed _delays (PureRpc rpc) =
     net        = NetInfo{..}
     _listeners = Map.empty
 
--- TODO: use normal exceptions here
+-- TODO: use normal exceptions here.
 request :: (Monad m, MonadThrow m, MessagePack a)
         => Client a
         -> (Listeners (PureRpc m), NetworkAddress)
@@ -196,8 +211,6 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
                     listeners %=
                     Map.insert ((host, port), methodName) methodBody
            sleepForever
-      where
-        sleepForever = wait (for 100500 minute) >> sleepForever
 
 waitDelay
     :: (WithNamedLogger m, MonadThrow m, MonadIO m, MonadCatch m)
@@ -205,6 +218,9 @@ waitDelay
 waitDelay stage =
     PureRpc $
     do delays' <- lift . lift $ use delays
-       time <- localTime
-       delay <- lift . lift $ randSeed %%= runRand (evalDelay delays' stage time)
-       wait $ maybe (for 99999 minute) (`for` mcs) delay
+       time    <- localTime
+       delay   <- lift . lift $ randSeed %%=
+            runRand (evalDelay delays' stage time)
+       case delay of
+           ConnectedIn connDelay -> wait (for connDelay mcs)
+           NeverConnected        -> sleepForever
