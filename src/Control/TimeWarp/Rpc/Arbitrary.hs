@@ -19,4 +19,4 @@ instance Arbitrary PureRpc.Delays where
     arbitrary =
         pure $
         PureRpc.Delays
-            (\_ _ -> ConnectedIn . fromMicroseconds <$> getRandomR (0, 1000))
+            (\_ -> ConnectedIn . fromMicroseconds <$> getRandomR (0, 1000))
