@@ -14,6 +14,9 @@ module Control.TimeWarp.Timed.TimedT
        , PureThreadId
        , runTimedT
        , evalTimedT
+       , newLock
+       , blockOn
+       , wakeUp
        ) where
 
 import           Control.Applicative               ((<|>))
@@ -24,7 +27,8 @@ import           Control.Exception.Base            (AsyncException
 
 import           Control.Lens                      (makeLenses, to, use, view,
                                                     (%=), (%~), (&), (+=), (.=),
-                                                    (<&>), (^.), zoom)
+                                                    (<&>), (^.), zoom, folded,
+                                                    sumOf, _2)
 import           Control.Monad                     (void, when)
 import           Control.Monad.Catch               (Handler (..), MonadCatch,
                                                     MonadMask, MonadThrow,
@@ -275,8 +279,9 @@ runTimedT timed = launchTimedT $ do
             -- again here
         wrapCore $ (unwrapCore' ctx act) `catchesSeq` (ctx ^. handlers)
 
+    reportAboutBlockedThreads
   where
-    notDone :: Monad m => TimedT m Bool
+    -- notDone :: Monad m => TimedT m Bool
     notDone = wrapCore . Core . use $ events . to (not . PQ.null)
 
     -- put empty continuation to an action (not our own!)
@@ -294,6 +299,13 @@ runTimedT timed = launchTimedT $ do
     -- Apply all handlers from stack.
     -- In each layer (pair of handlers), ContException should be handled first.
     catchesSeq = foldl' $ \act (h, hc) -> act `catches` [hc, h]
+
+    reportAboutBlockedThreads = do
+        allLocked <- wrapCore . Core $ use $ locksInfo . lockedThreads
+        let total = sumOf (folded . _2 . to length) $ M.toList allLocked
+        when (total > 0) $ return ()
+            -- TODO: complete (but handle with logging first)
+            -- wrapCore . logDebug $ "Threads remained blocked: " ++show total
 
 getNextThreadId :: Monad m => TimedT m PureThreadId
 getNextThreadId = wrapCore . Core $ do
@@ -396,12 +408,14 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
                         Just r  -> return r
         delay = 10 :: Millisecond
 
+-- | Creates new lock
 newLock :: Monad m => TimedT m Lock
 newLock = wrapCore . Core $ zoom locksInfo $ do
     lid <- use locksCounter
     locksCounter += 1
     return $ Lock lid
 
+-- | This thread gets blocked till next call of `wakeUp` on this lock.
 blockOn :: Monad m => Lock -> TimedT m ()
 blockOn lock = do
     ctx <- TimedT ask
@@ -414,6 +428,9 @@ blockOn lock = do
     TimedT . lift . ContT $ \c -> Core $ zoom locksInfo $
         lockedThreads %= M.alter (<> Just [event $ c ()]) lock
 
+-- | Wakes up a thread, blocked on this lock. Execution is not yielded to the thread immidiatelly, but it would awake at the same moment as this function is called (in terms of virtual time).
+-- If there are not blocked threads, nothing happens.
+-- Threads are awaken in FIFO order.
 wakeUp :: Monad m => Lock -> TimedT m ()
 wakeUp lock =
     wrapCore . Core $ do
@@ -427,8 +444,9 @@ wakeUp lock =
             let thread = fromJust maybeThread
             in  events %= PQ.insert thread{ _timestamp = time }
   where
-    maybeInit [] = Nothing
-    maybeInit l  = Just $ init l
+    maybeInit []  = Nothing
+    maybeInit [_] = Nothing
+    maybeInit l   = Just $ init l
 
 -- | Primitive with `Control.Concurrent.MVar.MVar` functionality for `TimedT`
 data PureMVar a = PureMVar
@@ -464,18 +482,19 @@ instance MonadIO m => MonadMVar (TimedT m) where
         v <- liftIO $ readIORef ref
         if (isJust v)
             then do
-                wakeUp  (m ^. takeLock)
-                blockOn (m ^. putLock)
+                blockOn $ m ^. putLock
                 putMVar m a
-            else liftIO $ writeIORef ref $ Just a
+            else do
+                liftIO $ writeIORef ref $ Just a
+                wakeUp $ m ^. takeLock
     takeMVar m = do
         let ref = m ^. value
         v <- liftIO $ readIORef ref
         if (isJust v)
             then do
                 liftIO $ writeIORef ref Nothing
+                wakeUp $ m ^. putLock
                 return $ fromJust v
             else do
-                wakeUp  (m ^. putLock)
-                blockOn (m ^. takeLock)
+                blockOn $ m ^. takeLock
                 takeMVar m
