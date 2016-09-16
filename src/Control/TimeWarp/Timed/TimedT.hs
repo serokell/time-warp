@@ -243,7 +243,7 @@ runTimedT timed = launchTimedT $ do
             return maybeExc
 
         let -- die if received async exception
-            maybeDie = traverse throwM maybeAsyncExc
+            maybeDie = traverse throwInnard maybeAsyncExc
             act      = maybeDie >> runInSandbox ctx (nextEv ^. action)
             -- catch with handlers from handlers stack
             -- `catch` which is performed in instance MonadCatch is not enough,
@@ -270,6 +270,10 @@ runTimedT timed = launchTimedT $ do
     -- Apply all handlers from stack.
     -- In each layer (pair of handlers), ContException should be handled first.
     catchesSeq = foldl' $ \act (h, hc) -> act `catches` [hc, h]
+
+    throwInnard someException =
+        case someException of
+            SomeException e -> throwM e
 
 getNextThreadId :: Monad m => TimedT m PureThreadId
 getNextThreadId = wrapCore . Core $ do
