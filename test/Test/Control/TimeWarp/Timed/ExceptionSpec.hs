@@ -5,21 +5,15 @@ module Test.Control.TimeWarp.Timed.ExceptionSpec
        ( spec
        ) where
 
-import           Control.Concurrent.STM       (atomically)
-import           Control.Concurrent.STM.TVar  (TVar, modifyTVar, newTVarIO,
-                                               readTVarIO)
 import           Control.Exception.Base       (ArithException (Overflow),
                                                AsyncException (ThreadKilled),
                                                SomeException)
 import           Control.Monad.Catch          (catch, catchAll, throwM)
-import           Control.Monad.IO.Class       (liftIO)
-import           Control.Monad.Trans          (MonadIO)
 import           Test.Hspec                   (Spec, before, describe)
 import           Test.Hspec.QuickCheck        (prop)
 import           Test.QuickCheck              (NonNegative (..), Property)
 import           Test.QuickCheck.Monadic      (monadicIO)
-import           Test.QuickCheck.Property     (Result (reason), failed,
-                                               ioProperty, succeeded)
+import           Test.QuickCheck.Property     (ioProperty)
 
 import           Control.TimeWarp.Logging     (Severity (Error), initLogging)
 import           Control.TimeWarp.Timed       (Microsecond, TimedT, after,
@@ -27,6 +21,7 @@ import           Control.TimeWarp.Timed       (Microsecond, TimedT, after,
                                                sec, wait, for, throwTo)
 
 import           Test.Control.TimeWarp.Common ()
+import           Test.Control.TimeWarp.Timed.Checkpoints (withCheckPoints)
 
 spec :: Spec
 spec =
@@ -252,36 +247,3 @@ throwToCanKillThread =
 
 runEmu :: TimedT IO () -> IO ()
 runEmu = runTimedT
-
--- Principle of checkpoints: every checkpoint has it's id
--- Checkpoints should be visited in according order: 1, 2, 3 ...
-newtype CheckPoints = CP { getCP :: TVar (Either String Int) }
-
-initCheckPoints :: MonadIO m => m CheckPoints
-initCheckPoints = fmap CP $ liftIO $ newTVarIO $ Right 0
-
-visitCheckPoint :: MonadIO m => CheckPoints -> Int -> m ()
-visitCheckPoint cp curId = liftIO $ atomically $ modifyTVar (getCP cp) $
-    \wasId ->
-        if wasId == Right (curId - 1)
-            then Right curId
-            else Left $ either id (showError curId) wasId
-  where
-    showError cur was = mconcat
-        ["Wrong chechpoint. Expected "
-        , show (was + 1)
-        , ", but visited "
-        , show cur
-        ]
-
-assertCheckPoints :: MonadIO m => CheckPoints -> m Result
-assertCheckPoints = fmap mkRes . liftIO . readTVarIO . getCP
-  where
-    mkRes (Left msg) = failed { reason = msg }
-    mkRes (Right _)  = succeeded
-
-withCheckPoints :: MonadIO m => ((Int -> m ()) -> IO a) -> IO Result
-withCheckPoints act = do
-    cp <- initCheckPoints
-    _  <- act $ liftIO . visitCheckPoint cp
-    assertCheckPoints cp

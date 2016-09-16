@@ -19,8 +19,9 @@ library
                      , Control.TimeWarp.Rpc.PureRpc
 
                      , Control.TimeWarp.Timed
-                     , Control.TimeWarp.Timed.MonadTimed
                      , Control.TimeWarp.Timed.Misc
+                     , Control.TimeWarp.Timed.MonadTimed
+                     , Control.TimeWarp.Timed.MVar
                      , Control.TimeWarp.Timed.TimedIO
                      , Control.TimeWarp.Timed.TimedT
   other-modules:       Control.TimeWarp.Rpc.Arbitrary
@@ -88,6 +89,7 @@ test-suite time-warp-test
 
                      , Test.Control.TimeWarp.Timed.ExceptionSpec
                      , Test.Control.TimeWarp.Timed.MonadTimedSpec
+                     , Test.Control.TimeWarp.Timed.MVarSpec
 
                      , Test.Control.TimeWarp.Common
 
