@@ -7,7 +7,8 @@
 {-# LANGUAGE UndecidableInstances  #-}
 {-# LANGUAGE ViewPatterns          #-}
 
--- | Logging functionality. This module is wrapper over hslogger
+-- | Logging functionality. This module is wrapper over 
+-- <http://hackage.haskell.org/package/hslogger hslogger>.
 
 module Control.TimeWarp.Logging
        ( Severity (..)

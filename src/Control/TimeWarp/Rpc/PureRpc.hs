@@ -19,7 +19,7 @@ module Control.TimeWarp.Rpc.PureRpc
 import           Control.Exception.Base        (Exception)
 import           Control.Lens                  (makeLenses, use, (%%=), (%=),
                                                 (%~), both, to)
-import           Control.Monad                 (forM_, when)
+import           Control.Monad                 (forM_)
 import           Control.Monad.Catch           (MonadCatch, MonadMask,
                                                 MonadThrow, throwM)
 import           Control.Monad.Random          (Rand, runRand,
