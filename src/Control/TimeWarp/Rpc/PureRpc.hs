@@ -167,7 +167,7 @@ runPureRpc _randSeed _delays (PureRpc rpc) =
     net        = NetInfo{..}
     _listeners = Map.empty
 
--- | Launches distributed scenario without result. 
+-- | Launches distributed scenario without result.
 -- May be slightly more efficient.
 runPureRpc_
     :: (MonadIO m, MonadCatch m)
