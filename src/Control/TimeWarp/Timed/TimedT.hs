@@ -35,7 +35,8 @@ import           Control.Monad.Cont                (ContT (..), runContT)
 import           Control.Monad.Loops               (whileM_)
 import           Control.Monad.Reader              (ReaderT (..), ask,
                                                     runReaderT)
-import           Control.Monad.State               (MonadState (get, put, state),
+import           Control.Monad.State               (MonadState
+                                                    (get, put, state),
                                                     StateT, evalStateT)
 import           Control.Monad.Trans               (MonadIO, MonadTrans, lift,
                                                     liftIO)
@@ -58,9 +59,7 @@ import           Control.TimeWarp.Timed.MonadTimed (Microsecond, Millisecond,
                                                     (MTTimeoutError),
                                                     for, localTime, ms, timeout,                                                    killThread, mcs)
 
-type Timestamp = Microsecond
-
--- | Analogy to `ThreadId` for emulation
+-- | Analogy to `Control.Concurrent.ThreadId` for emulation
 newtype PureThreadId = PureThreadId Integer
     deriving (Eq, Ord)
 
@@ -80,7 +79,7 @@ $(makeLenses ''ThreadCtx)
 
 -- | Timestamped action
 data Event m c = Event
-    { _timestamp :: Timestamp
+    { _timestamp :: Microsecond
     , _action    :: m ()
     , _threadCtx :: ThreadCtx c
     }
@@ -96,13 +95,13 @@ instance Ord (Event m c) where
 -- | Overall state for MonadTimed
 data Scenario m c = Scenario
     { -- | set of sleeping threads
-      _events         :: PQ.MinQueue (Event m c)
+      _events          :: PQ.MinQueue (Event m c)
       -- | current virtual time
-    , _curTime        :: Microsecond
+    , _curTime         :: Microsecond
       -- | For each thread, exception which has been thrown to it (if any has)
     , _asyncExceptions :: M.Map PureThreadId SomeException
       -- | Number of created threads ever
-    , _threadsCounter :: Integer
+    , _threadsCounter  :: Integer
     }
 
 $(makeLenses ''Scenario)
@@ -133,14 +132,25 @@ instance MonadState s m => MonadState s (Core m) where
     state = lift . state
 
 -- | Pure implementation of MonadTimed.
--- Threads are emulated, whole execution takes place in a single (real) thread.
+-- Threads are emulated, whole execution takes place in a single thread.
 -- This allows to execute whole scenarios on the spot.
 --
 -- Each action is considered 0-cost in performance, the only way to change
 -- current virtual time is to call `wait` or derived function.
+--
+-- Note, that monad inside TimedT transformer is shared between all threads.
+-- Control.TimeWarp.Timed.MonadTimed/#monads-above
 newtype TimedT m a = TimedT
     { unwrapTimedT :: ReaderT (ThreadCtx (Core m)) (ContT () (Core m)) a
-    } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow)
+    } deriving (Functor, Applicative, Monad, MonadIO)
+
+-- | When thread dies from uncought exception, this is reported via logger
+-- (TODO: which logger?).
+-- It doesn't apply to main thread (which is not produced by `fork`),
+-- it's exception is propagaded outside of the monad.
+instance MonadThrow m => MonadThrow (TimedT m) where
+    -- docs for derived instance declarations is not supported yet :(
+    throwM = TimedT . throwM
 
 instance MonadTrans TimedT where
     lift = TimedT . lift . lift . lift
@@ -178,7 +188,7 @@ instance (MonadCatch m, MonadIO m) => MonadCatch (TimedT m) where
 contHandler :: MonadThrow m => Handler m ()
 contHandler = Handler $ \(ContException e) -> throwM e
 
--- NOTE: This instance is incorrect
+-- | NOTE: This instance is incorrect
 instance (MonadIO m, MonadMask m) => MonadMask (TimedT m) where
     mask a = TimedT $ ReaderT $ \r -> ContT $ \c ->
         mask $ \u -> runContT (runReaderT (unwrapTimedT $ a $ q u) r) c
@@ -215,10 +225,11 @@ launchTimedT t = flip evalStateT emptyScenario
   where
     vacuumCtx = error "Access to thread context from nowhere"
 
--- | Starts timed evaluation. Finishes when no more active threads remain.
+-- | Launches the scenario emulating threads and time.
+-- Finishes when no more active threads remain.
 --
 -- Might be slightly more efficient than `evalTimedT`
--- (TODO: however this is not a sagnificant reason to use the function,
+-- (NOTE: however this is not a sagnificant reason to use the function,
 -- suggest excluding it from export list)
 runTimedT :: (MonadIO m, MonadCatch m) => TimedT m () -> m ()
 runTimedT timed = launchTimedT $ do
@@ -281,7 +292,7 @@ getNextThreadId = wrapCore . Core $ do
     threadsCounter += 1
     return tid
 
--- | Just like `runTimedT` but makes it possible to get a result.
+-- | Just like `runTimedT`, but makes it possible to get a result.
 evalTimedT
     :: (MonadIO m, MonadCatch m)
     => TimedT m a -> m a

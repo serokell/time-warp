@@ -1,4 +1,4 @@
--- | MonadTimed related helpers.
+-- | `MonadTimed` related helper functions.
 
 module Control.TimeWarp.Timed.Misc
        ( repeatForever

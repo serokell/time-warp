@@ -3,7 +3,8 @@
 {-# LANGUAGE Rank2Types            #-}
 {-# LANGUAGE TypeFamilies          #-}
 
--- | IO-based implementation of MonadTimed type class.
+-- | Real-mode implementation of `MonadTimed`.
+-- Each function in inplementation refers to plain `IO`.
 
 module Control.TimeWarp.Timed.TimedIO
        ( TimedIO
@@ -27,9 +28,12 @@ import           Control.TimeWarp.Timed.MonadTimed (Microsecond,
                                                     MonadTimedError
                                                     (MTTimeoutError))
 
--- | Default implementation for `IO`, real mode.
+-- | Default implementation for `IO`, i.e. real mode.
+-- `wait` refers to `Control.Concurrent.threadDelay`,
+-- `fork` refers to `Control.Concurrent.forkIO`, and so on.
 newtype TimedIO a = TimedIO
-    { getTimedIO :: ReaderT Microsecond IO a
+    { -- Reader's environment stores the /origin/ point
+      getTimedIO :: ReaderT Microsecond IO a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
                MonadBase IO, MonadMask)
 
@@ -59,7 +63,7 @@ instance MonadTimed TimedIO where
         res <- liftIO . T.timeout (fromIntegral t) . runReaderT action =<< ask
         maybe (throwM $ MTTimeoutError "Timeout has exceeded") return res
 
--- | Launches real mode.
+-- | Launches scenario using real time and threads.
 runTimedIO :: TimedIO a -> IO a
 runTimedIO = (curTime >>= ) . runReaderT . getTimedIO
 

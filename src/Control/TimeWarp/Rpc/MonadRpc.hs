@@ -6,7 +6,8 @@
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE ViewPatterns          #-}
 
--- | This module contains MonadRpc which abstracts over RPC communication.
+-- | This module contains `MonadRpc` typeclass which abstracts over
+-- RPC communication.
 
 module Control.TimeWarp.Rpc.MonadRpc
        ( Port
@@ -24,12 +25,6 @@ module Control.TimeWarp.Rpc.MonadRpc
        , S.ServerT
        , S.MethodType
        , C.RpcError(..)
-       , serverTypeRestriction0
-       , serverTypeRestriction1
-       , serverTypeRestriction2
-       , serverTypeRestriction3
-       , serverTypeRestriction4
-       , serverTypeRestriction5
        ) where
 
 import           Control.Monad.Catch        (MonadCatch (catch),
@@ -104,30 +99,6 @@ method name f = Method
 instance Monad m => S.MethodType m Object where
     toBody res [] = return res
     toBody _   _  = error "Too many arguments!"
-
--- * Helps restrict method type
--- TODO: example of usage
-serverTypeRestriction0 :: Monad m => m (S.ServerT m a -> S.ServerT m a)
-serverTypeRestriction0 = return id
-
-serverTypeRestriction1 :: Monad m => m ((b -> S.ServerT m a) -> (b -> S.ServerT m a))
-serverTypeRestriction1 = return id
-
-serverTypeRestriction2 :: Monad m => m ((c -> b -> S.ServerT m a) -> (c -> b -> S.ServerT m a))
-serverTypeRestriction2 = return id
-
-serverTypeRestriction3 :: Monad m => m ((d -> c -> b -> S.ServerT m a) -> (d -> c -> b -> S.ServerT m a))
-serverTypeRestriction3 = return id
-
-serverTypeRestriction4
-    :: Monad m
-    => m ((e -> d -> c -> b -> S.ServerT m a) -> (e -> d -> c -> b -> S.ServerT m a))
-serverTypeRestriction4 = return id
-
-serverTypeRestriction5
-    :: Monad m
-    => m ((f -> e -> d -> c -> b -> S.ServerT m a) -> (f -> e -> d -> c -> b -> S.ServerT m a))
-serverTypeRestriction5 = return id
 
 instance MonadThrow m => MonadThrow (S.ServerT m) where
     throwM = lift . throwM

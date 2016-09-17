@@ -4,7 +4,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies          #-}
 
--- | msgpack-rpc based implementation of MonadRpc which uses real network.
+-- | This module contains implementation of `MonadRpc` for real mode
+-- (network capabilities provided by OS are used).
 
 module Control.TimeWarp.Rpc.MsgPackRpc
        ( MsgPackRpc
@@ -30,11 +31,15 @@ import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Method (..),
                                                 MonadRpc (..))
 import           Control.TimeWarp.Timed        (MonadTimed (..), TimedIO)
 
+-- | Wrapper over `Control.TimeWarp.Timed.TimedIO`, which implements `MonadRpc`
+-- using <https://hackage.haskell.org/package/msgpack-rpc-1.0.0 msgpack-rpc>.
 newtype MsgPackRpc a = MsgPackRpc
-    { runMsgPackRpc :: TimedIO a
+    { -- | Launches distributed scenario using real network.
+      runMsgPackRpc :: TimedIO a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadBase IO,
                 MonadThrow, MonadCatch, MonadMask)
 
+-- | Implementation refers to `Control.TimeWarp.Timed.TimedIO.TimedIO`.
 instance MonadTimed MsgPackRpc where
     type ThreadId MsgPackRpc = C.ThreadId
 
@@ -64,7 +69,7 @@ instance MonadRpc MsgPackRpc where
             -- note, underlying rpc accepts a single argument - [Object]
             res <- C.call name args
             liftIO . writeIORef box $ Just res
-        fromMaybe (error "Aaa, execClient didn't return a value!")
+        fromMaybe (error "execClient didn't return a value!")
             <$> readIORef box
 
     serve port methods = S.serve port $ convertMethod <$> methods
@@ -76,7 +81,7 @@ instance MonadRpc m => MonadRpc (ReaderT r m) where
     execClient addr cli = lift $ execClient addr cli
 
     serve port methods = ReaderT $
-                            \r ->  serve port (convert r <$> methods)
+                            \r -> serve port (convert r <$> methods)
       where
         convert :: Monad m => r -> Method (ReaderT r m) -> Method m
         convert r Method {..} =
@@ -84,4 +89,4 @@ instance MonadRpc m => MonadRpc (ReaderT r m) where
 
 instance S.MethodType MsgPackRpc f => S.MethodType MsgPackRpc (MsgPackRpc f)
    where
-    toBody res args = res >>= \r -> S.toBody r args
+    toBody res args = res >>= flip S.toBody args

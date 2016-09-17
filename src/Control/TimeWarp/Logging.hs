@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances  #-}
 {-# LANGUAGE ViewPatterns          #-}
 
--- | Logging functionality.
+-- | Logging functionality. This module is wrapper over hslogger
 
 module Control.TimeWarp.Logging
        ( Severity (..)
@@ -15,17 +15,19 @@ module Control.TimeWarp.Logging
        , initLoggerByName
 
        , LoggerName (..)
-       , LoggerNameBox
 
-         -- * Logging functions
+         -- * Keeping logger name in context
        , WithNamedLogger (..)
+       , LoggerNameBox
        , setLoggerName
        , usingLoggerName
+
+         -- * Logging functions
        , logDebug
        , logError
        , logInfo
-       , logMessage
        , logWarning
+       , logMessage
        ) where
 
 import           Control.Monad.Catch       (MonadThrow, MonadCatch, MonadMask)
@@ -49,7 +51,8 @@ import           System.IO                 (stderr, stdout)
 import           System.Log.Formatter      (simpleLogFormatter)
 import           System.Log.Handler        (setFormatter)
 import           System.Log.Handler.Simple (streamHandler)
-import           System.Log.Logger         (Priority (DEBUG, ERROR, INFO, WARNING),
+import           System.Log.Logger         (Priority
+                                            (DEBUG, ERROR, INFO, WARNING),
                                             logM, removeHandler, rootLoggerName,
                                             setHandlers, setLevel,
                                             updateGlobalLogger)
@@ -118,10 +121,13 @@ colorizer pr s = before ++ s ++ after
 -- | This type class exists to remove boilerplate logging
 -- by adding the logger's name to the environment in each module.
 class WithNamedLogger m where
+    -- | Extract logger name from context
     getLoggerName :: m LoggerName
 
+    -- | Change logger name in context
     modifyLoggerName :: (LoggerName -> LoggerName) -> m a -> m a
 
+-- | Set logger name in context
 setLoggerName :: WithNamedLogger m => LoggerName -> m a -> m a
 setLoggerName = modifyLoggerName . const
 
@@ -145,6 +151,7 @@ instance (Monad m, WithNamedLogger m) =>
 
     modifyLoggerName how = ExceptT . modifyLoggerName how . runExceptT
 
+-- Default implementation of `WithNamedLogger`.
 newtype LoggerNameBox m a = LoggerNameBox
     { loggerNameBoxEntry :: ReaderT LoggerName m a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,

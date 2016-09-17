@@ -1,6 +1,6 @@
 name:                time-warp
 version:             0.1.0.0
-synopsis:            execution emulation, time and threads management
+synopsis:            distributed systems execution emulation
 homepage:            http://gitlab.serokell.io/serokell-team/time-warp
 license:             GPL-3
 license-file:        LICENSE
@@ -17,6 +17,7 @@ library
                      , Control.TimeWarp.Rpc.MonadRpc
                      , Control.TimeWarp.Rpc.MsgPackRpc
                      , Control.TimeWarp.Rpc.PureRpc
+                     , Control.TimeWarp.Rpc.Restriction
 
                      , Control.TimeWarp.Timed
                      , Control.TimeWarp.Timed.MonadTimed

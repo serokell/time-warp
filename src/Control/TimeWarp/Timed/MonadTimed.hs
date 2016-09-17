@@ -7,22 +7,19 @@
 
 -- | This module defines typeclass `MonadTimed` with basic functions
 -- to work with time and threads.
---
--- #nesting-order
--- When stacking with other monads, take note of order of nesting.
--- For example, `StateT` above MonadTimed will clone it's state on fork, thus
--- all pure thread would have their own states. On the other hand,
--- `StateT` below `TimedT` would share it's state between all threads.
-
 module Control.TimeWarp.Timed.MonadTimed
     ( -- * Typeclass with basic functions
       MonadTimed (..)
     , RelativeToNow
       -- * Helper functions
+      -- | NOTE: do we ever need `schedule` and `invoke`? These functions are not
+      -- complex, and aren't used in production. Just provide another funny
+      -- syntax like @invoke $ at 5 sec@
     , schedule, invoke, timestamp, fork_, killThread
     , startTimer
     , workWhile, work, workWhileMVarEmpty, workWhileMVarEmpty'
       -- ** Time measures
+      -- | NOTE: do we need @hour@ measure?
     , minute , sec , ms , mcs, tu
     , minute', sec', ms', mcs'
       -- ** Time specifiers
@@ -75,7 +72,31 @@ instance Buildable MonadTimedError where
     build (MTTimeoutError t) = "timeout error: " <> build t
 
 -- | Allows time management. Time is specified in microseconds passed
---   from start point (/origin/), this time is later called /virtual time/.
+--   from launch point (/origin/), this time is further called /virtual time/.
+--
+-- Instance of MonadTimed should satisfy the following law:
+--
+--     * when defining instance of MonadTrans for a monad transformer,
+-- information stored inside this transformer should be tied to thread, and
+-- get cloned on `fork`s. #monads-above#
+--
+-- For example,
+-- @instance MonadTimed m => MonadTimed (StateT s m)@
+-- is declared such that:
+--
+-- @
+-- example :: (MonadTimed m, MonadIO m) => StateT Int m ()
+-- example = do
+--     put 1
+--     fork $ put 10     -- main thread won't be touched
+--     wait $ for 1 sec  -- wait for forked thread to execute
+--     liftIO . print =<< get
+-- @
+--
+-- >>> runTimedT $ runStateT undefined example
+-- 1
+
+
 class MonadThrow m => MonadTimed m where
     -- | Type of thread identifier.
     type ThreadId m :: *
@@ -95,7 +116,7 @@ class MonadThrow m => MonadTimed m where
     -- [634052000µs] now
     wait :: RelativeToNow -> m ()
 
-    -- | Creates another thread of execution, with same point of /origin/.
+    -- | Creates another thread of execution, with same point of origin.
     fork :: m () -> m (ThreadId m)
 
     -- | Acquires current thread id.
@@ -106,6 +127,7 @@ class MonadThrow m => MonadTimed m where
 
     -- | Throws an TimeoutError exception
     -- if running an action exceeds running time.
+    -- TODO: eliminate it when `Mvar` appears on the scene
     timeout :: Microsecond -> m a -> m a
 
 -- | Executes an action somewhere in future in another thread.
@@ -128,7 +150,7 @@ schedule :: MonadTimed m => RelativeToNow -> m () -> m ()
 schedule time action = fork_ $ invoke time action
 
 -- | Executes an action at specified time in current thread.
-
+--
 -- @
 -- invoke time action = wait time >> action
 -- @
@@ -253,8 +275,7 @@ ms'     = fromMicroseconds . round . (*) 1000
 sec'    = fromMicroseconds . round . (*) 1000000
 minute' = fromMicroseconds . round . (*) 60000000
 
-
-
+-- | Measure for `TimeUnit`s.
 tu :: TimeUnit t => t -> Microsecond
 tu = convertUnit
 

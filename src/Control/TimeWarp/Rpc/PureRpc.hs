@@ -6,18 +6,20 @@
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
 
+-- Defines pure implementation of `MonadRpc`.
 module Control.TimeWarp.Rpc.PureRpc
        ( PureRpc
        , runPureRpc
        , runPureRpc_
-       , ConnectionSuccess (..)
        , Delays (..)
+       , ConnectionSuccess (..)
        , getRandomTR
        ) where
 
+import           Control.Exception.Base        (Exception)
 import           Control.Lens                  (makeLenses, use, (%%=), (%=),
-                                                (%~), both)
-import           Control.Monad                 (forM_)
+                                                (%~), both, to)
+import           Control.Monad                 (forM_, when)
 import           Control.Monad.Catch           (MonadCatch, MonadMask,
                                                 MonadThrow, throwM)
 import           Control.Monad.Random          (Rand, runRand,
@@ -29,6 +31,7 @@ import           Data.Default                  (Default, def)
 import           Data.Map                      as Map
 import           Data.Time.Units               (toMicroseconds,
                                                 fromMicroseconds)
+import           Data.Typeable                 (Typeable)
 import           System.Random                 (StdGen)
 
 import           Data.MessagePack              (Object)
@@ -49,14 +52,7 @@ import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..),
 localhost :: Host
 localhost = "127.0.0.1"
 
--- | List of known issues:
---     -) Method, once being declared in net, can't be removed
---        Even timeout won't help
---        Status: not relevant in tests for now
---     -) Connection can't be refused, only be held on much time
---        Status: not relevant until used with fixed timeout
-
--- | Describes obstructions occured on executing rpc request.
+-- | Describes obstructions occured on executing RPC request.
 data ConnectionSuccess
     -- | Connection established in specified amout of time.
     = ConnectedIn Microsecond
@@ -64,6 +60,7 @@ data ConnectionSuccess
     | NeverConnected
 
 -- @TODO Remove these hard-coded values
+
 -- | Describes network nastyness.
 --
 -- Examples:
@@ -90,8 +87,8 @@ data ConnectionSuccess
 --         else return NeverConnected
 -- @
 newtype Delays = Delays
-    { -- | Basing on current virtual time, returns delay in executing
-      -- rpc request.
+    { -- | Basing on current virtual time, returns delay after which server
+      -- receives RPC request.
       evalDelay :: Microsecond
                 -> Rand StdGen ConnectionSuccess
     }
@@ -120,12 +117,22 @@ data NetInfo m = NetInfo
 
 $(makeLenses ''NetInfo)
 
--- | Pure implementation of RPC.
+-- | Pure implementation of RPC. TCP model is used.
+-- Network nastiness of emulated system can be manually defined via `Delays`
+-- datatype.
+--
+-- NOTE: List of known issues:
+--
+--     * Method, once being declared in net, can't be removed.
+-- Even `throwTo` won't help.
+-- Status: not relevant in tests for now. May be fixed in presence of `MVar`.
+
 newtype PureRpc m a = PureRpc
     { unwrapPureRpc :: StateT Host (TimedT (StateT (NetInfo (PureRpc m)) m)) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
                 MonadMask)
 
+-- | Implementation refers to `Control.TimeWarp.Timed.TimedT.TimedT`.
 instance (MonadIO m, MonadCatch m, WithNamedLogger m) =>
          MonadTimed (PureRpc m) where
     type ThreadId (PureRpc m) = PureThreadId
@@ -150,7 +157,7 @@ instance MonadState s m => MonadState s (PureRpc m) where
     put = lift . put
     state = lift . state
 
--- | Launches rpc scenario.
+-- | Launches distributed scenario, emulating work of network.
 runPureRpc
     :: (MonadIO m, MonadCatch m)
     => StdGen -> Delays -> PureRpc m a -> m a
@@ -160,7 +167,8 @@ runPureRpc _randSeed _delays (PureRpc rpc) =
     net        = NetInfo{..}
     _listeners = Map.empty
 
--- | Launches rpc scenario without result. May be slightly more efficient.
+-- | Launches distributed scenario without result. 
+-- May be slightly more efficient.
 runPureRpc_
     :: (MonadIO m, MonadCatch m)
     => StdGen -> Delays -> PureRpc m () -> m ()
@@ -186,7 +194,7 @@ request (Client name args) listeners' addr =
                 Just r  -> return r
 
 
-instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
+instance (WithNamedLogger m, MonadIO m, MonadCatch m) =>
          MonadRpc (PureRpc m) where
     execClient addr cli =
         PureRpc $
@@ -203,9 +211,14 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
            lift $
                lift $
                forM_ methods $
-               \Method {..} ->
+               \Method {..} -> do
+                    let methodRef = ((host, port), methodName)
+                    defined <- use $ listeners . to (Map.member methodRef)
+                    -- TODO:
+--                    when defined $
+--                        throwM $ PortAlreadyBindedError (host, port)
                     listeners %=
-                    Map.insert ((host, port), methodName) methodBody
+                        Map.insert ((host, port), methodName) methodBody
            sleepForever
 
 waitDelay
@@ -220,3 +233,8 @@ waitDelay =
        case delay of
            ConnectedIn connDelay -> wait (for connDelay mcs)
            NeverConnected        -> sleepForever
+
+data PortAlreadyBindedError = PortAlreadyBindedError NetworkAddress
+    deriving (Show, Typeable)
+
+instance Exception PortAlreadyBindedError
