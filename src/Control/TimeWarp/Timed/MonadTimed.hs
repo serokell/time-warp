@@ -133,6 +133,8 @@ class MonadThrow m => MonadTimed m where
     -- | Throws an TimeoutError exception
     -- if running an action exceeds running time.
     -- TODO: eliminate it when `Mvar` appears on the scene
+    --
+    -- NOTE: maybe do signature like in <http://hackage.haskell.org/package/base-4.9.0.0/docs/System-Timeout.html#v:timeout real timeout>
     timeout :: Microsecond -> m a -> m a
 
 -- | Executes an action somewhere in future in another thread.
