@@ -5,10 +5,14 @@ homepage:            http://gitlab.serokell.io/serokell-team/time-warp
 license:             GPL-3
 license-file:        LICENSE
 author:              Serokell team
-maintainer:          hi@serokell.io
+maintainer:          Ivanov Kostia <martoon.391@gmail.com>
 copyright:           Serokell
 build-type:          Simple
 cabal-version:       >=1.18
+description:
+    This package allows to write scenarious over distributed systems, which can
+    be launched as either real program or fast emulation with network nastiness
+    manually controlled.
 
 library
   exposed-modules:     Control.TimeWarp.Logging

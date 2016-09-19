@@ -6,7 +6,7 @@
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
 
--- Defines pure implementation of `MonadRpc`.
+-- | Defines network-emulated implementation of `MonadRpc`.
 module Control.TimeWarp.Rpc.PureRpc
        ( PureRpc
        , runPureRpc
@@ -19,7 +19,7 @@ module Control.TimeWarp.Rpc.PureRpc
 import           Control.Exception.Base        (Exception)
 import           Control.Lens                  (makeLenses, use, (%%=), (%=),
                                                 (%~), both, to)
-import           Control.Monad                 (forM_)
+import           Control.Monad                 (forM_, when)
 import           Control.Monad.Catch           (MonadCatch, MonadMask,
                                                 MonadThrow, throwM)
 import           Control.Monad.Random          (Rand, runRand,
@@ -126,7 +126,6 @@ $(makeLenses ''NetInfo)
 --     * Method, once being declared in net, can't be removed.
 -- Even `throwTo` won't help.
 -- Status: not relevant in tests for now. May be fixed in presence of `MVar`.
-
 newtype PureRpc m a = PureRpc
     { unwrapPureRpc :: StateT Host (TimedT (StateT (NetInfo (PureRpc m)) m)) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
@@ -214,9 +213,9 @@ instance (WithNamedLogger m, MonadIO m, MonadCatch m) =>
                \Method {..} -> do
                     let methodRef = ((host, port), methodName)
                     defined <- use $ listeners . to (Map.member methodRef)
+                    when defined $ return ()
                     -- TODO:
---                    when defined $
---                        throwM $ PortAlreadyBindedError (host, port)
+                    --    throwM $ PortAlreadyBindedError (host, port)
                     listeners %=
                         Map.insert ((host, port), methodName) methodBody
            sleepForever

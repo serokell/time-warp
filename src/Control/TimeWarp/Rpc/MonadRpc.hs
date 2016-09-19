@@ -15,7 +15,7 @@ module Control.TimeWarp.Rpc.MonadRpc
        , NetworkAddress
 
        , MonadRpc (serve, execClient)
-       , RpcType
+       , RpcType()
        , execClientTimeout
        , Method(..)
        , Client(..)
@@ -41,8 +41,13 @@ import qualified Network.MessagePack.Server as S
 import           Control.TimeWarp.Logging   (WithNamedLogger)
 import           Control.TimeWarp.Timed     (MonadTimed (timeout))
 
+-- | Port number.
 type Port = Int
+
+-- | Host address.
 type Host = ByteString
+
+-- | Full node address.
 type NetworkAddress = (Host, Port)
 
 
@@ -53,6 +58,8 @@ class MonadThrow r => MonadRpc r where
     execClient :: MessagePack a => NetworkAddress -> Client a -> r a
     serve :: Port -> [Method r] -> r ()
 
+-- | Same as `execClient`, but allows to set up timeout for a call (see 
+-- `Control.TimeWarp.Timed.MonadTimed.timeout`).
 execClientTimeout
     :: (MonadTimed m, MonadRpc m, MessagePack a, TimeUnit t)
     => t -> NetworkAddress -> Client a -> m a

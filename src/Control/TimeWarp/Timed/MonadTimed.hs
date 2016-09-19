@@ -12,8 +12,8 @@ module Control.TimeWarp.Timed.MonadTimed
       MonadTimed (..)
     , RelativeToNow
       -- * Helper functions
-      -- | NOTE: do we ever need `schedule` and `invoke`? These functions are not
-      -- complex, and aren't used in production. Just provide another funny
+      -- | NOTE: do we ever need `schedule` and `invoke`? These functions are 
+      -- not complex, and aren't used in production. Just provide another funny
       -- syntax like @invoke $ at 5 sec@
     , schedule, invoke, timestamp, fork_, killThread
     , startTimer
@@ -28,9 +28,13 @@ module Control.TimeWarp.Timed.MonadTimed
     , during, upto
     , interval
       -- * Time types
+      -- | Re-export of `Data.Time.Units.Microsecond`
     , Microsecond
+      -- | Re-export of `Data.Time.Units.Millisecond`
     , Millisecond
+      -- | Re-export of `Data.Time.Units.Second`
     , Second
+      -- | Re-export of `Data.Time.Units.Minute`
     , Minute
       -- * Exceptions
     , MonadTimedError (..)
@@ -62,6 +66,7 @@ import           Data.Typeable           (Typeable)
 -- if someone agrees I'll fix it).
 type RelativeToNow = Microsecond -> Microsecond
 
+-- | Is arisen on call of `timeout` if action hasn't executed in time.
 data MonadTimedError
     = MTTimeoutError Text
     deriving (Show, Typeable)
@@ -179,14 +184,14 @@ timestamp msg = localTime >>= \time -> liftIO . putStrLn $ concat
     , msg
     ]
 
--- Forks a temporal thread, which exists until preficate evaluates to False.
+-- | Forks a temporal thread, which exists until preficate evaluates to False.
 -- Another servant thread is used to periodically check that condition,
 -- beware of overhead.
 {-# DEPRECATED workWhile "May give sagnificant overhead, use with caution" #-}
 workWhile :: (MonadIO m, MonadTimed m) => m Bool -> m () -> m ()
 workWhile = workWhile' $ interval 10 sec
 
--- Like `workWhile`, but also allows to specify delay between checks.
+-- | Like `workWhile`, but also allows to specify delay between checks.
 {-# DEPRECATED workWhile' "May give sagnificant overhead, use with caution" #-}
 workWhile' :: (MonadIO m, MonadTimed m) => Microsecond -> m Bool -> m () -> m ()
 workWhile' checkDelay cond action = do
@@ -257,18 +262,23 @@ instance MonadTimed m => MonadTimed (StateT s m) where
 
     timeout t m = lift . timeout t . evalStateT m =<< get
 
+-- | Converts a specified time unit to `Microsecond`.
 mcs :: Microsecond -> Microsecond
 mcs = convertUnit
 
+-- | Converts a specified time unit to `Microsecond`.
 ms :: Millisecond -> Microsecond
 ms = convertUnit
 
+-- | Converts a specified time unit to `Microsecond`.
 sec :: Second -> Microsecond
 sec = convertUnit
 
+-- | Converts a specified time unit to `Microsecond`.
 minute :: Minute -> Microsecond
 minute = convertUnit
 
+-- | Converts a specified fractional time to `Microsecond`.
 mcs', ms', sec', minute' :: Double -> Microsecond
 mcs'    = fromMicroseconds . round
 ms'     = fromMicroseconds . round . (*) 1000

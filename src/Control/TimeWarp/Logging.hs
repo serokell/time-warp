@@ -7,8 +7,18 @@
 {-# LANGUAGE UndecidableInstances  #-}
 {-# LANGUAGE ViewPatterns          #-}
 
--- | Logging functionality. This module is wrapper over
--- <http://hackage.haskell.org/package/hslogger hslogger>.
+-- |
+-- Module      : Control.TimeWarp.Logging
+-- Copyright   : (c) Serokell, 2016
+-- License     : GPL-3 (see the file LICENCE)
+-- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
+-- Stability   : experimental
+-- Portability : POSIX, GHC
+--
+-- Logging functionality. This module is wrapper over
+-- <http://hackage.haskell.org/package/hslogger hslogger>,
+-- which allows to keep logger name in monadic context.
+-- Messages are colored depending on used serverity.
 
 module Control.TimeWarp.Logging
        ( Severity (..)
@@ -17,10 +27,10 @@ module Control.TimeWarp.Logging
 
        , LoggerName (..)
 
-         -- * Keeping logger name in context
+         -- * Remove boilerplate
        , WithNamedLogger (..)
-       , LoggerNameBox
        , setLoggerName
+       , LoggerNameBox
        , usingLoggerName
 
          -- * Logging functions
@@ -37,7 +47,8 @@ import           Control.Monad.Reader      (MonadReader (ask, local), ReaderT,
                                             runReaderT)
 import           Control.Monad.State       (MonadState (get), StateT,
                                             evalStateT)
-import           Control.Monad.Trans       (MonadIO (liftIO), lift)
+import           Control.Monad.Trans       (MonadIO (liftIO), MonadTrans,
+                                            lift)
 
 import           Data.String               (IsString)
 import qualified Data.Text                 as T
@@ -67,10 +78,13 @@ data Severity
     | Error
     deriving (Generic, Typeable, Show, Read, Eq)
 
+-- | Logger name to keep in context.
 newtype LoggerName = LoggerName
     { loggerName :: String
     } deriving (Show, IsString)
 
+-- | Defined such that @n1@ is parent for @(n1 <> n2)@
+-- (see <http://hackage.haskell.org/package/hslogger-1.2.10/docs/System-Log-Logger.html hslogger description>).
 instance Monoid LoggerName where
     mempty = ""
 
@@ -84,12 +98,16 @@ convertSeverity Info    = INFO
 convertSeverity Warning = WARNING
 convertSeverity Error   = ERROR
 
+-- | NOTE: it performs a specific action. Should we just enumerate what it does?
 initLogging :: [LoggerName] -> Severity -> IO ()
 initLogging predefinedLoggers sev = do
     updateGlobalLogger rootLoggerName removeHandler
     updateGlobalLogger rootLoggerName $ setLevel DEBUG
     mapM_ (initLoggerByName sev) predefinedLoggers
 
+-- | Turns logger with specified name on.
+-- All messages are printed to /stdout/, moreover messages with at least
+-- `ERROR` severity are printed to /stderr/.
 initLoggerByName :: Severity -> LoggerName -> IO ()
 initLoggerByName (convertSeverity -> s) LoggerName{..} = do
     stdoutHandler <-
@@ -103,6 +121,7 @@ initLoggerByName (convertSeverity -> s) LoggerName{..} = do
     stdoutFormatter h r@(pr, _) n =
         simpleLogFormatter (colorizer pr "[$loggername:$prio] " ++ "$msg") h r n
 
+-- | Defines pre- and post-printed characters for printing colorized text.
 table :: Priority -> (String, String)
 table priority = case priority of
     ERROR   -> (setColor Red   , reset)
@@ -114,13 +133,14 @@ table priority = case priority of
     setColor color = setSGRCode [SetColor Foreground Vivid color]
     reset = setSGRCode [Reset]
 
+-- | Colorizes text.
 colorizer :: Priority -> String -> String
 colorizer pr s = before ++ s ++ after
   where
     (before, after) = table pr
 
 -- | This type class exists to remove boilerplate logging
--- by adding the logger's name to the environment in each module.
+-- by adding the logger's name to the context in each module.
 class WithNamedLogger m where
     -- | Extract logger name from context
     getLoggerName :: m LoggerName
@@ -128,7 +148,7 @@ class WithNamedLogger m where
     -- | Change logger name in context
     modifyLoggerName :: (LoggerName -> LoggerName) -> m a -> m a
 
--- | Set logger name in context
+-- | Set logger name in context.
 setLoggerName :: WithNamedLogger m => LoggerName -> m a -> m a
 setLoggerName = modifyLoggerName . const
 
@@ -152,12 +172,13 @@ instance (Monad m, WithNamedLogger m) =>
 
     modifyLoggerName how = ExceptT . modifyLoggerName how . runExceptT
 
--- Default implementation of `WithNamedLogger`.
+-- | Default implementation of `WithNamedLogger`.
 newtype LoggerNameBox m a = LoggerNameBox
     { loggerNameBoxEntry :: ReaderT LoggerName m a
-    } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
-                MonadMask)
+    } deriving (Functor, Applicative, Monad, MonadIO, MonadTrans,
+                MonadThrow, MonadCatch, MonadMask)
 
+-- | Runs a `LoggerNameBox` with specified initial `LoggerName`.
 usingLoggerName :: LoggerName -> LoggerNameBox m a -> m a
 usingLoggerName name = flip runReaderT name . loggerNameBoxEntry
 
@@ -167,22 +188,16 @@ instance Monad m =>
 
     modifyLoggerName how = LoggerNameBox . local how . loggerNameBoxEntry
 
-logDebug :: (WithNamedLogger m, MonadIO m)
-         => T.Text -> m ()
-logDebug = logMessage Debug
-
-logInfo :: (WithNamedLogger m, MonadIO m)
-        => T.Text -> m ()
-logInfo = logMessage Info
-
-logWarning :: (WithNamedLogger m, MonadIO m)
-        => T.Text -> m ()
+-- | Shortcut for `logMessage` to use according severity.
+logDebug, logInfo, logWarning, logError 
+    :: (WithNamedLogger m, MonadIO m)
+    => T.Text -> m ()
+logDebug   = logMessage Debug
+logInfo    = logMessage Info
 logWarning = logMessage Warning
+logError   = logMessage Error
 
-logError :: (WithNamedLogger m, MonadIO m)
-         => T.Text -> m ()
-logError = logMessage Error
-
+-- | Logs message with specified severity using logger name in context.
 logMessage
     :: (WithNamedLogger m, MonadIO m)
     => Severity -> T.Text -> m ()

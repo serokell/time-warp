@@ -33,6 +33,7 @@ module Control.TimeWarp.Rpc.Restriction where
 
 import Control.TimeWarp.Rpc.MonadRpc (ServerT)
 
+-- |
 serverTypeRestriction0 ::
     Monad m =>
     m (ServerT m a -> ServerT m a)
