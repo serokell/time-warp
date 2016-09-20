@@ -167,8 +167,6 @@ instance (Monad m, WithNamedLogger m) =>
 
     modifyLoggerName how = ExceptT . modifyLoggerName how . runExceptT
 
-instance WithNamedLogger ((->) LoggerName) where
-
 -- | Default implementation of `WithNamedLogger`.
 newtype LoggerNameBox m a = LoggerNameBox
     { loggerNameBoxEntry :: ReaderT LoggerName m a
