@@ -129,9 +129,9 @@ class MonadThrow m => MonadTimed m where
     -- | Arises specified exception in specified thread.
     throwTo :: Exception e => ThreadId m -> e -> m ()
 
-    -- | Throws an TimeoutError exception
+    -- | Throws a TimeoutError exception
     -- if running an action exceeds running time.
-    -- TODO: eliminate it when `Mvar` appears on the scene
+    -- TODO: move away from this typeclass
     --
     -- NOTE: maybe do signature like in <http://hackage.haskell.org/package/base-4.9.0.0/docs/System-Timeout.html#v:timeout real timeout>
     timeout :: Microsecond -> m a -> m a
@@ -188,12 +188,12 @@ timestamp msg = localTime >>= \time -> liftIO . putStrLn $ concat
 -- | Forks a temporal thread, which exists until preficate evaluates to False.
 -- Another servant thread is used to periodically check that condition,
 -- beware of overhead.
-{-# DEPRECATED workWhile "May give sagnificant overhead, use with caution" #-}
+{-# DEPRECATED workWhile "May give significant overhead, use with caution" #-}
 workWhile :: (MonadIO m, MonadTimed m) => m Bool -> m () -> m ()
 workWhile = workWhile' $ interval 10 sec
 
 -- | Like `workWhile`, but also allows to specify delay between checks.
-{-# DEPRECATED workWhile' "May give sagnificant overhead, use with caution" #-}
+{-# DEPRECATED workWhile' "May give significant overhead, use with caution" #-}
 workWhile' :: (MonadIO m, MonadTimed m) => Microsecond -> m Bool -> m () -> m ()
 workWhile' checkDelay cond action = do
     working <- liftIO $ newIORef True
@@ -205,21 +205,21 @@ workWhile' checkDelay cond action = do
 
 -- | Like workWhile, unwraps first layer of monad immediatelly
 --   and then checks predicate periocially.
-{-# DEPRECATED work "May give sagnificant overhead, use with caution" #-}
+{-# DEPRECATED work "May give significant overhead, use with caution" #-}
 work :: (MonadIO m, MonadTimed m) => TwoLayers m Bool -> m () -> m ()
 work (getTL -> predicate) action = predicate >>= \p -> workWhile p action
 
 -- | Forks temporary thread which works while MVar is empty.
 -- Another servant thread is used to periodically check the state of MVar,
 -- beware of overhead.
-{-# DEPRECATED workWhileMVarEmpty "May give sagnificant overhead, use with caution" #-}
+{-# DEPRECATED workWhileMVarEmpty "May give significant overhead, use with caution" #-}
 workWhileMVarEmpty
     :: (MonadTimed m, MonadIO m)
     => MVar a -> m () -> m ()
 workWhileMVarEmpty v = workWhile (liftIO . isEmptyMVar $ v)
 
 -- | Like `workWhileMVarEmpty`, but allows to specify delay between checks.
-{-# DEPRECATED workWhileMVarEmpty' "May give sagnificant overhead, use with caution" #-}
+{-# DEPRECATED workWhileMVarEmpty' "May give significant overhead, use with caution" #-}
 workWhileMVarEmpty'
     :: (MonadTimed m, MonadIO m)
     => Microsecond -> MVar a -> m () -> m ()

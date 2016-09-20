@@ -275,9 +275,7 @@ runTimedT timed = launchTimedT $ do
     -- In each layer (pair of handlers), ContException should be handled first.
     catchesSeq = foldl' $ \act (h, hc) -> act `catches` [hc, h]
 
-    throwInnard someException =
-        case someException of
-            SomeException e -> throwM e
+    throwInnard (SomeException e) = throwM e
 
 getNextThreadId :: Monad m => TimedT m PureThreadId
 getNextThreadId = wrapCore . Core $ do
