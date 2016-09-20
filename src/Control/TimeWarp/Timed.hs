@@ -1,5 +1,7 @@
 -- | This module provides time- and thread-management capabilities.
--- It allows to write scenarios over multithreaded systems, which can then be launched as either real program or emulation with no need to wait for delays.
+-- It allows to write scenarios over multithreaded systems, which can
+-- then be launched as either real program or emulation with no need
+-- to wait for delays.
 --
 -- /Some interesting scenario here:/
 --

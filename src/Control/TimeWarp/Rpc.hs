@@ -1,5 +1,5 @@
--- | This module provides RPC capabilities. It allows to write scenarious over
--- distributed systems, which can when be launched as either real program or
+-- | This module provides RPC capabilities. It allows to write scenarios over
+-- distributed systems, which can then be launched as either real program or
 -- emulation with network nastiness manually controlled.
 --
 -- Usage example:
@@ -33,7 +33,7 @@
 -- [6000013µs] Answer is 1
 -- [9000015µs] Answer is 2
 --
--- Or as emulation, which works immidiatelly:
+-- Or as emulation, which works immediately:
 --
 -- @
 -- delays :: Delays
@@ -54,9 +54,8 @@ module Control.TimeWarp.Rpc
        , module Control.TimeWarp.Rpc.PureRpc
        ) where
 
-import           Control.TimeWarp.Rpc.Arbitrary  ()
+import           Control.TimeWarp.Rpc.Arbitrary   ()
 import           Control.TimeWarp.Rpc.MonadRpc
 import           Control.TimeWarp.Rpc.MsgPackRpc
-import           Control.TimeWarp.Rpc.Restriction
 import           Control.TimeWarp.Rpc.PureRpc
-
+import           Control.TimeWarp.Rpc.Restriction

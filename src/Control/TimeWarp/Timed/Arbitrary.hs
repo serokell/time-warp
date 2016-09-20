@@ -1,4 +1,4 @@
--- | Arbitrary instances for WorkMode types.
+-- | Arbitrary instances for TimeWarp.Timed types.
 
 module Control.TimeWarp.Timed.Arbitrary
        (
@@ -6,8 +6,7 @@ module Control.TimeWarp.Timed.Arbitrary
 
 import           Data.Time.Units                   (TimeUnit, convertUnit,
                                                     fromMicroseconds)
-import           Test.QuickCheck                   (Arbitrary (arbitrary),
-                                                    choose)
+import           Test.QuickCheck                   (Arbitrary (arbitrary), choose)
 
 import qualified Control.TimeWarp.Timed.MonadTimed as T
 

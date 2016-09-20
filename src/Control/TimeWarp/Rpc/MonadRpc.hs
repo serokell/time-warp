@@ -27,8 +27,7 @@ module Control.TimeWarp.Rpc.MonadRpc
        , C.RpcError(..)
        ) where
 
-import           Control.Monad.Catch        (MonadCatch (catch),
-                                             MonadThrow (throwM))
+import           Control.Monad.Catch        (MonadCatch (catch), MonadThrow (throwM))
 import           Control.Monad.Trans        (lift)
 import           Data.ByteString            (ByteString)
 
@@ -58,7 +57,7 @@ class MonadThrow r => MonadRpc r where
     execClient :: MessagePack a => NetworkAddress -> Client a -> r a
     serve :: Port -> [Method r] -> r ()
 
--- | Same as `execClient`, but allows to set up timeout for a call (see 
+-- | Same as `execClient`, but allows to set up timeout for a call (see
 -- `Control.TimeWarp.Timed.MonadTimed.timeout`).
 execClientTimeout
     :: (MonadTimed m, MonadRpc m, MessagePack a, TimeUnit t)
@@ -72,7 +71,7 @@ call :: RpcType t => String -> t
 call name = rpcc name []
 
 -- | Collects function name and arguments
--- (it's MessagePack implementation is hiden, need our own)
+-- (it's MessagePack implementation is hidden, need our own)
 class RpcType t where
     rpcc :: String -> [Object] -> t
 

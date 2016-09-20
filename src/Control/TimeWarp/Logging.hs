@@ -10,7 +10,7 @@
 -- |
 -- Module      : Control.TimeWarp.Logging
 -- Copyright   : (c) Serokell, 2016
--- License     : GPL-3 (see the file LICENCE)
+-- License     : GPL-3 (see the file LICENSE)
 -- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
 -- Stability   : experimental
 -- Portability : POSIX, GHC
@@ -41,14 +41,11 @@ module Control.TimeWarp.Logging
        , logMessage
        ) where
 
-import           Control.Monad.Catch       (MonadThrow, MonadCatch, MonadMask)
+import           Control.Monad.Catch       (MonadCatch, MonadMask, MonadThrow)
 import           Control.Monad.Except      (ExceptT (..), runExceptT)
-import           Control.Monad.Reader      (MonadReader (ask, local), ReaderT,
-                                            runReaderT)
-import           Control.Monad.State       (MonadState (get), StateT,
-                                            evalStateT)
-import           Control.Monad.Trans       (MonadIO (liftIO), MonadTrans,
-                                            lift)
+import           Control.Monad.Reader      (MonadReader (ask, local), ReaderT, runReaderT)
+import           Control.Monad.State       (MonadState (get), StateT, evalStateT)
+import           Control.Monad.Trans       (MonadIO (liftIO), MonadTrans, lift)
 
 import           Data.String               (IsString)
 import qualified Data.Text                 as T
@@ -63,11 +60,9 @@ import           System.IO                 (stderr, stdout)
 import           System.Log.Formatter      (simpleLogFormatter)
 import           System.Log.Handler        (setFormatter)
 import           System.Log.Handler.Simple (streamHandler)
-import           System.Log.Logger         (Priority
-                                            (DEBUG, ERROR, INFO, WARNING),
-                                            logM, removeHandler, rootLoggerName,
-                                            setHandlers, setLevel,
-                                            updateGlobalLogger)
+import           System.Log.Logger         (Priority (DEBUG, ERROR, INFO, WARNING), logM,
+                                            removeHandler, rootLoggerName, setHandlers,
+                                            setLevel, updateGlobalLogger)
 
 -- | This type is intended to be used as command line option
 -- which specifies which messages to print.
@@ -189,7 +184,7 @@ instance Monad m =>
     modifyLoggerName how = LoggerNameBox . local how . loggerNameBoxEntry
 
 -- | Shortcut for `logMessage` to use according severity.
-logDebug, logInfo, logWarning, logError 
+logDebug, logInfo, logWarning, logError
     :: (WithNamedLogger m, MonadIO m)
     => T.Text -> m ()
 logDebug   = logMessage Debug

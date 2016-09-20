@@ -1,9 +1,9 @@
-{-# LANGUAGE FlexibleInstances      #-}
-{-# LANGUAGE MultiParamTypeClasses  #-}
-{-# LANGUAGE Rank2Types             #-}
-{-# LANGUAGE TemplateHaskell        #-}
-{-# LANGUAGE TypeFamilies           #-}
-{-# LANGUAGE ViewPatterns           #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE Rank2Types            #-}
+{-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE ViewPatterns          #-}
 
 -- | This module defines typeclass `MonadTimed` with basic functions
 -- to work with time and threads.
@@ -12,7 +12,7 @@ module Control.TimeWarp.Timed.MonadTimed
       MonadTimed (..)
     , RelativeToNow
       -- * Helper functions
-      -- | NOTE: do we ever need `schedule` and `invoke`? These functions are 
+      -- | NOTE: do we ever need `schedule` and `invoke`? These functions are
       -- not complex, and aren't used in production. Just provide another funny
       -- syntax like @invoke $ at 5 sec@
     , schedule, invoke, timestamp, fork_, killThread
@@ -41,8 +41,7 @@ module Control.TimeWarp.Timed.MonadTimed
     ) where
 
 import           Control.Concurrent.MVar (MVar, isEmptyMVar)
-import           Control.Exception       (Exception (..),
-                                          AsyncException (ThreadKilled))
+import           Control.Exception       (AsyncException (ThreadKilled), Exception (..))
 import           Control.Monad           (void)
 import           Control.Monad.Catch     (MonadThrow)
 import           Control.Monad.Loops     (whileM)
@@ -54,8 +53,8 @@ import           Data.IORef              (newIORef, readIORef, writeIORef)
 import           Data.Monoid             ((<>))
 import           Data.Text               (Text)
 import           Data.Text.Buildable     (Buildable (build))
-import           Data.Time.Units         (Microsecond, Millisecond, Minute,
-                                          Second, TimeUnit (..), convertUnit)
+import           Data.Time.Units         (Microsecond, Millisecond, Minute, Second,
+                                          TimeUnit (..), convertUnit)
 import           Data.Typeable           (Typeable)
 
 -- | Defines some time point basing on current time point, relatively to now.
@@ -66,7 +65,7 @@ import           Data.Typeable           (Typeable)
 -- if someone agrees I'll fix it).
 type RelativeToNow = Microsecond -> Microsecond
 
--- | Is arisen on call of `timeout` if action hasn't executed in time.
+-- | Is arisen on call of `timeout` if action wasn't executed in time.
 data MonadTimedError
     = MTTimeoutError Text
     deriving (Show, Typeable)

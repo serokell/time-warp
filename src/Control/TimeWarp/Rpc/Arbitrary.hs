@@ -1,4 +1,4 @@
--- | Arbitrary instances for WorkMode types.
+-- | Arbitrary instances for TimeWarp.Rpc types.
 
 module Control.TimeWarp.Rpc.Arbitrary
        (

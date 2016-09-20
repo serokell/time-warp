@@ -5,20 +5,18 @@ module Control.TimeWarp.Timed.Misc
        , sleepForever
        ) where
 
-import           Control.Concurrent.STM.TVar       (newTVarIO, readTVarIO,
-                                                    writeTVar)
+import           Control.Concurrent.STM.TVar       (newTVarIO, readTVarIO, writeTVar)
 import           Control.Exception.Base            (SomeException)
 import           Control.Monad.Catch               (MonadCatch, catch)
 import           Control.Monad.STM                 (atomically)
 import           Control.Monad.Trans               (MonadIO, liftIO)
 
-import           Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimed,
-                                                    for, fork_, mcs, ms, minute,
-                                                    startTimer, wait)
+import           Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimed, for, fork_,
+                                                    mcs, minute, ms, startTimer, wait)
 
 -- | Repeats an action periodically.
 --   If it fails, handler is invoked, determining delay before retrying.
---   Can be interrupted with asyncronious exception.
+--   Can be interrupted with asynchronous exception.
 repeatForever
     :: (MonadTimed m, MonadIO m, MonadCatch m)
     => Microsecond                      -- ^ Period between action launches
