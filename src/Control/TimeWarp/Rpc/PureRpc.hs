@@ -12,7 +12,7 @@ module Control.TimeWarp.Rpc.PureRpc
        , runPureRpc
        , runPureRpc_
        , Delays (..)
-       , ConnectionSuccess (..)
+       , ConnectionOutcome (..)
        , getRandomTR
        ) where
 
@@ -48,7 +48,7 @@ localhost :: Host
 localhost = "127.0.0.1"
 
 -- | Describes obstructions occured on executing RPC request.
-data ConnectionSuccess
+data ConnectionOutcome
     -- | Connection established in specified amout of time.
     = ConnectedIn Microsecond
     -- | Connection would be never established, client hangs.
@@ -85,7 +85,7 @@ newtype Delays = Delays
     { -- | Basing on current virtual time, returns delay after which server
       -- receives RPC request.
       evalDelay :: Microsecond
-                -> Rand StdGen ConnectionSuccess
+                -> Rand StdGen ConnectionOutcome
     }
 
 -- This is needed for QC.
