@@ -9,6 +9,7 @@
 -- to work with time and threads.
 module Control.TimeWarp.Timed.MonadTimed
     ( -- * Typeclass with basic functions
+      lol,
       MonadTimed (..)
     , RelativeToNow
       -- * Helper functions
@@ -200,7 +201,7 @@ workWhile' checkDelay cond action = do
     tid     <- fork $ action >> liftIO (writeIORef working False)
     fork_ $ do
         _ <- whileM ((&&) <$> cond <*> liftIO (readIORef working)) $
-            wait $ for checkDelay mcs
+            wait $ for checkDelay
         killThread tid
 
 -- | Like workWhile, unwraps first layer of monad immediatelly
@@ -264,20 +265,11 @@ instance MonadTimed m => MonadTimed (StateT s m) where
     timeout t m = lift . timeout t . evalStateT m =<< get
 
 -- | Converts a specified time unit to `Microsecond`.
-mcs :: Microsecond -> Microsecond
-mcs = convertUnit
-
--- | Converts a specified time unit to `Microsecond`.
-ms :: Millisecond -> Microsecond
-ms = convertUnit
-
--- | Converts a specified time unit to `Microsecond`.
-sec :: Second -> Microsecond
-sec = convertUnit
-
--- | Converts a specified time unit to `Microsecond`.
-minute :: Minute -> Microsecond
-minute = convertUnit
+mcs, ms, sec, minute :: Int -> Microsecond
+mcs    = fromMicroseconds . fromIntegral
+ms     = fromMicroseconds . fromIntegral . (*) 1000
+sec    = fromMicroseconds . fromIntegral . (*) 1000000
+minute = fromMicroseconds . fromIntegral . (*) 60000000
 
 -- | Converts a specified fractional time to `Microsecond`.
 mcs', ms', sec', minute' :: Double -> Microsecond
@@ -358,6 +350,10 @@ startTimer = do
 interval :: TimeAcc3 t => t
 interval = interval' 0
 
+lol :: MonadTimed m => m ()
+lol = do
+    wait $ for 1 sec 2 minute
+    wait $ till (5 :: Minute)
 
 -- plenty of black magic
 class TimeAcc1 t where
@@ -371,6 +367,10 @@ instance TimeAcc1 RelativeToNow where
 instance (a ~ b, TimeAcc1 t) => TimeAcc1 (a -> (b -> Microsecond) -> t) where
     at'    acc t f = at'    $ f t + acc
     after' acc t f = after' $ f t + acc
+
+instance TimeUnit t => TimeAcc1 (t -> RelativeToNow) where
+    at'    acc t cur = acc + convertUnit t - cur
+    after' acc t _   = acc + convertUnit t
 
 -- without this newtype TimeAcc2 doesn't work - overlapping instances
 newtype TwoLayers m a = TwoLayers { getTL :: m (m a) }
@@ -390,6 +390,9 @@ instance (a ~ b, TimeAcc2 t) => TimeAcc2 (a -> (b -> Microsecond) -> t) where
     during' acc t f = during' $ f t + acc
     upto'   acc t f = upto'   $ f t + acc
 
+instance TimeUnit t => TimeAcc2 (t -> RelativeToNow) where
+    during' acc t cur = acc + convertUnit t - cur
+    upto'   acc t _   = acc + convertUnit t
 
 class TimeAcc3 t where
     interval' :: Microsecond -> t

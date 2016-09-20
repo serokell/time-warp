@@ -12,7 +12,7 @@ import           Control.Monad.STM                 (atomically)
 import           Control.Monad.Trans               (MonadIO, liftIO)
 
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimed, for, fork_,
-                                                    mcs, minute, ms, startTimer, wait)
+                                                    minute, ms, startTimer, wait)
 
 -- | Repeats an action periodically.
 --   If it fails, handler is invoked, determining delay before retrying.
@@ -41,7 +41,7 @@ repeatForever period handler action = do
         res <- liftIO $ readTVarIO nextDelay
         case res of
             Nothing -> waitForRes nextDelay
-            Just t  -> wait (for t mcs) >> continue
+            Just t  -> wait (for t) >> continue
 
 -- | Sleep forever
 -- @TODO: would be better to use `MVar` to block thread

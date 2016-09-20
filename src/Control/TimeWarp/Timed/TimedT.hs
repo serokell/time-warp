@@ -49,7 +49,7 @@ import           Control.TimeWarp.Logging          (WithNamedLogger (..), logDeb
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond, Millisecond,
                                                     MonadTimed (..),
                                                     MonadTimedError (MTTimeoutError), for,
-                                                    killThread, localTime, mcs, ms,
+                                                    killThread, localTime, mcs,
                                                     timeout)
 
 -- | Analogy to `Control.Concurrent.ThreadId` for emulation
@@ -371,7 +371,7 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
                         Nothing -> throwM $ MTTimeoutError "Timeout exceeded"
                         Just r  -> return r
                 else do
-                    wait $ for delay ms
+                    wait $ for delay
                     res <- liftIO $ readIORef ref
                     case res of
                         Nothing -> waitForRes' ref tid end

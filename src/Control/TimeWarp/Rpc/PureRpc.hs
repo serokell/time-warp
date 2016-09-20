@@ -41,7 +41,7 @@ import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Host, Method (..),
                                                 methodName)
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..),
                                                 PureThreadId, TimedT, evalTimedT, for,
-                                                localTime, mcs, runTimedT, sleepForever,
+                                                localTime, runTimedT, sleepForever,
                                                 wait)
 
 localhost :: Host
@@ -225,7 +225,7 @@ waitDelay =
        delay   <- lift . lift $ randSeed %%=
             runRand (evalDelay delays' time)
        case delay of
-           ConnectedIn connDelay -> wait (for connDelay mcs)
+           ConnectedIn connDelay -> wait (for connDelay)
            NeverConnected        -> sleepForever
 
 data PortAlreadyBindedError = PortAlreadyBindedError NetworkAddress
