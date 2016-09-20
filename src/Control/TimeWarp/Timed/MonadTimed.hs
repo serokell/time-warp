@@ -135,7 +135,7 @@ class MonadThrow m => MonadTimed m where
     -- TODO: move away from this typeclass
     --
     -- NOTE: maybe do signature like in <http://hackage.haskell.org/package/base-4.9.0.0/docs/System-Timeout.html#v:timeout real timeout>
-    timeout :: Microsecond -> m a -> m a
+    timeout :: TimeUnit t => t -> m a -> m a
 
 -- | Executes an action somewhere in future in another thread.
 --

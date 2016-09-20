@@ -33,7 +33,7 @@ import           Control.Monad.Trans        (lift)
 import           Data.ByteString            (ByteString)
 
 import           Data.MessagePack.Object    (MessagePack, Object (..), toObject)
-import           Data.Time.Units            (TimeUnit, convertUnit)
+import           Data.Time.Units            (TimeUnit)
 
 import qualified Network.MessagePack.Client as C
 import qualified Network.MessagePack.Server as S
@@ -63,7 +63,7 @@ class MonadThrow r => MonadRpc r where
 execClientTimeout
     :: (MonadTimed m, MonadRpc m, MessagePack a, TimeUnit t)
     => t -> NetworkAddress -> Client a -> m a
-execClientTimeout (convertUnit -> t) addr = timeout t . execClient addr
+execClientTimeout t addr = timeout t . execClient addr
 
 -- * Client part
 

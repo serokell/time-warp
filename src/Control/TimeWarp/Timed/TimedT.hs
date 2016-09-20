@@ -7,6 +7,7 @@
 {-# LANGUAGE TemplateHaskell           #-}
 {-# LANGUAGE TypeFamilies              #-}
 {-# LANGUAGE UndecidableInstances      #-}
+{-# LANGUAGE ViewPatterns              #-}
 
 -- | This module contains pure implementation of MonadTimed.
 module Control.TimeWarp.Timed.TimedT
@@ -39,6 +40,7 @@ import           Data.IORef                        (newIORef, readIORef, writeIO
 import           Data.List                         (foldl')
 import           Data.Maybe                        (fromJust)
 import           Data.Ord                          (comparing)
+import           Data.Time.Units                   (convertUnit)
 import           Formatting                        (sformat, shown, (%))
 
 import qualified Data.Map                          as M
@@ -348,7 +350,7 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
         asyncExceptions %= M.alter (<|> Just (SomeException e)) tid
     -- TODO: we should probably implement this similar to
     -- http://haddock.stackage.org/lts-5.8/base-4.8.2.0/src/System-Timeout.html#timeout
-    timeout t action' = do
+    timeout (convertUnit -> t) action' = do
         ref <- liftIO $ newIORef Nothing
         -- fork worker
         wtid <-

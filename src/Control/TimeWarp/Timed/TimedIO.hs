@@ -2,6 +2,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE Rank2Types            #-}
 {-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE ViewPatterns          #-}
 
 -- | Real-mode implementation of `MonadTimed`.
 -- Each function in inplementation refers to plain `IO`.
@@ -21,6 +22,7 @@ import           Control.Monad.Trans               (MonadIO, lift, liftIO)
 import           Control.Monad.Trans.Control       (MonadBaseControl, StM,
                                                     liftBaseWith, restoreM)
 import           Data.Time.Clock.POSIX             (getPOSIXTime)
+import           Data.Time.Units                   (toMicroseconds)
 import qualified System.Timeout                    as T
 
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond,
@@ -59,7 +61,7 @@ instance MonadTimed TimedIO where
 
     throwTo tid e = TimedIO $ lift $ C.throwTo tid e
 
-    timeout t (TimedIO action) = TimedIO $ do
+    timeout (toMicroseconds -> t) (TimedIO action) = TimedIO $ do
         res <- liftIO . T.timeout (fromIntegral t) . runReaderT action =<< ask
         maybe (throwM $ MTTimeoutError "Timeout has exceeded") return res
 
