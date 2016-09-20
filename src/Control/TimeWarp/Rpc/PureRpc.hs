@@ -17,37 +17,32 @@ module Control.TimeWarp.Rpc.PureRpc
        ) where
 
 import           Control.Exception.Base        (Exception)
-import           Control.Lens                  (makeLenses, use, (%%=), (%=),
-                                                (%~), both, to)
+import           Control.Lens                  (both, makeLenses, to, use, (%%=), (%=),
+                                                (%~))
 import           Control.Monad                 (forM_, when)
-import           Control.Monad.Catch           (MonadCatch, MonadMask,
-                                                MonadThrow, throwM)
-import           Control.Monad.Random          (Rand, runRand,
-                                                MonadRandom (getRandomR))
-import           Control.Monad.State           (MonadState (get, put, state),
-                                                StateT, evalStateT)
+import           Control.Monad.Catch           (MonadCatch, MonadMask, MonadThrow, throwM)
+import           Control.Monad.Random          (MonadRandom (getRandomR), Rand, runRand)
+import           Control.Monad.State           (MonadState (get, put, state), StateT,
+                                                evalStateT)
 import           Control.Monad.Trans           (MonadIO, MonadTrans, lift)
 import           Data.Default                  (Default, def)
 import           Data.Map                      as Map
-import           Data.Time.Units               (toMicroseconds,
-                                                fromMicroseconds)
+import           Data.Time.Units               (fromMicroseconds, toMicroseconds)
 import           Data.Typeable                 (Typeable)
 import           System.Random                 (StdGen)
 
 import           Data.MessagePack              (Object)
-import           Data.MessagePack.Object       (MessagePack, fromObject,
-                                                toObject)
+import           Data.MessagePack.Object       (MessagePack, fromObject, toObject)
 
 import           Control.TimeWarp.Logging      (WithNamedLogger)
 import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Host, Method (..),
                                                 MonadRpc (execClient, serve),
-                                                NetworkAddress, RpcError (..),
-                                                methodBody, methodName)
+                                                NetworkAddress, RpcError (..), methodBody,
+                                                methodName)
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..),
-                                                TimedT, evalTimedT, for, mcs,
-                                                localTime, runTimedT,
-                                                wait, PureThreadId,
-                                                sleepForever)
+                                                PureThreadId, TimedT, evalTimedT, for,
+                                                localTime, mcs, runTimedT, sleepForever,
+                                                wait)
 
 localhost :: Host
 localhost = "127.0.0.1"
@@ -97,7 +92,7 @@ newtype Delays = Delays
 instance Show Delays where
     show _ = "Delays"
 
--- | Descirbes reliable network.
+-- | Describes reliable network.
 instance Default Delays where
     def = Delays . const . return . ConnectedIn $ 0
 

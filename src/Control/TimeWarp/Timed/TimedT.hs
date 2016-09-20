@@ -17,47 +17,40 @@ module Control.TimeWarp.Timed.TimedT
        ) where
 
 import           Control.Applicative               ((<|>))
-import           Control.Exception.Base            (AsyncException
-                                                    (ThreadKilled),
+import           Control.Exception.Base            (AsyncException (ThreadKilled),
                                                     Exception (fromException),
                                                     SomeException (..))
 
-import           Control.Lens                      (makeLenses, to, use, view,
-                                                    (%=), (%~), (&), (+=), (.=),
-                                                    (<&>), (^.))
+import           Control.Lens                      (makeLenses, to, use, view, (%=), (%~),
+                                                    (&), (+=), (.=), (<&>), (^.))
 import           Control.Monad                     (void)
-import           Control.Monad.Catch               (Handler (..), MonadCatch,
-                                                    MonadMask, MonadThrow,
-                                                    catch, catchAll, catches,
+import           Control.Monad.Catch               (Handler (..), MonadCatch, MonadMask,
+                                                    MonadThrow, catch, catchAll, catches,
                                                     mask, throwM, try,
                                                     uninterruptibleMask)
 import           Control.Monad.Cont                (ContT (..), runContT)
 import           Control.Monad.Loops               (whileM_)
-import           Control.Monad.Reader              (ReaderT (..), ask,
-                                                    runReaderT)
-import           Control.Monad.State               (MonadState
-                                                    (get, put, state),
-                                                    StateT, evalStateT)
-import           Control.Monad.Trans               (MonadIO, MonadTrans, lift,
-                                                    liftIO)
+import           Control.Monad.Reader              (ReaderT (..), ask, runReaderT)
+import           Control.Monad.State               (MonadState (get, put, state), StateT,
+                                                    evalStateT)
+import           Control.Monad.Trans               (MonadIO, MonadTrans, lift, liftIO)
 import           Data.Function                     (on)
-import           Data.IORef                        (newIORef, readIORef,
-                                                    writeIORef)
+import           Data.IORef                        (newIORef, readIORef, writeIORef)
 import           Data.List                         (foldl')
 import           Data.Maybe                        (fromJust)
 import           Data.Ord                          (comparing)
 import           Formatting                        (sformat, shown, (%))
 
-import qualified Data.PQueue.Min                   as PQ
 import qualified Data.Map                          as M
+import qualified Data.PQueue.Min                   as PQ
 
-import           Control.TimeWarp.Logging          (WithNamedLogger (..),
-                                                    logDebug, logWarning)
+import           Control.TimeWarp.Logging          (WithNamedLogger (..), logDebug,
+                                                    logWarning)
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond, Millisecond,
                                                     MonadTimed (..),
-                                                    MonadTimedError
-                                                    (MTTimeoutError),
-                                                    for, localTime, ms, timeout,                                                    killThread, mcs)
+                                                    MonadTimedError (MTTimeoutError), for,
+                                                    killThread, localTime, mcs, ms,
+                                                    timeout)
 
 -- | Analogy to `Control.Concurrent.ThreadId` for emulation
 newtype PureThreadId = PureThreadId Integer
@@ -94,9 +87,9 @@ instance Ord (Event m c) where
 
 -- | Overall state for MonadTimed
 data Scenario m c = Scenario
-    { -- | set of sleeping threads
+    { -- | Set of sleeping threads
       _events          :: PQ.MinQueue (Event m c)
-      -- | current virtual time
+      -- | Current virtual time
     , _curTime         :: Microsecond
       -- | For each thread, exception which has been thrown to it (if any has)
     , _asyncExceptions :: M.Map PureThreadId SomeException
@@ -144,7 +137,7 @@ newtype TimedT m a = TimedT
     { unwrapTimedT :: ReaderT (ThreadCtx (Core m)) (ContT () (Core m)) a
     } deriving (Functor, Applicative, Monad, MonadIO)
 
--- | When thread dies from uncought exception, this is reported via logger
+-- | When thread dies from uncaught exception, this is reported via logger
 -- (TODO: which logger?).
 -- It doesn't apply to main thread (which is not produced by `fork`),
 -- it's exception is propagaded outside of the monad.
@@ -229,7 +222,7 @@ launchTimedT t = flip evalStateT emptyScenario
 -- Finishes when no more active threads remain.
 --
 -- Might be slightly more efficient than `evalTimedT`
--- (NOTE: however this is not a sagnificant reason to use the function,
+-- (NOTE: however this is not a significant reason to use the function,
 -- suggest excluding it from export list)
 runTimedT :: (MonadIO m, MonadCatch m) => TimedT m () -> m ()
 runTimedT timed = launchTimedT $ do
