@@ -27,7 +27,8 @@ module Control.TimeWarp.Rpc.MonadRpc
        , C.RpcError(..)
        ) where
 
-import           Control.Monad.Catch        (MonadCatch (catch), MonadThrow (throwM))
+import           Control.Monad.Catch        (MonadCatch (catch),
+                                             MonadThrow (throwM))
 import           Control.Monad.Trans        (lift)
 import           Data.ByteString            (ByteString)
 
@@ -66,19 +67,19 @@ execClientTimeout (convertUnit -> t) addr = timeout t . execClient addr
 
 -- * Client part
 
--- | Creates a function call. It accepts function name and arguments
+-- | Creates a function call. It accepts function name and arguments.
 call :: RpcType t => String -> t
 call name = rpcc name []
 
 -- | Collects function name and arguments
--- (it's MessagePack implementation is hidden, need our own)
+-- (it's msgpack-rpc implementation is hidden, need our own).
 class RpcType t where
     rpcc :: String -> [Object] -> t
 
 instance (RpcType t, MessagePack p) => RpcType (p -> t) where
     rpcc name objs p = rpcc name $ toObject p : objs
 
--- | Keeps function name and arguments
+-- | Keeps function name and arguments.
 data Client a where
     Client :: MessagePack a => String -> [Object] -> Client a
 
@@ -87,7 +88,7 @@ instance MessagePack o => RpcType (Client o) where
 
 -- * Server part
 
--- | Keeps method definition
+-- | Keeps method definition.
 data Method m = Method
     { methodName :: String
     , methodBody :: [Object] -> m Object
@@ -95,7 +96,7 @@ data Method m = Method
 
 -- | Creates method available for RPC-requests.
 --   It accepts method name (which would be refered by clients)
---   and it's body
+--   and it's body.
 method :: S.MethodType m f => String -> f -> Method m
 method name f = Method
     { methodName = name
