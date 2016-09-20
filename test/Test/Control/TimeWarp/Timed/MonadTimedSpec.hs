@@ -36,7 +36,7 @@ import           Test.QuickCheck.Poly         (A)
 import           Control.TimeWarp.Timed       (Microsecond, MonadTimed (..),
                                                MonadTimedError, RelativeToNow,
                                                TimedIO, TimedT, TimedT, after,
-                                               for, fork_, invoke, mcs, now,
+                                               for, fork_, invoke, now,
                                                runTimedIO, runTimedT, schedule,
                                                sec, killThread)
 
@@ -148,7 +148,7 @@ timeoutProp
     -> PropertyM m ()
 timeoutProp (getNonNegative -> tout) (getNonNegative -> wt) = do
     let action = do
-            wait $ for wt mcs
+            wait $ for wt
             return $ wt <= tout
         handler (_ :: MonadTimedError) = return $ wt >= tout
     res <- run $ timeout tout action `catch` handler
@@ -249,17 +249,22 @@ killThreadTimedProp
     -> NonNegative Microsecond
     -> NonNegative Microsecond
     -> TimedTProp ()
-killThreadTimedProp (getNonNegative -> mTime) (getNonNegative -> f1Time) (getNonNegative -> f2Time)= do
+killThreadTimedProp
+    (getNonNegative -> mTime)
+    (getNonNegative -> f1Time)
+    (getNonNegative -> f2Time)
+  = do
     var <- liftIO $ newTVarIO (0 :: Int)
     tId <- fork $ do
         fork_ $ do -- this thread can't be killed
-            wait $ for f1Time mcs
+            wait $ for f1Time
             liftIO $ atomically $ writeTVar var 1
-        wait $ for f2Time mcs
+        wait $ for f2Time
         liftIO $ atomically $ writeTVar var 2
-    wait $ for mTime mcs
+    wait $ for mTime
     killThread tId
-    wait $ for f1Time mcs f2Time mcs -- wait for both threads to finish
+    wait $ for f1Time -- wait for both threads to finish
+    wait $ for f2Time
     res <- liftIO $ readTVarIO var
     assertTimedT $ check res
   where
@@ -274,7 +279,7 @@ timeoutTimedProp
     -> TimedTProp ()
 timeoutTimedProp (getNonNegative -> tout) (getNonNegative -> wt) = do
     let action = do
-            wait $ for wt mcs
+            wait $ for wt
             return $ wt <= tout
         handler (_ :: SomeException) = do
             return $ tout <= wt

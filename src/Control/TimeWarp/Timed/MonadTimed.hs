@@ -9,7 +9,6 @@
 -- to work with time and threads.
 module Control.TimeWarp.Timed.MonadTimed
     ( -- * Typeclass with basic functions
-      lol,
       MonadTimed (..)
     , RelativeToNow
       -- * Helper functions
@@ -349,11 +348,6 @@ startTimer = do
 -- 1000000µs
 interval :: TimeAcc3 t => t
 interval = interval' 0
-
-lol :: MonadTimed m => m ()
-lol = do
-    wait $ for 1 sec 2 minute
-    wait $ till (5 :: Minute)
 
 -- plenty of black magic
 class TimeAcc1 t where
