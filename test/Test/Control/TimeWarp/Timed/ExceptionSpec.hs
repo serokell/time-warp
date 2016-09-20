@@ -10,7 +10,7 @@ import           Control.Concurrent.STM.TVar  (TVar, modifyTVar, newTVarIO,
                                                readTVarIO)
 import           Control.Exception.Base       (ArithException (Overflow),
                                                AsyncException (ThreadKilled),
-                                               SomeException)
+                                               SomeException (..))
 import           Control.Monad.Catch          (catch, catchAll, throwM)
 import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans          (MonadIO)
@@ -237,7 +237,8 @@ throwToThrowsCorrectException =
          runEmu $ do
              tid <- fork $ catch (wait $ for 1 sec) $
                  \(_ :: ArithException) -> checkPoint 1
-             throwTo tid Overflow
+             throwTo tid $ SomeException Overflow  -- should be unwrapped
+                                                   -- automatically
              wait $ for 2 sec
              checkPoint 2
 
