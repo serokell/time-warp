@@ -17,10 +17,10 @@ module Control.TimeWarp.Timed.MonadTimed
       -- syntax like @invoke $ at 5 sec@
     , schedule, invoke, timestamp, fork_, killThread
     , startTimer
-    , workWhile, work, workWhileMVarEmpty, workWhileMVarEmpty'
+    , workWhile, work
       -- ** Time measures
       -- | NOTE: do we need @hour@ measure?
-    , minute , sec , ms , mcs, tu
+    , minute , sec , ms , mcs
     , minute', sec', ms', mcs'
       -- ** Time specifiers
       -- $timespec
@@ -40,7 +40,6 @@ module Control.TimeWarp.Timed.MonadTimed
     , MonadTimedError (..)
     ) where
 
-import           Control.Concurrent.MVar (MVar, isEmptyMVar)
 import           Control.Exception       (AsyncException (ThreadKilled), Exception (..))
 import           Control.Monad           (void)
 import           Control.Monad.Catch     (MonadThrow)
@@ -204,22 +203,6 @@ workWhile' checkDelay cond action = do
 work :: (MonadIO m, MonadTimed m) => TwoLayers m Bool -> m () -> m ()
 work (getTL -> predicate) action = predicate >>= \p -> workWhile p action
 
--- | Forks temporary thread which works while MVar is empty.
--- Another servant thread is used to periodically check the state of MVar,
--- beware of overhead.
-{-# DEPRECATED workWhileMVarEmpty "May give significant overhead, use with caution" #-}
-workWhileMVarEmpty
-    :: (MonadTimed m, MonadIO m)
-    => MVar a -> m () -> m ()
-workWhileMVarEmpty v = workWhile (liftIO . isEmptyMVar $ v)
-
--- | Like `workWhileMVarEmpty`, but allows to specify delay between checks.
-{-# DEPRECATED workWhileMVarEmpty' "May give significant overhead, use with caution" #-}
-workWhileMVarEmpty'
-    :: (MonadTimed m, MonadIO m)
-    => Microsecond -> MVar a -> m () -> m ()
-workWhileMVarEmpty' delay v = workWhile' delay (liftIO . isEmptyMVar $ v)
-
 -- | Similar to `fork`, but doesn't return a result.
 fork_ :: MonadTimed m => m () -> m ()
 fork_ = void . fork
@@ -271,10 +254,6 @@ mcs'    = fromMicroseconds . round
 ms'     = fromMicroseconds . round . (*) 1000
 sec'    = fromMicroseconds . round . (*) 1000000
 minute' = fromMicroseconds . round . (*) 60000000
-
--- | Measure for `TimeUnit`s.
-tu :: TimeUnit t => t -> Microsecond
-tu = convertUnit
 
 -- $timespec
 -- Following functions are used together with time-controlling functions
