@@ -339,7 +339,7 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
         let event following =
                 Event
                 { _threadCtx = ctx
-                , _timestamp = cur + relativeToNow cur
+                , _timestamp = max cur $ cur + relativeToNow cur
                 , _action = wrapCore following
                 }
         -- grab our continuation, put it to event queue
