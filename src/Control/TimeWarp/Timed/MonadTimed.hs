@@ -57,12 +57,7 @@ import           Data.Time.Units         (Microsecond, Millisecond, Minute, Seco
                                           TimeUnit (..), convertUnit)
 import           Data.Typeable           (Typeable)
 
--- | Defines some time point basing on current time point, relatively to now.
--- That is, if current virtual time is 10µs, @const 15@ would refer to
--- 10 + 15 = 25µs, while @(-) 15@ refers to 10 + (15 - 10) = 15µs.
---
--- (NOTE: calculating time relativelly to now seems pretty inconvinient,
--- if someone agrees I'll fix it).
+-- | Defines some time point basing on current virtual time.
 type RelativeToNow = Microsecond -> Microsecond
 
 -- | Is arisen on call of `timeout` if action wasn't executed in time.
@@ -355,16 +350,16 @@ class TimeAcc1 t where
     after' :: Microsecond -> t
 
 instance TimeAcc1 RelativeToNow where
-    at'    = (-)
-    after' = const
+    at'    = const
+    after' = (+)
 
 instance (a ~ b, TimeAcc1 t) => TimeAcc1 (a -> (b -> Microsecond) -> t) where
     at'    acc t f = at'    $ f t + acc
     after' acc t f = after' $ f t + acc
 
 instance TimeUnit t => TimeAcc1 (t -> RelativeToNow) where
-    at'    acc t cur = acc + convertUnit t - cur
-    after' acc t _   = acc + convertUnit t
+    at'    acc t _   = acc + convertUnit t
+    after' acc t cur = acc + convertUnit t + cur
 
 -- without this newtype TimeAcc2 doesn't work - overlapping instances
 newtype TwoLayers m a = TwoLayers { getTL :: m (m a) }
@@ -385,8 +380,8 @@ instance (a ~ b, TimeAcc2 t) => TimeAcc2 (a -> (b -> Microsecond) -> t) where
     upto'   acc t f = upto'   $ f t + acc
 
 instance TimeUnit t => TimeAcc2 (t -> RelativeToNow) where
-    during' acc t cur = acc + convertUnit t - cur
-    upto'   acc t _   = acc + convertUnit t
+    during' acc t _   = acc + convertUnit t
+    upto'   acc t cur = acc + convertUnit t + cur
 
 class TimeAcc3 t where
     interval' :: Microsecond -> t

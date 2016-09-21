@@ -53,7 +53,7 @@ instance MonadTimed TimedIO where
 
     wait relativeToNow = do
         cur <- localTime
-        liftIO $ C.threadDelay $ fromIntegral $ relativeToNow cur
+        liftIO $ C.threadDelay $ fromIntegral $ relativeToNow cur - cur
 
     fork (TimedIO a) = TimedIO $ lift . C.forkIO . runReaderT a =<< ask
 
