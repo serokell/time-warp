@@ -22,8 +22,9 @@ import           Control.Exception.Base            (AsyncException (ThreadKilled
                                                     Exception (fromException),
                                                     SomeException (..))
 
-import           Control.Lens                      (makeLenses, to, use, view, (%=), (%~),
-                                                    (&), (+=), (.=), (<&>), (^.))
+import           Control.Lens                      (makeLenses, use, view, (%=), (%~),
+                                                    (&), (.=), (<&>), (^.), at, (<<.=),
+                                                    (<<+=))
 import           Control.Monad                     (void)
 import           Control.Monad.Catch               (Handler (..), MonadCatch, MonadMask,
                                                     MonadThrow, catch, catchAll, catches,
@@ -114,7 +115,7 @@ emptyScenario =
 newtype Core m a = Core
     { getCore :: StateT (Scenario (TimedT m) (Core m)) m a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow,
-               MonadCatch, MonadMask, 
+               MonadCatch, MonadMask,
                MonadState (Scenario (TimedT m) (Core m)))
 
 instance MonadTrans Core where
@@ -163,7 +164,7 @@ instance (MonadCatch m, MonadIO m) => MonadCatch (TimedT m) where
             ContT $
             -- Types allow us to catch only from (m + its continuation).
             -- Thus, we should avoid handling exception from continuation.
-            -- It's achieved by handling any exception from continuation 
+            -- It's achieved by handling any exception from continuation
             -- and rethrowing it being wrapped into ContException.
             -- Then, any catch handler should first check for ContException.
             -- If it's caught, rethrow exception inside ContException,
@@ -237,11 +238,8 @@ runTimedT timed = launchTimedT $ do
         -- get some thread info
         let ctx = nextEv ^. threadCtx
             tid = ctx ^. threadId
-        -- extract possible exception thrown to this thread
-        maybeAsyncExc <- wrapCore . Core $ do
-            maybeExc <- use $ asyncExceptions . to (M.lookup tid)
-            asyncExceptions %= M.delete tid
-            return maybeExc
+        -- extract possible exception thrown
+        maybeAsyncExc <- TimedT $ asyncExceptions . at tid <<.= Nothing
 
         let -- die if received async exception
             maybeDie = traverse throwInnard maybeAsyncExc
@@ -254,7 +252,7 @@ runTimedT timed = launchTimedT $ do
 
   where
     notDone :: Monad m => TimedT m Bool
-    notDone = wrapCore . Core . use $ events . to (not . PQ.null)
+    notDone = not . PQ.null <$> TimedT (use events)
 
     -- put empty continuation to an action (not our own!)
     runInSandbox r = wrapCore . unwrapCore' r
@@ -264,7 +262,7 @@ runTimedT timed = launchTimedT $ do
             ThreadCtx
             { _threadId = tid
             , _handlers = [( Handler $ \(SomeException e) -> throwM e
-                           , Handler $ \(ContException e) -> throwM e
+                           , contHandler
                            )]
             }
 
@@ -275,10 +273,7 @@ runTimedT timed = launchTimedT $ do
     throwInnard (SomeException e) = throwM e
 
 getNextThreadId :: Monad m => TimedT m PureThreadId
-getNextThreadId = wrapCore . Core $ do
-    tid <- PureThreadId <$> use threadsCounter
-    threadsCounter += 1
-    return tid
+getNextThreadId = TimedT . fmap PureThreadId $ threadsCounter <<+= 1
 
 -- | Just like `runTimedT`, but makes it possible to get a result.
 evalTimedT
@@ -308,7 +303,7 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
          MonadTimed (TimedT m) where
     type ThreadId (TimedT m) = PureThreadId
 
-    localTime = wrapCore $ Core $ use curTime
+    localTime = TimedT $ use curTime
     -- | Take note, created thread may be killed by async exception
     --   only when it calls "wait"
     fork _action
@@ -320,9 +315,9 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
                 ThreadCtx
                 { _threadId = tid
                 , _handlers =
-                      [ ( Handler threadKilledNotifier
-                        , Handler $ \(ContException e) -> throwM e)
-                      ]
+                      [( Handler threadKilledNotifier
+                       , contHandler
+                       )]
                 }
         TimedT $ events %= PQ.insert Event {..}
         wait $ for 1 mcs  -- real `forkIO` seems to yield execution
@@ -339,11 +334,11 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
                 }
         -- grab our continuation, put it to event queue
         -- and finish execution
-        TimedT $ lift $ ContT $
+        TimedT . lift . ContT $
             \c -> events %= PQ.insert (event $ c ())
     myThreadId = TimedT $ view threadId
     throwTo tid e = TimedT $
-        asyncExceptions %= M.alter (<|> Just (SomeException e)) tid
+        asyncExceptions . at tid %= (<|> Just (SomeException e))
     -- TODO: we should probably implement this similar to
     -- http://haddock.stackage.org/lts-5.8/base-4.8.2.0/src/System-Timeout.html#timeout
     timeout (convertUnit -> t) action' = do

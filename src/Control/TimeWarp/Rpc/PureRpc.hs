@@ -17,8 +17,8 @@ module Control.TimeWarp.Rpc.PureRpc
        ) where
 
 import           Control.Exception.Base        (Exception)
-import           Control.Lens                  (both, makeLenses, to, use, (%%=), (%=),
-                                                (%~))
+import           Control.Lens                  (both, makeLenses, to, use, (%%=),
+                                                (%~), at, (?=))
 import           Control.Monad                 (forM_, when)
 import           Control.Monad.Catch           (MonadCatch, MonadMask, MonadThrow, throwM)
 import           Control.Monad.Random          (MonadRandom (getRandomR), Rand, runRand)
@@ -211,8 +211,7 @@ instance (WithNamedLogger m, MonadIO m, MonadCatch m) =>
                     when defined $ return ()
                     -- TODO:
                     --    throwM $ PortAlreadyBindedError (host, port)
-                    listeners %=
-                        Map.insert ((host, port), methodName) methodBody
+                    listeners . at ((host, port), methodName) ?= methodBody
            sleepForever
 
 waitDelay
