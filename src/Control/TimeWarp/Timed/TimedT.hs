@@ -114,19 +114,14 @@ emptyScenario =
 newtype Core m a = Core
     { getCore :: StateT (Scenario (TimedT m) (Core m)) m a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow,
-               MonadCatch, MonadMask)
+               MonadCatch, MonadMask, 
+               MonadState (Scenario (TimedT m) (Core m)))
 
 instance MonadTrans Core where
     lift = Core . lift
 
 deriving instance (Monad m, WithNamedLogger m) => WithNamedLogger (Core m)
 
-instance MonadState s m => MonadState s (Core m) where
-    get = lift get
-    put = lift . put
-    state = lift . state
-
--- | Pure implementation of MonadTimed.
 -- Threads are emulated, whole execution takes place in a single thread.
 -- This allows to execute whole scenarios on the spot.
 --
@@ -166,13 +161,13 @@ instance (MonadCatch m, MonadIO m) => MonadCatch (TimedT m) where
         ReaderT $
         \r ->
             ContT $
-            -- We can catch only from (m + its continuation).
+            -- Types allow us to catch only from (m + its continuation).
             -- Thus, we should avoid handling exception from continuation.
-            -- It's achieved by handling any exception and rethrowing it
-            -- wrapped into ContException.
+            -- It's achieved by handling any exception from continuation 
+            -- and rethrowing it being wrapped into ContException.
             -- Then, any catch handler should first check for ContException.
-            -- If it's thrown, rethrow exception inside ContException,
-            -- otherwise handle original exception
+            -- If it's caught, rethrow exception inside ContException,
+            -- otherwise handle any possible normal exception
             \c ->
                 let safeCont x = c x `catchAll` (throwM . ContException)
                     r' = r & handlers %~ (:) (Handler handler', contHandler)
@@ -238,12 +233,12 @@ runTimedT timed = launchTimedT $ do
             events .= evs'
             return ev
         -- rewind current time
-        wrapCore . Core $ curTime .= nextEv ^. timestamp
+        TimedT $ curTime .= nextEv ^. timestamp
         -- get some thread info
         let ctx = nextEv ^. threadCtx
             tid = ctx ^. threadId
         -- extract possible exception thrown to this thread
-        maybeAsyncExc <- wrapCore $ Core $ do
+        maybeAsyncExc <- wrapCore . Core $ do
             maybeExc <- use $ asyncExceptions . to (M.lookup tid)
             asyncExceptions %= M.delete tid
             return maybeExc
@@ -314,10 +309,10 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
     type ThreadId (TimedT m) = PureThreadId
 
     localTime = wrapCore $ Core $ use curTime
-    -- | Take note, created thread may be killed by timeout
+    -- | Take note, created thread may be killed by async exception
     --   only when it calls "wait"
     fork _action
-         -- just put new thread to an event queue
+         -- just put new thread to event queue
      = do
         _timestamp <- localTime
         tid <- getNextThreadId
@@ -329,7 +324,7 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
                         , Handler $ \(ContException e) -> throwM e)
                       ]
                 }
-        wrapCore $ Core $ events %= PQ.insert Event {..}
+        TimedT $ events %= PQ.insert Event {..}
         wait $ for 1 mcs  -- real `forkIO` seems to yield execution
                           -- to newly created thread
         return tid
@@ -344,9 +339,10 @@ instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
                 }
         -- grab our continuation, put it to event queue
         -- and finish execution
-        TimedT $ lift $ ContT $ \c -> Core $ events %= PQ.insert (event $ c ())
+        TimedT $ lift $ ContT $
+            \c -> events %= PQ.insert (event $ c ())
     myThreadId = TimedT $ view threadId
-    throwTo tid e = wrapCore $ Core $
+    throwTo tid e = TimedT $
         asyncExceptions %= M.alter (<|> Just (SomeException e)) tid
     -- TODO: we should probably implement this similar to
     -- http://haddock.stackage.org/lts-5.8/base-4.8.2.0/src/System-Timeout.html#timeout
