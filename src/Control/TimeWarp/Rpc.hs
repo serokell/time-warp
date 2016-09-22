@@ -14,7 +14,7 @@
 -- exampleLaunch :: (MonadRpc m, MonadTimed m, MonadIO m) => m ()
 -- exampleLaunch = do
 --     -- launch server
---     work (during 1 minute) $ do
+--     work (for 1 minute) $ do
 --         idr <- serverTypeRestriction2
 --         serve 1234 [method "sum" $ idr sumMethod]
 --     -- make 3 requests with delay

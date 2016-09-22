@@ -16,9 +16,8 @@ module Control.TimeWarp.Timed.MonadTimed
       -- | NOTE: do we ever need `schedule` and `invoke`? These functions are
       -- not complex, and aren't used in production. Just provide another funny
       -- syntax like @invoke $ at 5 sec@
-    , schedule, invoke, timestamp, fork_, killThread
+    , schedule, invoke, timestamp, fork_, work, killThread
     , startTimer
-    , workWhile, work
       -- ** Time measures
       -- | NOTE: do we need @hour@ measure?
     , minute , sec , ms , mcs
@@ -26,8 +25,7 @@ module Control.TimeWarp.Timed.MonadTimed
       -- ** Time specifiers
       -- $timespec
     , after, for, at, till, now
-    , during, upto
-    , interval
+    , interval, timepoint
       -- * Time types
       -- | Re-export of `Data.Time.Units.Microsecond`
     , Microsecond
@@ -37,6 +35,9 @@ module Control.TimeWarp.Timed.MonadTimed
     , Second
       -- | Re-export of `Data.Time.Units.Minute`
     , Minute
+      -- * Time accumulators
+    , TimeAccR
+    , TimeAccM
       -- * Exceptions
     , MonadTimedError (..)
     ) where
@@ -44,12 +45,10 @@ module Control.TimeWarp.Timed.MonadTimed
 import           Control.Exception       (AsyncException (ThreadKilled), Exception (..))
 import           Control.Monad           (void)
 import           Control.Monad.Catch     (MonadThrow)
-import           Control.Monad.Loops     (whileM)
 import           Control.Monad.Reader    (ReaderT (..), ask, runReaderT)
 import           Control.Monad.State     (StateT, evalStateT, get)
 import           Control.Monad.Trans     (MonadIO, lift, liftIO)
 
-import           Data.IORef              (newIORef, readIORef, writeIORef)
 import           Data.Monoid             ((<>))
 import           Data.Text               (Text)
 import           Data.Text.Buildable     (Buildable (build))
@@ -183,33 +182,14 @@ timestamp msg = localTime >>= \time -> liftIO . putStrLn $ concat
     , msg
     ]
 
--- | Forks a temporal thread, which exists until preficate evaluates to False.
--- Another servant thread is used to periodically check that condition,
--- beware of overhead.
-{-# DEPRECATED workWhile "May give significant overhead, use with caution" #-}
-workWhile :: (MonadIO m, MonadTimed m) => m Bool -> m () -> m ()
-workWhile = workWhile' $ interval 10 sec
-
--- | Like `workWhile`, but also allows to specify delay between checks.
-{-# DEPRECATED workWhile' "May give significant overhead, use with caution" #-}
-workWhile' :: (MonadIO m, MonadTimed m) => Microsecond -> m Bool -> m () -> m ()
-workWhile' checkDelay cond action = do
-    working <- liftIO $ newIORef True
-    tid     <- fork $ action >> liftIO (writeIORef working False)
-    fork_ $ do
-        _ <- whileM ((&&) <$> cond <*> liftIO (readIORef working)) $
-            wait $ for checkDelay
-        killThread tid
-
--- | Like workWhile, unwraps first layer of monad immediatelly
---   and then checks predicate periocially.
-{-# DEPRECATED work "May give significant overhead, use with caution" #-}
-work :: (MonadIO m, MonadTimed m) => TwoLayers m Bool -> m () -> m ()
-work (getTL -> predicate) action = predicate >>= \p -> workWhile p action
-
 -- | Similar to `fork`, but doesn't return a result.
 fork_ :: MonadTimed m => m () -> m ()
 fork_ = void . fork
+
+-- | Creates a thread, which works for specified amount of time, and then gets
+-- `killThread`ed.
+work :: MonadTimed m => RelativeToNow -> m () -> m ()
+work rel act = fork act >>= schedule rel . killThread
 
 -- | Arises `ThreadKilled` exception in specified thread
 killThread :: MonadTimed m => ThreadId m -> m ()
@@ -275,15 +255,20 @@ minute' = fromMicroseconds . round . (*) 60000000
 -- Order of time parts is irrelevant.
 --
 
--- | Time point by given virtual time.
-at, till :: TimeAcc1 t => t
-at   = at' 0
-till = at' 0
+at, till :: TimeAccR t => t
+-- | Defines `RelativeToNow`, which refers to specified time point.
+-- Supposed to be used with `wait` or `work`.
+till = till' 0
+-- | Synonym to `till`. Supposed to be used with `invoke` and `shedule`.
+at   = till' 0
 
--- | Time point relative to current time.
-after, for :: TimeAcc1 t => t
-after = after' 0
-for   = after' 0
+after, for :: TimeAccR t => t
+-- | Defines `RelativeToNow`, which refers to time point in specified time after
+-- current time point.
+-- Supposed to be used with `wait` or `work`.
+for   = for' 0
+-- | Synonym to `for`. Supposed to be used with `invoke` and `shedule`.
+after = for' 0
 
 -- | Current time point.
 --
@@ -291,15 +276,6 @@ for   = after' 0
 -- [0µs]
 now :: RelativeToNow
 now = id
-
--- | Returns whether specified delay has passed
---   (timer starts when first monad layer is unwrapped).
-during :: TimeAcc2 t => t
-during = during' 0
-
--- | Returns whether specified time point has passed.
-upto :: TimeAcc2 t => t
-upto = upto' 0
 
 -- | Counts time since outer monad layer was unwrapped.
 --
@@ -324,53 +300,38 @@ startTimer = do
 --
 -- >>> print $ interval 1 sec
 -- 1000000µs
-interval :: TimeAcc3 t => t
+interval :: TimeAccM t => t
 interval = interval' 0
 
--- plenty of black magic
-class TimeAcc1 t where
-    at'    :: Microsecond -> t
-    after' :: Microsecond -> t
+-- | Synonym to `interval`. May be more preferable in some situations.
+timepoint :: TimeAccM t => t
+timepoint = interval
 
-instance TimeAcc1 RelativeToNow where
-    at'    = const
-    after' = (+)
+-- * Time accumulators
 
-instance (a ~ b, TimeAcc1 t) => TimeAcc1 (a -> (b -> Microsecond) -> t) where
-    at'    acc t f = at'    $ f t + acc
-    after' acc t f = after' $ f t + acc
+-- | Time accumulator. Helps to define time. Evaluates to `RelativeToNow`.
+class TimeAccR t where
+    till' :: Microsecond -> t
+    for'  :: Microsecond -> t
 
-instance TimeUnit t => TimeAcc1 (t -> RelativeToNow) where
-    at'    acc t _   = acc + convertUnit t
-    after' acc t cur = acc + convertUnit t + cur
+instance TimeAccR RelativeToNow where
+    till' = const
+    for'  = (+)
 
--- without this newtype TimeAcc2 doesn't work - overlapping instances
-newtype TwoLayers m a = TwoLayers { getTL :: m (m a) }
+instance (a ~ b, TimeAccR t) => TimeAccR (a -> (b -> Microsecond) -> t) where
+    till' acc t f = till'    $ f t + acc
+    for'  acc t f = for' $ f t + acc
 
-class TimeAcc2 t where
-    during' :: Microsecond -> t
-    upto'   :: Microsecond -> t
+instance TimeUnit t => TimeAccR (t -> RelativeToNow) where
+    till' acc t _   = acc + convertUnit t
+    for'  acc t cur = acc + convertUnit t + cur
 
-instance MonadTimed m => TimeAcc2 (TwoLayers m Bool) where
-    during' time = TwoLayers $ do
-        end <- (time + ) <$> localTime
-        return $ (end > ) <$> localTime
-
-    upto' time = TwoLayers . return $ (time > ) <$> localTime
-
-instance (a ~ b, TimeAcc2 t) => TimeAcc2 (a -> (b -> Microsecond) -> t) where
-    during' acc t f = during' $ f t + acc
-    upto'   acc t f = upto'   $ f t + acc
-
-instance TimeUnit t => TimeAcc2 (t -> RelativeToNow) where
-    during' acc t _   = acc + convertUnit t
-    upto'   acc t cur = acc + convertUnit t + cur
-
-class TimeAcc3 t where
+-- | Time accumulator, Helps to define time. Evaluates to `Microsecond`.
+class TimeAccM t where
     interval' :: Microsecond -> t
 
-instance TimeAcc3 Microsecond where
+instance TimeAccM Microsecond where
     interval' = id
 
-instance (a ~ b, TimeAcc3 t) => TimeAcc3 (a -> (b -> Microsecond) -> t) where
+instance (a ~ b, TimeAccM t) => TimeAccM (a -> (b -> Microsecond) -> t) where
     interval' acc t f = interval' $ f t + acc
