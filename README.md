@@ -8,7 +8,7 @@ Time-warp consists of 3 parts:
      Output is colored :star:
   2. `MonadTimed` library, which provides time (ala `threadDelay`) and
      threads (ala `forkIO`, `throwTo` and others) management capabilities.
-  3. `MonadRpc` library, which provides network communication probabilities,
+  3. `MonadRpc` library, which provides network communication capabilities,
      [msgpack-rpc](https://hackage.haskell.org/package/msgpack-rpc-1.0.0)
      is taken as a foundation.
 
