@@ -30,7 +30,6 @@ library
                      , Control.TimeWarp.Timed.TimedT
   other-modules:       Control.TimeWarp.Rpc.Arbitrary
                      , Control.TimeWarp.Timed.Arbitrary
-  pkgconfig-depends: zlib
   build-depends:       ansi-terminal
                      , base >=4.8 && <4.9
                      , base64-bytestring >= 1.0.0.1
