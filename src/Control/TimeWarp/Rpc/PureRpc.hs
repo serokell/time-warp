@@ -42,7 +42,7 @@ import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Host, Method (..),
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..),
                                                 PureThreadId, TimedT, evalTimedT, for,
                                                 localTime, runTimedT, sleepForever,
-                                                wait)
+                                                wait, ThreadId)
 
 localhost :: Host
 localhost = "127.0.0.1"
@@ -112,36 +112,22 @@ data NetInfo m = NetInfo
 
 $(makeLenses ''NetInfo)
 
--- | Pure implementation of RPC. TCP model is used.
--- Network nastiness of emulated system can be manually defined via `Delays`
--- datatype.
+-- | Implementation of RPC protocol for emulation, allows to manually define
+-- network nastiness via `Delays` datatype. TCP model is used. 
 --
 -- NOTE: List of known issues:
 --
 --     * Method, once being declared in net, can't be removed.
 -- Even `throwTo` won't help.
--- Status: not relevant in tests for now. May be fixed in presence of `MVar`.
 newtype PureRpc m a = PureRpc
     { unwrapPureRpc :: StateT Host (TimedT (StateT (NetInfo (PureRpc m)) m)) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
                 MonadMask)
 
--- | Implementation refers to `Control.TimeWarp.Timed.TimedT.TimedT`.
-instance (MonadIO m, MonadCatch m, WithNamedLogger m) =>
-         MonadTimed (PureRpc m) where
-    type ThreadId (PureRpc m) = PureThreadId
+type instance ThreadId (PureRpc m) = PureThreadId
 
-    localTime = PureRpc localTime
-
-    wait = PureRpc . wait
-
-    fork = PureRpc . fork . unwrapPureRpc
-
-    myThreadId = PureRpc myThreadId
-
-    throwTo tid = PureRpc . throwTo tid
-
-    timeout t = PureRpc . timeout t . unwrapPureRpc
+deriving instance (MonadIO m, MonadCatch m, WithNamedLogger m) =>
+         MonadTimed (PureRpc m)
 
 instance MonadTrans PureRpc where
     lift = PureRpc . lift . lift . lift

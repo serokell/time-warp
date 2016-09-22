@@ -10,6 +10,7 @@
 module Control.TimeWarp.Timed.MonadTimed
     ( -- * Typeclass with basic functions
       MonadTimed (..)
+    , ThreadId
     , RelativeToNow
       -- * Helper functions
       -- | NOTE: do we ever need `schedule` and `invoke`? These functions are
@@ -93,12 +94,12 @@ instance Buildable MonadTimedError where
 --
 -- >>> runTimedT $ runStateT undefined example
 -- 1
+--
+-- When implement instance of this typeclass, don't forget to define `ThreadId`
+-- first.
 
 
 class MonadThrow m => MonadTimed m where
-    -- | Type of thread identifier.
-    type ThreadId m :: *
-
     -- | Acquires virtual time.
     localTime :: m Microsecond
 
@@ -129,6 +130,9 @@ class MonadThrow m => MonadTimed m where
     --
     -- NOTE: maybe do signature like in <http://hackage.haskell.org/package/base-4.9.0.0/docs/System-Timeout.html#v:timeout real timeout>
     timeout :: TimeUnit t => t -> m a -> m a
+
+-- | Type of thread identifier.
+type family ThreadId (m :: * -> *) :: *
 
 -- | Executes an action somewhere in future in another thread.
 --
@@ -211,9 +215,9 @@ fork_ = void . fork
 killThread :: MonadTimed m => ThreadId m -> m ()
 killThread = flip throwTo ThreadKilled
 
-instance MonadTimed m => MonadTimed (ReaderT r m) where
-    type ThreadId (ReaderT r m) = ThreadId m
+type instance ThreadId (ReaderT r m) = ThreadId m
 
+instance MonadTimed m => MonadTimed (ReaderT r m) where
     localTime = lift localTime
 
     wait = lift . wait
@@ -226,9 +230,9 @@ instance MonadTimed m => MonadTimed (ReaderT r m) where
 
     timeout t m = lift . timeout t . runReaderT m =<< ask
 
-instance MonadTimed m => MonadTimed (StateT s m) where
-    type ThreadId (StateT s m) = ThreadId m
+type instance ThreadId (StateT s m) = ThreadId m
 
+instance MonadTimed m => MonadTimed (StateT s m) where
     localTime = lift localTime
 
     wait = lift . wait

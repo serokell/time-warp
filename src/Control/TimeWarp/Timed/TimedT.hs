@@ -53,7 +53,7 @@ import           Control.TimeWarp.Timed.MonadTimed (Microsecond, Millisecond,
                                                     MonadTimed (..),
                                                     MonadTimedError (MTTimeoutError), for,
                                                     killThread, localTime, mcs,
-                                                    timeout)
+                                                    timeout, ThreadId)
 
 -- | Analogy to `Control.Concurrent.ThreadId` for emulation
 newtype PureThreadId = PureThreadId Integer
@@ -299,10 +299,10 @@ threadKilledNotifier e
   where
     msg = sformat ("Thread killed by exception: " % shown) e
 
+type instance ThreadId (TimedT m) = PureThreadId
+
 instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
          MonadTimed (TimedT m) where
-    type ThreadId (TimedT m) = PureThreadId
-
     localTime = TimedT $ use curTime
     -- | Take note, created thread may be killed by async exception
     --   only when it calls "wait"

@@ -27,6 +27,7 @@ import qualified System.Timeout                    as T
 
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond,
                                                     MonadTimed (..),
+                                                    ThreadId,
                                                     MonadTimedError
                                                     (MTTimeoutError))
 
@@ -46,9 +47,9 @@ instance MonadBaseControl IO TimedIO where
 
     restoreM = TimedIO . restoreM
 
-instance MonadTimed TimedIO where
-    type ThreadId TimedIO = C.ThreadId
+type instance ThreadId TimedIO = C.ThreadId
 
+instance MonadTimed TimedIO where
     localTime = TimedIO $ (-) <$> lift curTime <*> ask
 
     wait relativeToNow = do
