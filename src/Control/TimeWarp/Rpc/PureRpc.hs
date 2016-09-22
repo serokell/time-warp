@@ -5,6 +5,7 @@
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
+{-# LANGUAGE ViewPatterns          #-}
 
 -- | Defines network-emulated implementation of `MonadRpc`.
 module Control.TimeWarp.Rpc.PureRpc
@@ -81,12 +82,32 @@ data ConnectionOutcome
 --         then return $ ConnectedIn 0
 --         else return NeverConnected
 -- @
+
 newtype Delays = Delays
     { -- | Basing on current virtual time, returns delay after which server
       -- receives RPC request.
       evalDelay :: Microsecond
                 -> Rand StdGen ConnectionOutcome
     }
+
+-- | Defines network nastiness.
+class DelaysSpecifier d where
+    toDelays :: d -> Delays
+
+instance DelaysSpecifier Delays where
+    toDelays = id
+
+-- | Connection is never established.
+instance DelaysSpecifier () where
+    toDelays = const . Delays . const . return $ NeverConnected
+
+-- | Specifies connection delay.
+instance DelaysSpecifier Microsecond where
+    toDelays = Delays . const . return . ConnectedIn
+
+-- | Connection delay varies is specified range.
+instance DelaysSpecifier (Microsecond, Microsecond) where
+    toDelays = Delays . const . fmap ConnectedIn . getRandomTR
 
 -- This is needed for QC.
 instance Show Delays where
@@ -139,9 +160,9 @@ instance MonadState s m => MonadState s (PureRpc m) where
 
 -- | Launches distributed scenario, emulating work of network.
 runPureRpc
-    :: (MonadIO m, MonadCatch m)
-    => StdGen -> Delays -> PureRpc m a -> m a
-runPureRpc _randSeed _delays (PureRpc rpc) =
+    :: (MonadIO m, MonadCatch m, DelaysSpecifier delays)
+    => StdGen -> delays -> PureRpc m a -> m a
+runPureRpc _randSeed (toDelays -> _delays) (PureRpc rpc) =
     evalStateT (evalTimedT (evalStateT rpc localhost)) net
   where
     net        = NetInfo{..}
@@ -150,9 +171,9 @@ runPureRpc _randSeed _delays (PureRpc rpc) =
 -- | Launches distributed scenario without result.
 -- May be slightly more efficient.
 runPureRpc_
-    :: (MonadIO m, MonadCatch m)
-    => StdGen -> Delays -> PureRpc m () -> m ()
-runPureRpc_ _randSeed _delays (PureRpc rpc) =
+    :: (MonadIO m, MonadCatch m, DelaysSpecifier delays)
+    => StdGen -> delays -> PureRpc m () -> m ()
+runPureRpc_ _randSeed (toDelays -> _delays) (PureRpc rpc) =
     evalStateT (runTimedT (evalStateT rpc localhost)) net
   where
     net        = NetInfo{..}

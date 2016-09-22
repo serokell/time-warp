@@ -19,7 +19,7 @@ import           Control.TimeWarp.Rpc         (Client (..), Host, MonadRpc (..),
                                                Port, PureRpc, call, method,
                                                runMsgPackRpc, runPureRpc)
 import           Control.TimeWarp.Timed       (for, fork, fork_, killThread, ms,
-                                               runTimedIO, wait)
+                                               runTimedIO, wait, Microsecond)
 
 import           Test.Control.TimeWarp.Common ()
 
@@ -48,8 +48,11 @@ runMsgPackRpcProp = monadic $ ioProperty . runTimedIO . runMsgPackRpc
 runPureRpcProp :: PureRpcProp () -> Property
 runPureRpcProp test =
     property $
-    \gen delays ->
+    \gen ->
          ioProperty $ execStateT (runPureRpc gen delays test) True
+  where
+    delays :: (Microsecond, Microsecond)
+    delays = (0, 1000)
 
 -- TODO: it would be useful to create an instance of Function for Client and Method;
 -- see here https://hackage.haskell.org/package/QuickCheck-2.8.2/docs/Test-QuickCheck-Function.html#t:Function
