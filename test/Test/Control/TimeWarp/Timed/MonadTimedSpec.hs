@@ -26,8 +26,7 @@ import           Numeric.Natural              (Natural)
 import           Test.Hspec                   (Spec, describe)
 import           Test.Hspec.QuickCheck        (prop)
 import           Test.QuickCheck              (NonNegative (..), Property,
-                                               counterexample, ioProperty,
-                                               (===))
+                                               counterexample, ioProperty)
 import           Test.QuickCheck.Function     (Fun, apply)
 import           Test.QuickCheck.Monadic      (PropertyM, assert, monadic,
                                                monitor, run)
@@ -45,9 +44,6 @@ import           Test.Control.TimeWarp.Common ()
 spec :: Spec
 spec =
     describe "MonadTimed" $ do
-        describe "now" $ do
-            prop "should return the same time as specified"
-                nowProp
         monadTimedSpec "TimedIO" runTimedIOProp
         monadTimedTSpec "TimedT" runTimedTProp
 
@@ -88,6 +84,9 @@ monadTimedTSpec description runProp =
         describe "localTime >> localTime" $ do
             prop "first localTime will run before second localTime" $
                 runProp localTimePassingTimedProp
+        describe "now" $ do
+            prop "now is correct" $
+                runProp . nowProp
         describe "wait t" $ do
             prop "will wait at least t" $
                 runProp . waitPassingTimedProp
@@ -347,11 +346,16 @@ actionSemanticTimedProp action val f = do
     let result = apply f val
     action $ assertTimedT $ apply f val == result
 
-nowProp :: Microsecond -> Property
-nowProp ms = 0 === now ms
+nowProp :: Microsecond -> TimedTProp ()
+nowProp ms = do
+    wait $ for ms
+    t1 <- localTime
+    invoke now $ return ()
+    t2 <- localTime
+    assertTimedT $ t1 == t2
 
 
--- * Excpetions
+-- * Exceptions
 
 data TestException = TestExc
     deriving (Show, Typeable)

@@ -290,7 +290,7 @@ for   = after' 0
 -- >>> runTimedT $ invoke now $ timestamp ""
 -- [0µs]
 now :: RelativeToNow
-now = const 0
+now = id
 
 -- | Returns whether specified delay has passed
 --   (timer starts when first monad layer is unwrapped).
