@@ -13,6 +13,7 @@ module Control.TimeWarp.Rpc.PureRpc
        , runPureRpc
        , runPureRpc_
        , Delays (..)
+       , DelaysSpecifier (..)
        , ConnectionOutcome (..)
        , getRandomTR
        ) where
