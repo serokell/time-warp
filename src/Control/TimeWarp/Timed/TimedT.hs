@@ -241,12 +241,14 @@ runTimedT timed = launchTimedT $ do
         -- extract possible exception thrown
         maybeAsyncExc <- TimedT $ asyncExceptions . at tid <<.= Nothing
 
-        let -- die if received async exception
-            maybeDie = traverse throwInnard maybeAsyncExc
-            act      = maybeDie >> runInSandbox ctx (nextEv ^. action)
+        let act = do
+                -- die if received async exception
+                mapM_ throwInnard maybeAsyncExc
+                -- execute thread
+                runInSandbox ctx (nextEv ^. action)
             -- catch with handlers from handlers stack
             -- `catch` which is performed in instance MonadCatch is not enough,
-            -- cause on `wait` `catch`'s scope finishes, we need to catch
+            -- because on `wait` `catch`'s scope finishes, we need to catch
             -- again here
         wrapCore $ (unwrapCore' ctx act) `catchesSeq` (ctx ^. handlers)
 
@@ -261,7 +263,7 @@ runTimedT timed = launchTimedT $ do
         \tid ->
             ThreadCtx
             { _threadId = tid
-            , _handlers = [( Handler $ \(SomeException e) -> throwM e
+            , _handlers = [( Handler throwInnard
                            , contHandler
                            )]
             }
