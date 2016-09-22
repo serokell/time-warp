@@ -39,7 +39,7 @@ import           Data.MessagePack.Object       (MessagePack, fromObject, toObjec
 import           Control.TimeWarp.Logging      (WithNamedLogger)
 import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Host, Method (..),
                                                 MonadRpc (execClient, serve),
-                                                NetworkAddress, RpcError (..), methodBody,
+                                                Port, RpcError (..), methodBody,
                                                 methodName)
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..),
                                                 PureThreadId, TimedT, evalTimedT, for,
@@ -123,7 +123,7 @@ getRandomTR :: MonadRandom m => (Microsecond, Microsecond) -> m Microsecond
 getRandomTR = fmap fromMicroseconds . getRandomR . (both %~ toMicroseconds)
 
 -- | Keeps servers' methods.
-type Listeners m = Map.Map (NetworkAddress, String) ([Object] -> m Object)
+type Listeners m = Map.Map (Port, String) ([Object] -> m Object)
 
 -- | Keeps global network information.
 data NetInfo m = NetInfo
@@ -142,7 +142,7 @@ $(makeLenses ''NetInfo)
 --     * Method, once being declared in net, can't be removed.
 -- Even `throwTo` won't help.
 newtype PureRpc m a = PureRpc
-    { unwrapPureRpc :: StateT Host (TimedT (StateT (NetInfo (PureRpc m)) m)) a
+    { unwrapPureRpc :: TimedT (StateT (NetInfo (PureRpc m)) m) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
                 MonadMask)
 
@@ -152,7 +152,7 @@ deriving instance (MonadIO m, MonadCatch m, WithNamedLogger m) =>
          MonadTimed (PureRpc m)
 
 instance MonadTrans PureRpc where
-    lift = PureRpc . lift . lift . lift
+    lift = PureRpc . lift . lift
 
 instance MonadState s m => MonadState s (PureRpc m) where
     get = lift get
@@ -163,8 +163,8 @@ instance MonadState s m => MonadState s (PureRpc m) where
 runPureRpc
     :: (MonadIO m, MonadCatch m, DelaysSpecifier delays)
     => StdGen -> delays -> PureRpc m a -> m a
-runPureRpc _randSeed (toDelays -> _delays) (PureRpc rpc) =
-    evalStateT (evalTimedT (evalStateT rpc localhost)) net
+runPureRpc _randSeed (toDelays -> _delays) rpc =
+    evalStateT (evalTimedT $ unwrapPureRpc rpc) net
   where
     net        = NetInfo{..}
     _listeners = Map.empty
@@ -174,8 +174,8 @@ runPureRpc _randSeed (toDelays -> _delays) (PureRpc rpc) =
 runPureRpc_
     :: (MonadIO m, MonadCatch m, DelaysSpecifier delays)
     => StdGen -> delays -> PureRpc m () -> m ()
-runPureRpc_ _randSeed (toDelays -> _delays) (PureRpc rpc) =
-    evalStateT (runTimedT (evalStateT rpc localhost)) net
+runPureRpc_ _randSeed (toDelays -> _delays) rpc =
+    evalStateT (runTimedT $ unwrapPureRpc rpc) net
   where
     net        = NetInfo{..}
     _listeners = Map.empty
@@ -183,12 +183,12 @@ runPureRpc_ _randSeed (toDelays -> _delays) (PureRpc rpc) =
 request :: (Monad m, MonadThrow m, MessagePack a)
         => Client a
         -> Listeners (PureRpc m)
-        -> NetworkAddress
+        -> Port
         -> PureRpc m a
-request (Client name args) listeners' addr =
-    case Map.lookup (addr, name) listeners' of
+request (Client name args) listeners' port =
+    case Map.lookup (port, name) listeners' of
         Nothing -> throwM $ ServerError $ toObject $ mconcat
-            ["method \"", name, "\" not found at adress ", show addr]
+            ["method \"", name, "\" not found at port ", show port]
         Just f  -> do
             res <- f args
             case fromObject res of
@@ -198,28 +198,25 @@ request (Client name args) listeners' addr =
 
 instance (WithNamedLogger m, MonadIO m, MonadCatch m) =>
          MonadRpc (PureRpc m) where
-    execClient addr cli =
-        PureRpc $
-        do curHost <- get
-           unwrapPureRpc $ waitDelay
-           ls <- lift . lift $ use listeners
-           put $ fst addr
-           answer <- unwrapPureRpc $ request cli ls addr
-           put curHost
-           return answer
+    execClient (host, port) cli =
+        if host /= localhost
+            then
+                error "Can't emulate for host /= localhost"
+            else do 
+                waitDelay
+                ls <- PureRpc $ use listeners
+                request cli ls port
     serve port methods =
         PureRpc $
-        do host <- get
-           lift $
-               lift $
+        do lift $
                forM_ methods $
                \Method {..} -> do
-                    let methodRef = ((host, port), methodName)
+                    let methodRef = (port, methodName)
                     defined <- use $ listeners . to (Map.member methodRef)
                     when defined $ return ()
                     -- TODO:
-                    --    throwM $ PortAlreadyBindedError (host, port)
-                    listeners . at ((host, port), methodName) ?= methodBody
+                    --    throwM $ PortAlreadyBindedError port
+                    listeners . at (port, methodName) ?= methodBody
            sleepForever
 
 waitDelay
@@ -227,15 +224,14 @@ waitDelay
     => PureRpc m ()
 waitDelay =
     PureRpc $
-    do delays' <- lift . lift $ use delays
+    do delays' <- use delays
        time    <- localTime
-       delay   <- lift . lift $ randSeed %%=
-            runRand (evalDelay delays' time)
+       delay   <- randSeed %%= runRand (evalDelay delays' time)
        case delay of
            ConnectedIn connDelay -> wait (for connDelay)
            NeverConnected        -> sleepForever
 
-data PortAlreadyBindedError = PortAlreadyBindedError NetworkAddress
+data PortAlreadyBindedError = PortAlreadyBindedError Port
     deriving (Show, Typeable)
 
 instance Exception PortAlreadyBindedError
