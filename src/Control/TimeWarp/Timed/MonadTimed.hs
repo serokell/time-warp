@@ -24,7 +24,7 @@ module Control.TimeWarp.Timed.MonadTimed
     , minute', sec', ms', mcs'
       -- ** Time specifiers
       -- $timespec
-    , after, for, at, till, now
+    , for, after, till, at, now
     , interval, timepoint
       -- * Time types
       -- | Re-export of `Data.Time.Units.Microsecond`
@@ -36,6 +36,7 @@ module Control.TimeWarp.Timed.MonadTimed
       -- | Re-export of `Data.Time.Units.Minute`
     , Minute
       -- * Time accumulators
+      -- $timeacc
     , TimeAccR
     , TimeAccM
       -- * Exceptions
@@ -246,27 +247,13 @@ minute' = fromMicroseconds . round . (*) 60000000
 -- (1) Defines, whether time is counted from /origin point/ or
 -- current time point.
 --
--- (2) Allow different ways to specify time:
--- 
--- @
--- for 1 minute 2 sec 3 mcs
--- @
--- 
--- @
--- for (5 :: Minute)
--- @
---
--- @
--- for 1.5 minute
--- @
---
--- Order of time parts is irrelevant.
+-- (2) Allow different ways to specify time (see `TimeAccR` and `TimeAccT`).
 
 at, till :: TimeAccR t => t
 -- | Defines `RelativeToNow`, which refers to specified time point.
 -- Supposed to be used with `wait` or `work`.
 till = till' 0
--- | Synonym to `till`. Supposed to be used with `invoke` and `shedule`.
+-- | Synonym to `till`. Supposed to be used with `invoke` and `schedule`.
 at   = till' 0
 
 after, for :: TimeAccR t => t
@@ -274,10 +261,10 @@ after, for :: TimeAccR t => t
 -- current time point.
 -- Supposed to be used with `wait` or `work`.
 for   = for' 0
--- | Synonym to `for`. Supposed to be used with `invoke` and `shedule`.
+-- | Synonym to `for`. Supposed to be used with `invoke` and `schedule`.
 after = for' 0
 
--- | Current time point.
+-- | Refers to current time point.
 --
 -- >>> runTimedT $ invoke now $ timestamp ""
 -- [0µs]
@@ -303,7 +290,7 @@ startTimer = do
     start <- localTime
     return $ subtract start <$> localTime
 
--- | Returns a time in microseconds
+-- | Returns a time in microseconds.
 --
 -- >>> print $ interval 1 sec
 -- 1000000µs
@@ -315,8 +302,23 @@ timepoint :: TimeAccM t => t
 timepoint = interval
 
 -- * Time accumulators
+-- $timeacc
+-- Time accumulators allow to specify time in pretty complicated ways.
+-- 
+-- * Some of them can accept `TimeUnit`, which fully defines result.
+--
+-- @
+-- for (5 :: Minute)
+-- @
+--
+-- * They can accept several numbers with time measures, which would be sumarized:
+--
+-- @
+-- for 1 minute 15 sec 10 mcs
+-- for 1.2 minute'
+-- @
 
--- | Time accumulator. Helps to define time. Evaluates to `RelativeToNow`.
+-- | Time accumulator, which evaluates to `RelativeToNow`.
 class TimeAccR t where
     till' :: Microsecond -> t
     for'  :: Microsecond -> t
@@ -333,7 +335,7 @@ instance TimeUnit t => TimeAccR (t -> RelativeToNow) where
     till' acc t _   = acc + convertUnit t
     for'  acc t cur = acc + convertUnit t + cur
 
--- | Time accumulator, Helps to define time. Evaluates to `Microsecond`.
+-- | Time accumulator, which evaluates to `Microsecond`.
 class TimeAccM t where
     interval' :: Microsecond -> t
 
