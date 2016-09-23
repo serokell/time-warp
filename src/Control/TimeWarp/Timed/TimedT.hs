@@ -142,7 +142,7 @@ instance Monad m => WithNamedLogger (Core m) where
 -- Control.TimeWarp.Timed.MonadTimed/#monads-above
 newtype TimedT m a = TimedT
     { unwrapTimedT :: ReaderT (ThreadCtx (Core m)) (ContT () (Core m)) a
-    } deriving (Functor, Applicative, Monad, MonadIO)
+    } deriving (Functor, Applicative, Monad, MonadIO, WithNamedLogger)
 
 -- | When non-main thread dies from uncaught exception, this is reported via
 -- logger (see `WithNamedLooger`). `ThreadKilled` exception is reported with

@@ -27,6 +27,7 @@ import           Data.Maybe                    (fromMaybe)
 import qualified Network.MessagePack.Client    as C
 import qualified Network.MessagePack.Server    as S
 
+import           Control.TimeWarp.Logging      (WithNamedLogger)
 import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Method (..),
                                                 MonadRpc (..))
 import           Control.TimeWarp.Timed        (MonadTimed (..), TimedIO, ThreadId)
@@ -37,7 +38,7 @@ newtype MsgPackRpc a = MsgPackRpc
     { -- | Launches distributed scenario using real network, threads and time.
       runMsgPackRpc :: TimedIO a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadBase IO,
-                MonadThrow, MonadCatch, MonadMask, MonadTimed)
+                MonadThrow, MonadCatch, MonadMask, MonadTimed, WithNamedLogger)
 
 type instance ThreadId MsgPackRpc = C.ThreadId
 

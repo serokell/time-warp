@@ -46,6 +46,7 @@ import           Control.Monad.Except      (ExceptT (..), runExceptT)
 import           Control.Monad.Reader      (MonadReader (ask, local), ReaderT, runReaderT)
 import           Control.Monad.State       (MonadState (get), StateT, evalStateT)
 import           Control.Monad.Trans       (MonadIO (liftIO), MonadTrans, lift)
+import           Control.Monad.Trans.Cont  (ContT, mapContT)
 
 import           Data.String               (IsString)
 import qualified Data.Text                 as T
@@ -166,6 +167,13 @@ instance (Monad m, WithNamedLogger m) =>
     getLoggerName = lift getLoggerName
 
     modifyLoggerName how = ExceptT . modifyLoggerName how . runExceptT
+
+instance (Monad m, WithNamedLogger m) =>
+         WithNamedLogger (ContT r m) where
+    getLoggerName = lift getLoggerName
+
+    modifyLoggerName = mapContT . modifyLoggerName
+
 
 -- | Default implementation of `WithNamedLogger`.
 newtype LoggerNameBox m a = LoggerNameBox

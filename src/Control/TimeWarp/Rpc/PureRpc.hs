@@ -143,12 +143,11 @@ $(makeLenses ''NetInfo)
 newtype PureRpc m a = PureRpc
     { unwrapPureRpc :: TimedT (StateT (NetInfo (PureRpc m)) m) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
-                MonadMask)
+                MonadMask, WithNamedLogger)
 
 type instance ThreadId (PureRpc m) = PureThreadId
 
-deriving instance (MonadIO m, MonadCatch m, WithNamedLogger m) =>
-         MonadTimed (PureRpc m)
+deriving instance (MonadIO m, MonadCatch m) => MonadTimed (PureRpc m)
 
 instance MonadTrans PureRpc where
     lift = PureRpc . lift . lift
@@ -184,7 +183,7 @@ request (Client name args) listeners' port =
                 Just r  -> return r
 
 
-instance (WithNamedLogger m, MonadIO m, MonadCatch m) =>
+instance (MonadIO m, MonadCatch m) =>
          MonadRpc (PureRpc m) where
     execClient (host, port) cli =
         if host /= localhost
@@ -208,7 +207,7 @@ instance (WithNamedLogger m, MonadIO m, MonadCatch m) =>
            sleepForever
 
 waitDelay
-    :: (WithNamedLogger m, MonadThrow m, MonadIO m, MonadCatch m)
+    :: (MonadThrow m, MonadIO m, MonadCatch m)
     => PureRpc m ()
 waitDelay =
     PureRpc $
