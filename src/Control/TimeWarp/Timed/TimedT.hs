@@ -24,7 +24,7 @@ import           Control.Exception.Base            (AsyncException (ThreadKilled
 
 import           Control.Lens                      (makeLenses, use, view, (%=), (%~),
                                                     (&), (.=), (<&>), (^.), at, (<<.=),
-                                                    (<<+=))
+                                                    (<<+=), (<<%=))
 import           Control.Monad                     (void)
 import           Control.Monad.Catch               (Handler (..), MonadCatch, MonadMask,
                                                     MonadThrow, catch, catchAll, catches,
@@ -47,8 +47,8 @@ import           Formatting                        (sformat, shown, (%))
 import qualified Data.Map                          as M
 import qualified Data.PQueue.Min                   as PQ
 
-import           Control.TimeWarp.Logging          (WithNamedLogger (..), logDebug,
-                                                    logWarning)
+import           Control.TimeWarp.Logging          (WithNamedLogger (..), LoggerName,
+                                                    logDebug, logWarning)
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond, Millisecond,
                                                     MonadTimed (..),
                                                     MonadTimedError (MTTimeoutError), for,
@@ -94,6 +94,8 @@ data Scenario m c = Scenario
       _events          :: PQ.MinQueue (Event m c)
       -- | Current virtual time
     , _curTime         :: Microsecond
+      -- | Current logger name for `WithNamedLogger` instance
+    , _loggerName      :: LoggerName
       -- | For each thread, exception which has been thrown to it (if any has)
     , _asyncExceptions :: M.Map PureThreadId SomeException
       -- | Number of created threads ever
@@ -107,6 +109,7 @@ emptyScenario =
     Scenario
     { _events = PQ.empty
     , _curTime = 0
+    , _loggerName = "emulation"
     , _asyncExceptions = M.empty
     , _threadsCounter = 0
     }
@@ -121,7 +124,14 @@ newtype Core m a = Core
 instance MonadTrans Core where
     lift = Core . lift
 
-deriving instance (Monad m, WithNamedLogger m) => WithNamedLogger (Core m)
+instance Monad m => WithNamedLogger (Core m) where
+    getLoggerName = use loggerName
+
+    modifyLoggerName how act = do
+        oldName <- loggerName <<%= how
+        res <- act
+        loggerName .= oldName
+        return res
 
 -- Threads are emulated, whole execution takes place in a single thread.
 -- This allows to execute whole scenarios on the spot.
@@ -135,12 +145,13 @@ newtype TimedT m a = TimedT
     { unwrapTimedT :: ReaderT (ThreadCtx (Core m)) (ContT () (Core m)) a
     } deriving (Functor, Applicative, Monad, MonadIO)
 
--- | When thread dies from uncaught exception, this is reported via logger
--- (TODO: which logger?).
--- It doesn't apply to main thread (which is not produced by `fork`),
--- it's exception is propagaded outside of the monad.
+-- | When non-main thread dies from uncaught exception, this is reported via
+-- logger (see `WithNamedLooger`). `ThreadKilled` exception is reported with
+-- `DEBUG` severity, and other exceptions with `WARN` severity.
+-- Uncaught exception in main thread (the one which isn't produced by `fork`),
+-- is propagaded outside of the monad.
 instance MonadThrow m => MonadThrow (TimedT m) where
-    -- docs for derived instance declarations is not supported yet :(
+    -- docs for derived instance declarations are not supported yet :(
     throwM = TimedT . throwM
 
 instance MonadTrans TimedT where
@@ -303,7 +314,7 @@ threadKilledNotifier e
 
 type instance ThreadId (TimedT m) = PureThreadId
 
-instance (WithNamedLogger m, MonadIO m, MonadThrow m, MonadCatch m) =>
+instance (MonadIO m, MonadThrow m, MonadCatch m) =>
          MonadTimed (TimedT m) where
     localTime = TimedT $ use curTime
     -- | Take note, created thread may be killed by async exception
