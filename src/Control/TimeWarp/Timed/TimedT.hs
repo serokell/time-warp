@@ -14,6 +14,7 @@ module Control.TimeWarp.Timed.TimedT
        ( TimedT
        , PureThreadId
        , runTimedT
+       , defaultLoggerName
        ) where
 
 import           Control.Applicative               ((<|>))
@@ -23,7 +24,7 @@ import           Control.Exception.Base            (AsyncException (ThreadKilled
 
 import           Control.Lens                      (makeLenses, use, view, (%=), (%~),
                                                     (&), (.=), (<&>), (^.), at, (<<.=),
-                                                    (<<+=), (<<%=))
+                                                    (<<+=))
 import           Control.Monad                     (void)
 import           Control.Monad.Catch               (Handler (..), MonadCatch, MonadMask,
                                                     MonadThrow, catch, catchAll, catches,
@@ -47,7 +48,8 @@ import qualified Data.Map                          as M
 import qualified Data.PQueue.Min                   as PQ
 
 import           Control.TimeWarp.Logging          (WithNamedLogger (..), LoggerName,
-                                                    logDebug, logWarning)
+                                                    LoggerNameBox, logDebug, logWarning,
+                                                    usingLoggerName)
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond, Millisecond,
                                                     MonadTimed (..),
                                                     MonadTimedError (MTTimeoutError), for,
@@ -93,8 +95,6 @@ data Scenario m c = Scenario
       _events          :: PQ.MinQueue (Event m c)
       -- | Current virtual time
     , _curTime         :: Microsecond
-      -- | Current logger name for `WithNamedLogger` instance
-    , _loggerName      :: LoggerName
       -- | For each thread, exception which has been thrown to it (if any has)
     , _asyncExceptions :: M.Map PureThreadId SomeException
       -- | Number of created threads ever
@@ -108,29 +108,19 @@ emptyScenario =
     Scenario
     { _events = PQ.empty
     , _curTime = 0
-    , _loggerName = "emulation"
     , _asyncExceptions = M.empty
     , _threadsCounter = 0
     }
 
 -- | Heart of TimedT monad
 newtype Core m a = Core
-    { getCore :: StateT (Scenario (TimedT m) (Core m)) m a
+    { getCore :: StateT (Scenario (TimedT m) (Core m)) (LoggerNameBox m) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow,
-               MonadCatch, MonadMask,
+               MonadCatch, MonadMask, WithNamedLogger,
                MonadState (Scenario (TimedT m) (Core m)))
 
 instance MonadTrans Core where
-    lift = Core . lift
-
-instance Monad m => WithNamedLogger (Core m) where
-    getLoggerName = use loggerName
-
-    modifyLoggerName how act = do
-        oldName <- loggerName <<%= how
-        res <- act
-        loggerName .= oldName
-        return res
+    lift = Core . lift . lift
 
 -- Threads are emulated, whole execution takes place in a single thread.
 -- This allows to execute whole scenarios on the spot.
@@ -220,7 +210,8 @@ unwrapCore' :: Monad m => ThreadCtx (Core m) -> TimedT m () -> Core m ()
 unwrapCore' r = unwrapCore r return
 
 getTimedT :: Monad m => TimedT m a -> m ()
-getTimedT t = flip evalStateT emptyScenario
+getTimedT t = usingLoggerName defaultLoggerName
+            $ flip evalStateT emptyScenario
             $ getCore
             $ unwrapCore vacuumCtx (void . return) t
   where
@@ -319,7 +310,7 @@ instance (MonadIO m, MonadThrow m, MonadCatch m) =>
          -- just put new thread to event queue
      = do
         _timestamp <- localTime
-        tid <- getNextThreadId
+        tid        <- getNextThreadId
         let _threadCtx =
                 ThreadCtx
                 { _threadId = tid
@@ -379,3 +370,6 @@ instance (MonadIO m, MonadThrow m, MonadCatch m) =>
                         Nothing -> waitForRes' ref tid end
                         Just r  -> return r
         delay = 10 :: Millisecond
+
+defaultLoggerName :: LoggerName
+defaultLoggerName = "emulation"
