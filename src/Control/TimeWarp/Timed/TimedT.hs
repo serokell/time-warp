@@ -14,7 +14,6 @@ module Control.TimeWarp.Timed.TimedT
        ( TimedT
        , PureThreadId
        , runTimedT
-       , evalTimedT
        ) where
 
 import           Control.Applicative               ((<|>))
@@ -220,23 +219,18 @@ unwrapCore r c = flip runContT c
 unwrapCore' :: Monad m => ThreadCtx (Core m) -> TimedT m () -> Core m ()
 unwrapCore' r = unwrapCore r return
 
-launchTimedT :: Monad m => TimedT m a -> m ()
-launchTimedT t = flip evalStateT emptyScenario
-               $ getCore
-               $ unwrapCore vacuumCtx (void . return) t
+getTimedT :: Monad m => TimedT m a -> m ()
+getTimedT t = flip evalStateT emptyScenario
+            $ getCore
+            $ unwrapCore vacuumCtx (void . return) t
   where
     vacuumCtx = error "Access to thread context from nowhere"
 
--- | Launches the scenario emulating threads and time.
--- Finishes when no more active threads remain.
---
--- Might be slightly more efficient than `evalTimedT`
--- (NOTE: however this is not a significant reason to use the function,
--- suggest excluding it from export list)
-runTimedT :: (MonadIO m, MonadCatch m) => TimedT m () -> m ()
-runTimedT timed = launchTimedT $ do
+-- | Launches all the machinery of emulation.
+launchTimedT :: (MonadIO m, MonadCatch m) => TimedT m () -> m ()
+launchTimedT timed = getTimedT $ do
     -- execute first action (main thread)
-    mainThreadCtx >>= \ctx -> runInSandbox ctx timed
+    mainThreadCtx >>= flip runInSandbox timed
     -- event loop
     whileM_ notDone $ do
         -- take next awaiting thread
@@ -288,13 +282,15 @@ runTimedT timed = launchTimedT $ do
 getNextThreadId :: Monad m => TimedT m PureThreadId
 getNextThreadId = TimedT . fmap PureThreadId $ threadsCounter <<+= 1
 
--- | Just like `runTimedT`, but makes it possible to get a result.
-evalTimedT
+-- | Launches the scenario emulating threads and time.
+-- Finishes when no more active threads remain.
+runTimedT
     :: (MonadIO m, MonadCatch m)
     => TimedT m a -> m a
-evalTimedT timed = do
+runTimedT timed = do
+    -- use `launchTimedT`, extracting result
     ref <- liftIO $ newIORef Nothing
-    runTimedT $ do
+    launchTimedT $ do
         m <- try timed
         liftIO . writeIORef ref . Just $ m
     res :: Either SomeException a <- fromJust <$> liftIO (readIORef ref)

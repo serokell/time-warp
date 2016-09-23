@@ -11,7 +11,6 @@
 module Control.TimeWarp.Rpc.PureRpc
        ( PureRpc
        , runPureRpc
-       , runPureRpc_
        , Delays (..)
        , DelaysSpecifier (..)
        , ConnectionOutcome (..)
@@ -42,7 +41,7 @@ import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Host, Method (..),
                                                 Port, RpcError (..), methodBody,
                                                 methodName)
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..),
-                                                PureThreadId, TimedT, evalTimedT, for,
+                                                PureThreadId, TimedT, for,
                                                 localTime, runTimedT, sleepForever,
                                                 wait, ThreadId)
 
@@ -164,17 +163,6 @@ runPureRpc
     :: (MonadIO m, MonadCatch m, DelaysSpecifier delays)
     => StdGen -> delays -> PureRpc m a -> m a
 runPureRpc _randSeed (toDelays -> _delays) rpc =
-    evalStateT (evalTimedT $ unwrapPureRpc rpc) net
-  where
-    net        = NetInfo{..}
-    _listeners = Map.empty
-
--- | Launches distributed scenario without result.
--- May be slightly more efficient.
-runPureRpc_
-    :: (MonadIO m, MonadCatch m, DelaysSpecifier delays)
-    => StdGen -> delays -> PureRpc m () -> m ()
-runPureRpc_ _randSeed (toDelays -> _delays) rpc =
     evalStateT (runTimedT $ unwrapPureRpc rpc) net
   where
     net        = NetInfo{..}
