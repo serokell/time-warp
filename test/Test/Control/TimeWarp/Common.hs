@@ -7,9 +7,9 @@ module Test.Control.TimeWarp.Common
 import           Data.Time.Units                   (TimeUnit, convertUnit,
                                                     fromMicroseconds)
 import           Test.QuickCheck                   (Arbitrary (arbitrary), choose)
-import           System.Random                (StdGen, mkStdGen)
+import           System.Random                     (StdGen, mkStdGen)
 
-import           Control.TimeWarp.Logging (WithNamedLogger (..))
+import           Control.TimeWarp.Logging          (WithNamedLogger (..))
 import qualified Control.TimeWarp.Timed.MonadTimed as T
 
 
