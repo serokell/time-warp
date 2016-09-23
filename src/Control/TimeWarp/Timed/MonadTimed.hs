@@ -313,7 +313,7 @@ timepoint = interval
 -- for (5 :: Minute)
 -- @
 --
--- * They can accept several numbers with time measures, which would be sumarized:
+-- * They can accept several numbers with time measures, which would be sumarized.
 --
 -- @
 -- for 1 minute 15 sec 10 mcs
