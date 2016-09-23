@@ -34,7 +34,6 @@ module Control.TimeWarp.Timed
        , module Control.TimeWarp.Timed.Misc
        ) where
 
-import           Control.TimeWarp.Timed.Arbitrary  ()
 import           Control.TimeWarp.Timed.Misc
 import           Control.TimeWarp.Timed.MonadTimed
 import           Control.TimeWarp.Timed.TimedIO

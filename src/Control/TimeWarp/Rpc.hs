@@ -36,8 +36,8 @@
 -- Or as emulation, which works immediately:
 --
 -- @
--- delays :: Delays
--- delays = Delays $ const $ ConnectedIn <$> getRandomTR (10, 50)
+-- delays :: (Microsecond, Microsecond)
+-- delays = (interval 10 sec, interval 50 sec)
 -- @
 --
 -- TODO: WTF, what is THIS? ([RSC-234] is going to fix it):
@@ -54,7 +54,6 @@ module Control.TimeWarp.Rpc
        , module Control.TimeWarp.Rpc.PureRpc
        ) where
 
-import           Control.TimeWarp.Rpc.Arbitrary   ()
 import           Control.TimeWarp.Rpc.MonadRpc
 import           Control.TimeWarp.Rpc.MsgPackRpc
 import           Control.TimeWarp.Rpc.PureRpc

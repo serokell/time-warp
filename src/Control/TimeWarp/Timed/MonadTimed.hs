@@ -246,14 +246,21 @@ minute' = fromMicroseconds . round . (*) 60000000
 -- (1) Defines, whether time is counted from /origin point/ or
 -- current time point.
 --
--- (2) Accumulate following time parts, allowing to write something like
---
+-- (2) Allow different ways to specify time:
+-- 
 -- @
 -- for 1 minute 2 sec 3 mcs
 -- @
+-- 
+-- @
+-- for (5 :: Minute)
+-- @
+--
+-- @
+-- for 1.5 minute
+-- @
 --
 -- Order of time parts is irrelevant.
---
 
 at, till :: TimeAccR t => t
 -- | Defines `RelativeToNow`, which refers to specified time point.

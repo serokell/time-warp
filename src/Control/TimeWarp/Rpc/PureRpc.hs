@@ -91,7 +91,7 @@ newtype Delays = Delays
                 -> Rand StdGen ConnectionOutcome
     }
 
--- | Defines network nastiness.
+-- | Describe network nastiness.
 class DelaysSpecifier d where
     toDelays :: d -> Delays
 
@@ -102,7 +102,7 @@ instance DelaysSpecifier Delays where
 instance DelaysSpecifier () where
     toDelays = const . Delays . const . return $ NeverConnected
 
--- | Specifies connection delay.
+-- | Specifies permanent connection delay.
 instance DelaysSpecifier Microsecond where
     toDelays = Delays . const . return . ConnectedIn
 
