@@ -20,8 +20,8 @@ module Control.TimeWarp.Timed.MonadTimed
     , startTimer
       -- ** Time measures
       -- | NOTE: do we need @hour@ measure?
-    , minute , sec , ms , mcs
-    , minute', sec', ms', mcs'
+    , hour , minute , sec , ms , mcs
+    , hour', minute', sec', ms', mcs'
       -- ** Time specifiers
       -- $timespec
     , for, after, till, at, now
@@ -227,18 +227,20 @@ instance MonadTimed m => MonadTimed (StateT s m) where
     timeout t m = lift . timeout t . evalStateT m =<< get
 
 -- | Converts a specified time unit to `Microsecond`.
-mcs, ms, sec, minute :: Int -> Microsecond
+mcs, ms, sec, minute, hour :: Int -> Microsecond
 mcs    = fromMicroseconds . fromIntegral
 ms     = fromMicroseconds . fromIntegral . (*) 1000
 sec    = fromMicroseconds . fromIntegral . (*) 1000000
 minute = fromMicroseconds . fromIntegral . (*) 60000000
+hour   = fromMicroseconds . fromIntegral . (*) 3600000000
 
 -- | Converts a specified fractional time to `Microsecond`.
-mcs', ms', sec', minute' :: Double -> Microsecond
+mcs', ms', sec', minute', hour' :: Double -> Microsecond
 mcs'    = fromMicroseconds . round
 ms'     = fromMicroseconds . round . (*) 1000
 sec'    = fromMicroseconds . round . (*) 1000000
 minute' = fromMicroseconds . round . (*) 60000000
+hour'   = fromMicroseconds . round . (*) 3600000000
 
 -- $timespec
 -- Following functions are used together with time-controlling functions
