@@ -35,14 +35,7 @@
 --
 -- Or as emulation, which works immediately:
 --
--- @
--- delays :: (Microsecond, Microsecond)
--- delays = (interval 10 sec, interval 50 sec)
--- @
---
--- TODO: WTF, what is THIS? ([RSC-234] is going to fix it):
---
--- >>> usingLoggerName "bla" . runTimed . usingLoggerName "bla again" . runPureRpc (mkStdGen 23423) delays $ exampleLaunch
+-- >>> runTimed . runPureRpc (mkStdGen 23423) (10 :: Microsecond, 50 :: Microsecond) $ exampleLaunch
 -- [3000023µs] Answer is 0
 -- [6000072µs] Answer is 1
 -- [90000102µs] Answer is 2

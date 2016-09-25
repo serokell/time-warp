@@ -13,9 +13,6 @@ module Control.TimeWarp.Timed.MonadTimed
     , ThreadId
     , RelativeToNow
       -- * Helper functions
-      -- | NOTE: do we ever need `schedule` and `invoke`? These functions are
-      -- not complex, and aren't used in production. Just provide another funny
-      -- syntax like @invoke $ at 5 sec@
     , schedule, invoke, timestamp, fork_, work, killThread
     , startTimer
       -- ** Time measures
@@ -75,8 +72,8 @@ instance Buildable MonadTimedError where
 --
 -- Instance of MonadTimed should satisfy the following law:
 --
---     * when defining instance of MonadTrans for a monad transformer,
--- information stored inside this transformer should be tied to thread, and
+--     * when defining instance of MonadTrans for a monad,
+-- information stored inside the transformer should be tied to thread, and
 -- get cloned on `fork`s. #monads-above#
 --
 -- For example,
@@ -139,7 +136,7 @@ type family ThreadId (m :: * -> *) :: *
 -- Use `after` to specify relative virtual time, and `at` for absolute one.
 --
 -- @
--- schedule time action = fork_ $ wait time >> action
+-- schedule time action ≡ fork_ $ wait time >> action
 -- @
 --
 -- @
@@ -156,7 +153,7 @@ schedule time action = fork_ $ invoke time action
 -- | Executes an action at specified time in current thread.
 --
 -- @
--- invoke time action = wait time >> action
+-- invoke time action ≡ wait time >> action
 -- @
 --
 -- @
@@ -249,10 +246,11 @@ hour'   = fromMicroseconds . round . (*) 3600000000
 -- (1) Defines, whether time is counted from /origin point/ or
 -- current time point.
 --
--- (2) Allow different ways to specify time (see `TimeAccR` and `TimeAccT`).
+-- (2) Allow different ways to specify time (see `TimeAccR` and `TimeAccM`).
 
 at, till :: TimeAccR t => t
--- | Defines `RelativeToNow`, which refers to specified time point.
+-- | Defines `RelativeToNow`, which refers to time point determined by specified
+-- virtual time.
 -- Supposed to be used with `wait` or `work`.
 till = till' 0
 -- | Synonym to `till`. Supposed to be used with `invoke` and `schedule`.

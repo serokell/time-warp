@@ -3,7 +3,7 @@
 -- then be launched as either real program or emulation with no need
 -- to wait for delays.
 --
--- /Some interesting scenario here:/
+-- Example:
 --
 -- @
 -- example :: MonadTimed m => m ()
