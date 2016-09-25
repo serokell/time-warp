@@ -43,7 +43,7 @@ module Control.TimeWarp.Logging
 
 import           Control.Monad.Catch       (MonadCatch, MonadMask, MonadThrow)
 import           Control.Monad.Except      (ExceptT (..), runExceptT)
-import           Control.Monad.Reader      (MonadReader (ask, local), ReaderT, runReaderT)
+import           Control.Monad.Reader      (MonadReader (..), ReaderT, runReaderT)
 import           Control.Monad.State       (MonadState (get), StateT, evalStateT)
 import           Control.Monad.Trans       (MonadIO (liftIO), MonadTrans, lift)
 import           Control.Monad.Trans.Cont  (ContT, mapContT)
@@ -179,7 +179,13 @@ instance (Monad m, WithNamedLogger m) =>
 newtype LoggerNameBox m a = LoggerNameBox
     { loggerNameBoxEntry :: ReaderT LoggerName m a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadTrans,
-                MonadThrow, MonadCatch, MonadMask)
+                MonadThrow, MonadCatch, MonadMask, MonadState s)
+
+
+instance MonadReader r m => MonadReader r (LoggerNameBox m) where
+    ask = lift ask
+    reader = lift . reader
+    local f (LoggerNameBox m) = getLoggerName >>= lift . local f . runReaderT m
 
 -- | Runs a `LoggerNameBox` with specified initial `LoggerName`.
 usingLoggerName :: LoggerName -> LoggerNameBox m a -> m a

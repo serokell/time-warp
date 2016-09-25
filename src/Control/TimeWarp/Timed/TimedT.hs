@@ -32,29 +32,35 @@ import           Control.Monad.Catch               (Handler (..), MonadCatch, Mo
                                                     uninterruptibleMask)
 import           Control.Monad.Cont                (ContT (..), runContT)
 import           Control.Monad.Loops               (whileM_)
-import           Control.Monad.Reader              (ReaderT (..), ask, runReaderT)
+import           Control.Monad.Reader              (ReaderT (..), ask, runReaderT, local)
 import           Control.Monad.State               (MonadState (get, put, state), StateT,
                                                     evalStateT)
 import           Control.Monad.Trans               (MonadIO, MonadTrans, lift, liftIO)
 import           Data.Function                     (on)
 import           Data.IORef                        (newIORef, readIORef, writeIORef)
 import           Data.List                         (foldl')
-import           Data.Maybe                        (fromJust)
 import           Data.Ord                          (comparing)
 import           Data.Time.Units                   (convertUnit)
 import           Formatting                        (sformat, shown, (%))
 
 import qualified Data.Map                          as M
 import qualified Data.PQueue.Min                   as PQ
+import           Safe                              (fromJustNote)
 
 import           Control.TimeWarp.Logging          (WithNamedLogger (..), LoggerName,
-                                                    LoggerNameBox, logDebug, logWarning,
-                                                    usingLoggerName)
+                                                    logDebug, logWarning)
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond, Millisecond,
                                                     MonadTimed (..),
                                                     MonadTimedError (MTTimeoutError), for,
                                                     killThread, localTime, mcs,
                                                     timeout, ThreadId)
+
+-- Summary, `TimedT` (implementation of emulation mode) consists of several
+-- layers (from outer to inner):
+-- * ReaderT ThreadCtx  -- keeps tied-to-thread information
+-- * ContT              -- allows to extract not-yet-executed part of thread
+                        -- to perform it later
+-- * StateT Scenario    -- keeps global information of emulation
 
 -- | Analogy to `Control.Concurrent.ThreadId` for emulation
 newtype PureThreadId = PureThreadId Integer
@@ -66,10 +72,12 @@ instance Show PureThreadId where
 -- | Private context for each pure thread
 data ThreadCtx c = ThreadCtx
     { -- | Thread id
-      _threadId :: PureThreadId
+      _threadId   :: PureThreadId
       -- | Exception handlers stack. First is original handler,
       --   second is for continuation handler
-    , _handlers :: [(Handler c (), Handler c ())]
+    , _handlers   :: [(Handler c (), Handler c ())]
+      -- | Logger name for `WithNamedLogger` instance
+    , _loggerName :: LoggerName
     }
 
 $(makeLenses ''ThreadCtx)
@@ -114,13 +122,13 @@ emptyScenario =
 
 -- | Heart of TimedT monad
 newtype Core m a = Core
-    { getCore :: StateT (Scenario (TimedT m) (Core m)) (LoggerNameBox m) a
+    { getCore :: StateT (Scenario (TimedT m) (Core m)) m a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow,
-               MonadCatch, MonadMask, WithNamedLogger,
+               MonadCatch, MonadMask,
                MonadState (Scenario (TimedT m) (Core m)))
 
 instance MonadTrans Core where
-    lift = Core . lift . lift
+    lift = Core . lift
 
 -- Threads are emulated, whole execution takes place in a single thread.
 -- This allows to execute whole scenarios on the spot.
@@ -129,10 +137,12 @@ instance MonadTrans Core where
 -- current virtual time is to call `wait` or derived function.
 --
 -- Note, that monad inside TimedT transformer is shared between all threads.
--- Control.TimeWarp.Timed.MonadTimed/#monads-above
 newtype TimedT m a = TimedT
-    { unwrapTimedT :: ReaderT (ThreadCtx (Core m)) (ContT () (Core m)) a
-    } deriving (Functor, Applicative, Monad, MonadIO, WithNamedLogger)
+    { unwrapTimedT :: ReaderT (ThreadCtx (Core m))  
+                        ( ContT () 
+                          ( Core m )
+                        ) a
+    } deriving (Functor, Applicative, Monad, MonadIO)
 
 -- | When non-main thread dies from uncaught exception, this is reported via
 -- logger (see `WithNamedLooger`). `ThreadKilled` exception is reported with
@@ -150,6 +160,11 @@ instance MonadState s m => MonadState s (TimedT m) where
     get = lift get
     put = lift . put
     state = lift . state
+
+instance WithNamedLogger (TimedT m) where
+    getLoggerName = TimedT $ view loggerName
+
+    modifyLoggerName how = TimedT . local (loggerName %~ how) . unwrapTimedT
 
 newtype ContException = ContException SomeException
     deriving (Show)
@@ -210,8 +225,7 @@ unwrapCore' :: Monad m => ThreadCtx (Core m) -> TimedT m () -> Core m ()
 unwrapCore' r = unwrapCore r return
 
 getTimedT :: Monad m => TimedT m a -> m ()
-getTimedT t = usingLoggerName defaultLoggerName
-            $ flip evalStateT emptyScenario
+getTimedT t = flip evalStateT emptyScenario
             $ getCore
             $ unwrapCore vacuumCtx (void . return) t
   where
@@ -226,7 +240,8 @@ launchTimedT timed = getTimedT $ do
     whileM_ notDone $ do
         -- take next awaiting thread
         nextEv <- wrapCore . Core $ do
-            (ev, evs') <- fromJust . PQ.minView <$> use events
+            (ev, evs') <- fromJustNote "Suddenly no more events" . PQ.minView
+                            <$> use events
             events .= evs'
             return ev
         -- rewind current time
@@ -258,10 +273,11 @@ launchTimedT timed = getTimedT $ do
     mainThreadCtx = getNextThreadId <&>
         \tid ->
             ThreadCtx
-            { _threadId = tid
-            , _handlers = [( Handler throwInnard
+            { _threadId   = tid
+            , _handlers   = [( Handler throwInnard
                            , contHandler
                            )]
+            , _loggerName = defaultLoggerName
             }
 
     -- Apply all handlers from stack.
@@ -284,7 +300,8 @@ runTimedT timed = do
     launchTimedT $ do
         m <- try timed
         liftIO . writeIORef ref . Just $ m
-    res :: Either SomeException a <- fromJust <$> liftIO (readIORef ref)
+    res :: Either SomeException a <- fromJustNote "runTimedT: no result"
+                                        <$> liftIO (readIORef ref)
     either throwM return res
 
 isThreadKilled :: SomeException -> Bool
@@ -306,19 +323,22 @@ instance (MonadIO m, MonadThrow m, MonadCatch m) =>
     localTime = TimedT $ use curTime
     -- | Take note, created thread may be killed by async exception
     --   only when it calls "wait"
-    fork _action
+    fork act
          -- just put new thread to event queue
      = do
         _timestamp <- localTime
         tid        <- getNextThreadId
+        logName    <- getLoggerName
         let _threadCtx =
                 ThreadCtx
-                { _threadId = tid
-                , _handlers =
-                      [( Handler threadKilledNotifier
-                       , contHandler
-                       )]
+                { _threadId   = tid
+                , _handlers   = []
+                   --   [( Handler threadKilledNotifier
+                   --    , contHandler
+                   --    )]
+                , _loggerName = logName
                 }
+            _action = act `catches` [contHandler, Handler threadKilledNotifier]
         TimedT $ events %= PQ.insert Event {..}
         wait $ for 1 mcs  -- real `forkIO` seems to yield execution
                           -- to newly created thread
