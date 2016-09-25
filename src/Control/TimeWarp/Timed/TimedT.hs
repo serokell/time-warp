@@ -24,7 +24,7 @@ import           Control.Exception.Base            (AsyncException (ThreadKilled
 
 import           Control.Lens                      (makeLenses, use, view, (%=), (%~),
                                                     (&), (.=), (<&>), (^.), at, (<<.=),
-                                                    (<<+=))
+                                                    (<<+=), (.~))
 import           Control.Monad                     (void)
 import           Control.Monad.Catch               (Handler (..), MonadCatch, MonadMask,
                                                     MonadThrow, catch, catchAll, catches,
@@ -356,8 +356,19 @@ instance (MonadIO m, MonadThrow m, MonadCatch m) =>
         TimedT . lift . ContT $
             \c -> events %= PQ.insert (event $ c ())
     myThreadId = TimedT $ view threadId
-    throwTo tid e = TimedT $
-        asyncExceptions . at tid %= (<|> Just (SomeException e))
+    throwTo tid e = do
+        wakeUpThread
+        TimedT $ asyncExceptions . at tid %= (<|> Just (SomeException e))
+      where
+        -- TODO: make more efficient
+        wakeUpThread = TimedT $ do
+            time <- use curTime 
+            let modifyRequired event =
+                    if event ^. threadCtx . threadId == tid
+                    then event & timestamp .~ time
+                    else event 
+            events %= PQ.fromList . map modifyRequired . PQ.toList
+
     -- | TODO use `mask`, like in http://hackage.haskell.org/package/base-4.9.0.0/docs/src/System.Timeout.html
     timeout t action' = do
         pid <- myThreadId
