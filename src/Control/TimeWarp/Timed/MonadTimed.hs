@@ -311,7 +311,7 @@ timepoint = interval
 -- * Time accumulators
 -- $timeacc
 -- Time accumulators allow to specify time in pretty complicated ways.
--- 
+--
 -- * Some of them can accept `TimeUnit`, which fully defines result.
 --
 -- @

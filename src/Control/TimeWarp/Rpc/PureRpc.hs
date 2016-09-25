@@ -134,7 +134,7 @@ data NetInfo m = NetInfo
 $(makeLenses ''NetInfo)
 
 -- | Implementation of RPC protocol for emulation, allows to manually define
--- network nastiness via `Delays` datatype. TCP model is used. 
+-- network nastiness via `Delays` datatype. TCP model is used.
 --
 -- NOTE: List of known issues:
 --
@@ -189,7 +189,7 @@ instance (MonadIO m, MonadCatch m) =>
         if host /= localhost
             then
                 error "Can't emulate for host /= localhost"
-            else do 
+            else do
                 waitDelay
                 ls <- PureRpc $ use listeners
                 request cli ls port

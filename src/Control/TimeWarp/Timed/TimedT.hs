@@ -137,8 +137,8 @@ instance MonadTrans Core where
 --
 -- Note, that monad inside TimedT transformer is shared between all threads.
 newtype TimedT m a = TimedT
-    { unwrapTimedT :: ReaderT (ThreadCtx (Core m))  
-                        ( ContT () 
+    { unwrapTimedT :: ReaderT (ThreadCtx (Core m))
+                        ( ContT ()
                           ( Core m )
                         ) a
     } deriving (Functor, Applicative, Monad, MonadIO)
@@ -362,11 +362,11 @@ instance (MonadIO m, MonadThrow m, MonadCatch m) =>
       where
         -- TODO: make more efficient
         wakeUpThread = TimedT $ do
-            time <- use curTime 
+            time <- use curTime
             let modifyRequired event =
                     if event ^. threadCtx . threadId == tid
                     then event & timestamp .~ time
-                    else event 
+                    else event
             events %= PQ.fromList . map modifyRequired . PQ.toList
 
     -- | TODO use `mask`, like in http://hackage.haskell.org/package/base-4.9.0.0/docs/src/System.Timeout.html
