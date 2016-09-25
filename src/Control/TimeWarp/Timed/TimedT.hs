@@ -338,7 +338,7 @@ instance (MonadIO m, MonadThrow m, MonadCatch m) =>
                    --    )]
                 , _loggerName = logName
                 }
-            _action = act `catches` [contHandler, Handler threadKilledNotifier]
+            _action = act `catch` threadKilledNotifier
         TimedT $ events %= PQ.insert Event {..}
         wait $ for 1 mcs  -- real `forkIO` seems to yield execution
                           -- to newly created thread
