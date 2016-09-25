@@ -40,7 +40,6 @@ import           Data.Function                     (on)
 import           Data.IORef                        (newIORef, readIORef, writeIORef)
 import           Data.List                         (foldl')
 import           Data.Ord                          (comparing)
-import           Data.Time.Units                   (convertUnit)
 import           Formatting                        (sformat, shown, (%))
 
 import qualified Data.Map                          as M
@@ -49,11 +48,11 @@ import           Safe                              (fromJustNote)
 
 import           Control.TimeWarp.Logging          (WithNamedLogger (..), LoggerName,
                                                     logDebug, logWarning)
-import           Control.TimeWarp.Timed.MonadTimed (Microsecond, Millisecond,
+import           Control.TimeWarp.Timed.MonadTimed (Microsecond,
                                                     MonadTimed (..),
                                                     MonadTimedError (MTTimeoutError), for,
-                                                    killThread, localTime, mcs,
-                                                    timeout, ThreadId)
+                                                    localTime, mcs,
+                                                    timeout, ThreadId, schedule, after)
 
 -- Summary, `TimedT` (implementation of emulation mode) consists of several
 -- layers (from outer to inner):
@@ -359,37 +358,11 @@ instance (MonadIO m, MonadThrow m, MonadCatch m) =>
     myThreadId = TimedT $ view threadId
     throwTo tid e = TimedT $
         asyncExceptions . at tid %= (<|> Just (SomeException e))
-    -- TODO: we should probably implement this similar to
-    -- http://haddock.stackage.org/lts-5.8/base-4.8.2.0/src/System-Timeout.html#timeout
-    timeout (convertUnit -> t) action' = do
-        ref <- liftIO $ newIORef Nothing
-        -- fork worker
-        wtid <-
-            fork $
-            do res <- action'
-               liftIO $ writeIORef ref $ Just res
-        -- wait and gather results
-        waitForRes ref wtid t
-      where
-        waitForRes ref tid tout = do
-            lt <- localTime
-            waitForRes' ref tid $ lt + tout
-        waitForRes' ref tid end = do
-            tNow <- localTime
-            if tNow >= end
-                then do
-                    killThread tid
-                    res <- liftIO $ readIORef ref
-                    case res of
-                        Nothing -> throwM $ MTTimeoutError "Timeout exceeded"
-                        Just r  -> return r
-                else do
-                    wait $ for delay
-                    res <- liftIO $ readIORef ref
-                    case res of
-                        Nothing -> waitForRes' ref tid end
-                        Just r  -> return r
-        delay = 10 :: Millisecond
+    -- | TODO use `mask`, like in http://hackage.haskell.org/package/base-4.9.0.0/docs/src/System.Timeout.html
+    timeout t action' = do
+        pid <- myThreadId
+        schedule (after t) $ throwTo pid $ MTTimeoutError "Timeout exceeded"
+        action'
 
 defaultLoggerName :: LoggerName
 defaultLoggerName = "emulation"
