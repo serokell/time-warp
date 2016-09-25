@@ -29,6 +29,7 @@ module Control.TimeWarp.Rpc.MonadRpc
 
 import           Control.Monad.Catch        (MonadCatch (catch),
                                              MonadThrow (throwM))
+import           Control.Monad.Reader       (ReaderT (..))
 import           Control.Monad.Trans        (lift)
 import           Data.ByteString            (ByteString)
 
@@ -38,7 +39,7 @@ import           Data.Time.Units            (TimeUnit)
 import qualified Network.MessagePack.Client as C
 import qualified Network.MessagePack.Server as S
 
-import           Control.TimeWarp.Logging   (WithNamedLogger)
+import           Control.TimeWarp.Logging   (WithNamedLogger, LoggerNameBox (..))
 import           Control.TimeWarp.Timed     (MonadTimed (timeout))
 
 -- | Port number.
@@ -114,3 +115,15 @@ instance MonadCatch m =>
          MonadCatch (S.ServerT m) where
     catch (S.ServerT action) handler =
         S.ServerT $ action `catch` (S.runServerT . handler)
+
+instance MonadRpc m => MonadRpc (ReaderT r m) where
+    execClient addr cli = lift $ execClient addr cli
+
+    serve port methods = ReaderT $
+                            \r -> serve port (convert r <$> methods)
+      where
+        convert :: Monad m => r -> Method (ReaderT r m) -> Method m
+        convert r Method {..} =
+            Method methodName (flip runReaderT r . methodBody)
+
+deriving instance MonadRpc m => MonadRpc (LoggerNameBox m)

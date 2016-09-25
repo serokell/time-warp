@@ -16,8 +16,7 @@ import qualified Control.Concurrent            as C
 import           Control.Monad.Base            (MonadBase)
 import           Control.Monad.Catch           (MonadCatch, MonadMask,
                                                 MonadThrow)
-import           Control.Monad.Reader          (ReaderT (..), runReaderT)
-import           Control.Monad.Trans           (MonadIO, lift, liftIO)
+import           Control.Monad.Trans           (MonadIO (..))
 import           Control.Monad.Trans.Control   (MonadBaseControl, StM,
                                                 liftBaseWith, restoreM)
 
@@ -62,16 +61,6 @@ instance MonadRpc MsgPackRpc where
       where
         convertMethod :: Method MsgPackRpc -> S.Method MsgPackRpc
         convertMethod Method{..} = S.method methodName methodBody
-
-instance MonadRpc m => MonadRpc (ReaderT r m) where
-    execClient addr cli = lift $ execClient addr cli
-
-    serve port methods = ReaderT $
-                            \r -> serve port (convert r <$> methods)
-      where
-        convert :: Monad m => r -> Method (ReaderT r m) -> Method m
-        convert r Method {..} =
-            Method methodName (flip runReaderT r . methodBody)
 
 instance S.MethodType MsgPackRpc f => S.MethodType MsgPackRpc (MsgPackRpc f)
    where

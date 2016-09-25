@@ -30,7 +30,7 @@ module Control.TimeWarp.Logging
          -- * Remove boilerplate
        , WithNamedLogger (..)
        , setLoggerName
-       , LoggerNameBox
+       , LoggerNameBox (..)
        , usingLoggerName
 
          -- * Logging functions

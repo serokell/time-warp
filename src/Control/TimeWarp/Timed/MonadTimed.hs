@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE Rank2Types            #-}
+{-# LANGUAGE StandaloneDeriving    #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE ViewPatterns          #-}
@@ -40,19 +41,21 @@ module Control.TimeWarp.Timed.MonadTimed
     , MonadTimedError (..)
     ) where
 
-import           Control.Exception       (AsyncException (ThreadKilled), Exception (..))
-import           Control.Monad           (void)
-import           Control.Monad.Catch     (MonadThrow)
-import           Control.Monad.Reader    (ReaderT (..), ask, runReaderT)
-import           Control.Monad.State     (StateT, evalStateT, get)
-import           Control.Monad.Trans     (MonadIO, lift, liftIO)
+import           Control.Exception        (AsyncException (ThreadKilled), Exception (..))
+import           Control.Monad            (void)
+import           Control.Monad.Catch      (MonadThrow)
+import           Control.Monad.Reader     (ReaderT (..), ask, runReaderT)
+import           Control.Monad.State      (StateT, evalStateT, get)
+import           Control.Monad.Trans      (MonadIO, lift, liftIO)
 
-import           Data.Monoid             ((<>))
-import           Data.Text               (Text)
-import           Data.Text.Buildable     (Buildable (build))
-import           Data.Time.Units         (Microsecond, Millisecond, Minute, Second,
-                                          TimeUnit (..), convertUnit)
-import           Data.Typeable           (Typeable)
+import           Data.Monoid              ((<>))
+import           Data.Text                (Text)
+import           Data.Text.Buildable      (Buildable (build))
+import           Data.Time.Units          (Microsecond, Millisecond, Minute, Second,
+                                           TimeUnit (..), convertUnit)
+import           Data.Typeable            (Typeable)
+
+import           Control.TimeWarp.Logging (LoggerNameBox (..))
 
 -- | Defines some time point basing on current virtual time.
 type RelativeToNow = Microsecond -> Microsecond
@@ -222,6 +225,10 @@ instance MonadTimed m => MonadTimed (StateT s m) where
     throwTo tid = lift . throwTo tid
 
     timeout t m = lift . timeout t . evalStateT m =<< get
+
+type instance ThreadId (LoggerNameBox m) = ThreadId m
+
+deriving instance MonadTimed m => MonadTimed (LoggerNameBox m)
 
 -- | Converts a specified time unit to `Microsecond`.
 mcs, ms, sec, minute, hour :: Int -> Microsecond
