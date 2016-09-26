@@ -8,24 +8,28 @@
 -- @
 -- example :: MonadTimed m => m ()
 -- example = do
---     wait (for 10 minute)
---     liftIO $ putStrLn \"Hello\"
+--     schedule (at 10 minute) $ do
+--         time <- toMicroseconds \<\$\> localTime
+--         liftIO $ putStrLn $ \"Hello! It's \" ++ show time ++ " now"
+--     wait (for 9 minute)
+--     liftIO $ putStrLn \"One more minute...\"
 -- @
 --
--- Such scenario can be launched via
+-- Such scenario can be launched in real mode using
 --
--- @
--- runTimedIO example
--- @
+-- >>> runTimedIO example
+-- <9 minutes passed>
+-- One more minute...
+-- <1 more minute passed>
+-- Hello! It's 600000000µs now
 --
--- for real mode or via
+-- and like emulation via
 --
--- @
--- runTimedT example
--- @
+-- >>> runTimedT example
+-- One more minute...
+-- Hello! It's 600000000µs now
 --
--- for emulation, which works on the spot.
---
+-- which works on the spot.
 
 module Control.TimeWarp.Timed
        ( module Control.TimeWarp.Timed.MonadTimed

@@ -94,7 +94,8 @@ convertSeverity Info    = INFO
 convertSeverity Warning = WARNING
 convertSeverity Error   = ERROR
 
--- | NOTE: it performs a specific action. Should we just enumerate what it does?
+-- | Initiates specified loggers, and sets severity of root logger's handler to
+-- `Debug`
 initLogging :: [LoggerName] -> Severity -> IO ()
 initLogging predefinedLoggers sev = do
     updateGlobalLogger rootLoggerName removeHandler
@@ -103,7 +104,7 @@ initLogging predefinedLoggers sev = do
 
 -- | Turns logger with specified name on.
 -- All messages are printed to /stdout/, moreover messages with at least
--- `ERROR` severity are printed to /stderr/.
+-- `Error` severity are printed to /stderr/.
 initLoggerByName :: Severity -> LoggerName -> IO ()
 initLoggerByName (convertSeverity -> s) LoggerName{..} = do
     stdoutHandler <-

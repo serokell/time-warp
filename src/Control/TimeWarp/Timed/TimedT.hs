@@ -61,7 +61,7 @@ import           Control.TimeWarp.Timed.MonadTimed (Microsecond,
                         -- to perform it later
 -- * StateT Scenario    -- keeps global information of emulation
 
--- | Analogy to `Control.Concurrent.ThreadId` for emulation
+-- | Analogy to `Control.Concurrent.ThreadId` for emulation.
 newtype PureThreadId = PureThreadId Integer
     deriving (Eq, Ord)
 
@@ -144,9 +144,10 @@ newtype TimedT m a = TimedT
     } deriving (Functor, Applicative, Monad, MonadIO)
 
 -- | When non-main thread dies from uncaught exception, this is reported via
--- logger (see `WithNamedLooger`). `ThreadKilled` exception is reported with
--- `DEBUG` severity, and other exceptions with `WARN` severity.
--- Uncaught exception in main thread (the one which isn't produced by `fork`),
+-- logger (see `WithNamedLogger`). `ThreadKilled` exception is reported with
+-- `Control.TimeWarp.Logging.Debug` severity, and other exceptions with
+-- `Control.TimeWarp.Logging.Warn` severity.
+-- Uncaught exception in main thread (the one isn't produced by `fork`)
 -- is propagaded outside of the monad.
 instance MonadThrow m => MonadThrow (TimedT m) where
     -- docs for derived instance declarations are not supported yet :(
@@ -193,7 +194,8 @@ instance (MonadCatch m, MonadIO m) => MonadCatch (TimedT m) where
 contHandler :: MonadThrow m => Handler m ()
 contHandler = Handler $ \(ContException e) -> throwM e
 
--- | This instance is incorrect
+-- | This instance is incorrect, i.e. `mask` and `uninterruptibleMask` do
+-- nothing for now.
 instance (MonadIO m, MonadCatch m) => MonadMask (TimedT m) where
     mask a = a id
     uninterruptibleMask = mask

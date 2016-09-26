@@ -11,8 +11,8 @@
 module Control.TimeWarp.Rpc.PureRpc
        ( PureRpc
        , runPureRpc
-       , Delays (..)
        , DelaysSpecifier (..)
+       , Delays (..)
        , ConnectionOutcome (..)
        , getRandomTR
        ) where
@@ -55,9 +55,7 @@ data ConnectionOutcome
     -- | Connection would be never established, client hangs.
     | NeverConnected
 
--- @TODO Remove these hard-coded values
-
--- | Describes network nastyness.
+-- | Allows to describe most complicated behaviour of network.
 --
 -- Examples:
 --
@@ -73,7 +71,8 @@ data ConnectionOutcome
 -- Delays $ \\_ -> ConnectedIn \<$\> getRandomTR (interval 1 sec, interval 5 sec)
 -- @
 --
--- * For first 10 seconds connection is established with probability of 1/6:
+-- * For first 10 seconds after scenario start connection is established
+-- with probability of 1/6:
 --
 -- @
 -- Delays $ \\time -> do
@@ -90,10 +89,11 @@ newtype Delays = Delays
                 -> Rand StdGen ConnectionOutcome
     }
 
--- | Describe network nastiness.
+-- | Describes network nastiness.
 class DelaysSpecifier d where
     toDelays :: d -> Delays
 
+-- | Detailed description of network nastiness.
 instance DelaysSpecifier Delays where
     toDelays = id
 
@@ -136,7 +136,7 @@ $(makeLenses ''NetInfo)
 -- | Implementation of RPC protocol for emulation, allows to manually define
 -- network nastiness via `Delays` datatype. TCP model is used.
 --
--- NOTE: List of known issues:
+-- List of known issues:
 --
 --     * Method, once being declared in net, can't be removed.
 -- Even `throwTo` won't help.

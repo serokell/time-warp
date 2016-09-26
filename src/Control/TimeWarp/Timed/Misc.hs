@@ -7,6 +7,7 @@ module Control.TimeWarp.Timed.Misc
 
 import           Control.Concurrent.STM.TVar       (newTVarIO, readTVarIO, writeTVar)
 import           Control.Exception.Base            (SomeException)
+import           Control.Monad                     (forever)
 import           Control.Monad.Catch               (MonadCatch, catch)
 import           Control.Monad.STM                 (atomically)
 import           Control.Monad.Trans               (MonadIO, liftIO)
@@ -47,4 +48,4 @@ repeatForever period handler action = do
 
 -- TODO: would be better to use `MVar` to block thread
 sleepForever :: MonadTimed m => m ()
-sleepForever = wait (for 100500 minute) >> sleepForever
+sleepForever = forever $ wait (for 100500 minute)

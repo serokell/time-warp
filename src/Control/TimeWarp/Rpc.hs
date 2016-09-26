@@ -18,9 +18,9 @@
 --         idr <- serverTypeRestriction2
 --         serve 1234 [method "sum" $ idr sumMethod]
 --     -- make 3 requests with delay
---     fork_ $ do
+--     fork_ $
 --         forM_ [1..3] $
---             \i -> do
+--             \\i -> do
 --                 wait (for 3 sec)
 --                 res <- execClient ("127.0.0.1", 1234) $ callSum (-1) i
 --                 liftIO $ timestamp $ "Answer is " ++ show res
@@ -35,7 +35,7 @@
 --
 -- Or as emulation, which works immediately:
 --
--- >>> runTimed . runPureRpc (mkStdGen 23423) (10 :: Microsecond, 50 :: Microsecond) $ exampleLaunch
+-- >>> runTimedT . runPureRpc (mkStdGen 23423) (10 :: Microsecond, 50 :: Microsecond) $ exampleLaunch
 -- [3000023µs] Answer is 0
 -- [6000072µs] Answer is 1
 -- [90000102µs] Answer is 2

@@ -56,7 +56,10 @@ deriving instance (Monad m, WithNamedLogger m) => WithNamedLogger (S.ServerT m)
 
 -- | Defines protocol of RPC layer.
 class MonadThrow r => MonadRpc r where
+    -- | Executes remote method call.
     execClient :: MessagePack a => NetworkAddress -> Client a -> r a
+
+    -- | Starts RPC server with a set of RPC methods.
     serve :: Port -> [Method r] -> r ()
 
 -- | Same as `execClient`, but allows to set up timeout for a call (see
@@ -73,7 +76,7 @@ call :: RpcType t => String -> t
 call name = rpcc name []
 
 -- | Collects function name and arguments
--- (it's msgpack-rpc implementation is hidden, need our own).
+-- (it's <https://hackage.haskell.org/package/msgpack-rpc-1.0.0/docs/Network-MessagePack-Client.html#v:call msgpack-rpc> implementation is hidden, need our own).
 class RpcType t where
     rpcc :: String -> [Object] -> t
 

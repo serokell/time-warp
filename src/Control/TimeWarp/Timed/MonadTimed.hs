@@ -7,7 +7,7 @@
 {-# LANGUAGE ViewPatterns          #-}
 
 -- | This module defines typeclass `MonadTimed` with basic functions
--- to work with time and threads.
+-- to manipulate time and threads.
 module Control.TimeWarp.Timed.MonadTimed
     ( -- * Typeclass with basic functions
       MonadTimed (..)
@@ -17,7 +17,6 @@ module Control.TimeWarp.Timed.MonadTimed
     , schedule, invoke, timestamp, fork_, work, killThread
     , startTimer
       -- ** Time measures
-      -- | NOTE: do we need @hour@ measure?
     , hour , minute , sec , ms , mcs
     , hour', minute', sec', ms', mcs'
       -- ** Time specifiers
@@ -25,13 +24,13 @@ module Control.TimeWarp.Timed.MonadTimed
     , for, after, till, at, now
     , interval, timepoint
       -- * Time types
-      -- | Re-export of `Data.Time.Units.Microsecond`
+      -- | Re-export of Data.Time.Units.Microsecond
     , Microsecond
-      -- | Re-export of `Data.Time.Units.Millisecond`
+      -- | Re-export of Data.Time.Units.Millisecond
     , Millisecond
-      -- | Re-export of `Data.Time.Units.Second`
+      -- | Re-export of Data.Time.Units.Second
     , Second
-      -- | Re-export of `Data.Time.Units.Minute`
+      -- | Re-export of Data.Time.Units.Minute
     , Minute
       -- * Time accumulators
       -- $timeacc
@@ -77,7 +76,7 @@ instance Buildable MonadTimedError where
 --
 --     * when defining instance of MonadTrans for a monad,
 -- information stored inside the transformer should be tied to thread, and
--- get cloned on `fork`s. #monads-above#
+-- get cloned on `fork`s.
 --
 -- For example,
 -- @instance MonadTimed m => MonadTimed (StateT s m)@
@@ -105,7 +104,8 @@ class MonadThrow m => MonadTimed m where
 
     -- | Waits for specified amount of time.
     --
-    -- Use `for` to specify relative virtual time, and `till` for absolute one.
+    -- Use `for` to specify relative virtual time (counting from now),
+    -- and `till` for absolute one.
     --
     -- >>> runTimedT $ wait (for 1 sec) >> wait (for 5 sec) >> timestamp "now"
     -- [6000000µs] now
@@ -124,19 +124,16 @@ class MonadThrow m => MonadTimed m where
     -- | Arises specified exception in specified thread.
     throwTo :: Exception e => ThreadId m -> e -> m ()
 
-    -- | Throws a TimeoutError exception
-    -- if running an action exceeds running time.
-    -- TODO: move away from this typeclass
-    --
-    -- NOTE: maybe do signature like in <http://hackage.haskell.org/package/base-4.9.0.0/docs/System-Timeout.html#v:timeout real timeout>
+    -- | Throws a `MTTimeoutError` exception
+    -- if running action exceeds specified time.
     timeout :: TimeUnit t => t -> m a -> m a
 
 -- | Type of thread identifier.
 type family ThreadId (m :: * -> *) :: *
 
 -- | Executes an action somewhere in future in another thread.
---
--- Use `after` to specify relative virtual time, and `at` for absolute one.
+-- Use `after` to specify relative virtual time (counting from now),
+-- and `at` for absolute one.
 --
 -- @
 -- schedule time action ≡ fork_ $ wait time >> action
@@ -154,6 +151,8 @@ schedule :: MonadTimed m => RelativeToNow -> m () -> m ()
 schedule time action = fork_ $ invoke time action
 
 -- | Executes an action at specified time in current thread.
+-- Use `after` to specify relative virtual time (counting from now),
+-- and `at` for absolute one.
 --
 -- @
 -- invoke time action ≡ wait time >> action
@@ -176,12 +175,8 @@ invoke time action = wait time >> action
 -- >>> runTimedT $ wait (for 1 mcs) >> timestamp "Look current time here"
 -- [1µs] Look current time here
 timestamp :: (MonadTimed m, MonadIO m) => String -> m ()
-timestamp msg = localTime >>= \time -> liftIO . putStrLn $ concat
-    [ "["
-    , show time
-    , "] "
-    , msg
-    ]
+timestamp msg = localTime >>= \time -> liftIO . putStrLn $
+    concat [ "[", show time, "] ", msg ]
 
 -- | Similar to `fork`, but doesn't return a result.
 fork_ :: MonadTimed m => m () -> m ()
@@ -189,6 +184,8 @@ fork_ = void . fork
 
 -- | Creates a thread, which works for specified amount of time, and then gets
 -- `killThread`ed.
+-- Use `for` to specify relative virtual time (counting from now),
+-- and `till` for absolute one.
 work :: MonadTimed m => RelativeToNow -> m () -> m ()
 work rel act = fork act >>= schedule rel . killThread
 
@@ -230,7 +227,7 @@ type instance ThreadId (LoggerNameBox m) = ThreadId m
 
 deriving instance MonadTimed m => MonadTimed (LoggerNameBox m)
 
--- | Converts a specified time unit to `Microsecond`.
+-- | Converts a specified time to `Microsecond`.
 mcs, ms, sec, minute, hour :: Int -> Microsecond
 mcs    = fromMicroseconds . fromIntegral
 ms     = fromMicroseconds . fromIntegral . (*) 1000
@@ -253,12 +250,13 @@ hour'   = fromMicroseconds . round . (*) 3600000000
 -- (1) Defines, whether time is counted from /origin point/ or
 -- current time point.
 --
--- (2) Allow different ways to specify time (see `TimeAccR` and `TimeAccM`).
+-- (2) Allow different ways to specify time
+-- (see <./Control-TimeWarp-Timed-MonadTimed.html#timeacc Time accumulators>)
 
 at, till :: TimeAccR t => t
 -- | Defines `RelativeToNow`, which refers to time point determined by specified
 -- virtual time.
--- Supposed to be used with `wait` or `work`.
+-- Supposed to be used with `wait` and `work`.
 till = till' 0
 -- | Synonym to `till`. Supposed to be used with `invoke` and `schedule`.
 at   = till' 0
@@ -266,7 +264,7 @@ at   = till' 0
 after, for :: TimeAccR t => t
 -- | Defines `RelativeToNow`, which refers to time point in specified time after
 -- current time point.
--- Supposed to be used with `wait` or `work`.
+-- Supposed to be used with `wait` and `work`.
 for   = for' 0
 -- | Synonym to `for`. Supposed to be used with `invoke` and `schedule`.
 after = for' 0
@@ -310,6 +308,7 @@ timepoint = interval
 
 -- * Time accumulators
 -- $timeacc
+-- #timeacc#
 -- Time accumulators allow to specify time in pretty complicated ways.
 --
 -- * Some of them can accept `TimeUnit`, which fully defines result.
@@ -326,6 +325,7 @@ timepoint = interval
 -- @
 
 -- | Time accumulator, which evaluates to `RelativeToNow`.
+-- It's implementation is intentionally not visible from this module.
 class TimeAccR t where
     till' :: Microsecond -> t
     for'  :: Microsecond -> t
@@ -343,6 +343,7 @@ instance TimeUnit t => TimeAccR (t -> RelativeToNow) where
     for'  acc t cur = acc + convertUnit t + cur
 
 -- | Time accumulator, which evaluates to `Microsecond`.
+-- It's implementation is intentionally not visible from this module.
 class TimeAccM t where
     interval' :: Microsecond -> t
 

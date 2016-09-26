@@ -11,8 +11,8 @@ build-type:          Simple
 cabal-version:       >=1.18
 description:
     This package allows to write scenarious over distributed systems, which can
-    be launched as either real program or fast emulation with network nastiness
-    manually controlled.
+    be launched as either real program or fast emulation without need to wait
+    for delays and with network nastiness manually controlled.
 
 library
   exposed-modules:     Control.TimeWarp.Logging
