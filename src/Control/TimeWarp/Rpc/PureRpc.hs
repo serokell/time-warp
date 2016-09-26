@@ -39,7 +39,7 @@ import           Control.TimeWarp.Logging      (WithNamedLogger)
 import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Host, Method (..),
                                                 MonadRpc (execClient, serve),
                                                 Port, RpcError (..), methodBody,
-                                                methodName)
+                                                methodName, NetworkAddress)
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..),
                                                 PureThreadId, TimedT, for,
                                                 localTime, runTimedT, sleepForever,
@@ -62,30 +62,40 @@ data ConnectionOutcome
 -- * Always 1 second delay:
 --
 -- @
--- Delays $ \\_ -> return $ ConnectedIn (interval 1 sec)
+-- Delays $ \\_ _ -> return $ ConnectedIn (interval 1 sec)
 -- @
 --
 -- * Delay varies between 1 and 5 seconds (with granularity of 1 mcs):
 --
 -- @
--- Delays $ \\_ -> ConnectedIn \<$\> getRandomTR (interval 1 sec, interval 5 sec)
+-- Delays $ \\_ _ -> ConnectedIn \<$\> getRandomTR (interval 1 sec, interval 5 sec)
 -- @
 --
 -- * For first 10 seconds after scenario start connection is established
 -- with probability of 1/6:
 --
 -- @
--- Delays $ \\time -> do
+-- Delays $ \\_ time -> do
 --     p <- getRandomR (0, 5)
 --     if (p == 0) && (time <= interval 10 sec)
 --         then return $ ConnectedIn 0
 --         else return NeverConnected
 -- @
+--
+-- * Node with address `isolatedAddr` is not accessible:
+--
+-- @
+-- Delays $ \\serverAddr _ ->
+--     return if serverAddr == isolatedAddr
+--            then NeverConnected
+--            else ConnectedIn 0
+-- @
 
 newtype Delays = Delays
-    { -- | Basing on current virtual time, returns delay after which server
-      -- receives RPC request.
-      evalDelay :: Microsecond
+    { -- | Basing on current virtual time, rpc method server's
+      -- address, returns delay after which server receives RPC request.
+      evalDelay :: NetworkAddress
+                -> Microsecond
                 -> Rand StdGen ConnectionOutcome
     }
 
@@ -99,15 +109,15 @@ instance DelaysSpecifier Delays where
 
 -- | Connection is never established.
 instance DelaysSpecifier () where
-    toDelays = const . Delays . const . return $ NeverConnected
+    toDelays = const . Delays . const . const . return $ NeverConnected
 
 -- | Specifies permanent connection delay.
 instance DelaysSpecifier Microsecond where
-    toDelays = Delays . const . return . ConnectedIn
+    toDelays = Delays . const . const . return . ConnectedIn
 
 -- | Connection delay varies is specified range.
 instance DelaysSpecifier (Microsecond, Microsecond) where
-    toDelays = Delays . const . fmap ConnectedIn . getRandomTR
+    toDelays = Delays . const . const . fmap ConnectedIn . getRandomTR
 
 -- This is needed for QC.
 instance Show Delays where
@@ -115,7 +125,7 @@ instance Show Delays where
 
 -- | Describes reliable network.
 instance Default Delays where
-    def = Delays . const . return . ConnectedIn $ 0
+    def = Delays . const . const . return . ConnectedIn $ 0
 
 -- | Return a randomly-selected time value in specified range.
 getRandomTR :: MonadRandom m => (Microsecond, Microsecond) -> m Microsecond
@@ -185,12 +195,12 @@ request (Client name args) listeners' port =
 
 instance (MonadIO m, MonadCatch m) =>
          MonadRpc (PureRpc m) where
-    execClient (host, port) cli =
+    execClient addr@(host, port) cli =
         if host /= localhost
             then
                 error "Can't emulate for host /= localhost"
             else do
-                waitDelay
+                waitDelay addr
                 ls <- PureRpc $ use listeners
                 request cli ls port
     serve port methods =
@@ -208,12 +218,12 @@ instance (MonadIO m, MonadCatch m) =>
 
 waitDelay
     :: (MonadThrow m, MonadIO m, MonadCatch m)
-    => PureRpc m ()
-waitDelay =
+    => NetworkAddress -> PureRpc m ()
+waitDelay addr =
     PureRpc $
     do delays' <- use delays
        time    <- localTime
-       delay   <- randSeed %%= runRand (evalDelay delays' time)
+       delay   <- randSeed %%= runRand (evalDelay delays' addr time)
        case delay of
            ConnectedIn connDelay -> wait (for connDelay)
            NeverConnected        -> sleepForever
