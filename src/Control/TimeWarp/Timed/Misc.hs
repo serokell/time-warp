@@ -43,7 +43,8 @@ repeatForever period handler action = do
             Nothing -> waitForRes nextDelay
             Just t  -> wait (for t) >> continue
 
--- | Sleep forever
--- @TODO: would be better to use `MVar` to block thread
+-- | Sleep forever.
+
+-- TODO: would be better to use `MVar` to block thread
 sleepForever :: MonadTimed m => m ()
 sleepForever = wait (for 100500 minute) >> sleepForever

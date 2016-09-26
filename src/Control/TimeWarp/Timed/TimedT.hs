@@ -25,10 +25,10 @@ import           Control.Exception.Base            (AsyncException (ThreadKilled
 import           Control.Lens                      (makeLenses, use, view, (%=), (%~),
                                                     (&), (.=), (<&>), (^.), at, (<<.=),
                                                     (<<+=), (.~))
-import           Control.Monad                     (void)
+import           Control.Monad                     (void, unless)
 import           Control.Monad.Catch               (Handler (..), MonadCatch, MonadMask,
                                                     MonadThrow, catch, catchAll, catches,
-                                                    mask, throwM, try,
+                                                    mask, throwM, try, finally,
                                                     uninterruptibleMask)
 import           Control.Monad.Cont                (ContT (..), runContT)
 import           Control.Monad.Loops               (whileM_)
@@ -193,20 +193,10 @@ instance (MonadCatch m, MonadIO m) => MonadCatch (TimedT m) where
 contHandler :: MonadThrow m => Handler m ()
 contHandler = Handler $ \(ContException e) -> throwM e
 
--- | NOTE: This instance is incorrect
-instance (MonadIO m, MonadMask m) => MonadMask (TimedT m) where
-    mask a = TimedT $ ReaderT $ \r -> ContT $ \c ->
-        mask $ \u -> runContT (runReaderT (unwrapTimedT $ a $ q u) r) c
-      where
-        q u t = TimedT $ ReaderT $ \r -> ContT $ \c -> u $
-            runContT (runReaderT (unwrapTimedT t) r) c
-
-    uninterruptibleMask a = TimedT $ ReaderT $ \r -> ContT $ \c ->
-        uninterruptibleMask $
-            \u -> runContT (runReaderT (unwrapTimedT $ a $ q u) r) c
-      where
-        q u t = TimedT $ ReaderT $ \r -> ContT $ \c -> u $
-            runContT (runReaderT (unwrapTimedT t) r) c
+-- | This instance is incorrect
+instance (MonadIO m, MonadCatch m) => MonadMask (TimedT m) where
+    mask a = a id
+    uninterruptibleMask = mask
 
 wrapCore :: Monad m => Core m a -> TimedT m a
 wrapCore = TimedT . lift . lift
@@ -369,11 +359,14 @@ instance (MonadIO m, MonadThrow m, MonadCatch m) =>
                     else event
             events %= PQ.fromList . map modifyRequired . PQ.toList
 
-    -- | TODO use `mask`, like in http://hackage.haskell.org/package/base-4.9.0.0/docs/src/System.Timeout.html
     timeout t action' = do
-        pid <- myThreadId
-        schedule (after t) $ throwTo pid $ MTTimeoutError "Timeout exceeded"
-        action'
+        pid  <- myThreadId
+        done <- liftIO $ newIORef False
+        schedule (after t) $
+            (liftIO (readIORef done) >>=) . flip unless $
+                throwTo pid $ MTTimeoutError "Timeout exceeded"
+        action' `finally` liftIO (writeIORef done True)
 
+-- | Name which is used by logger (see `WithNamedLogger`) if no other one was specified.
 defaultLoggerName :: LoggerName
 defaultLoggerName = "emulation"
