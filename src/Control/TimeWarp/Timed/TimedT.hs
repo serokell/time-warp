@@ -9,7 +9,15 @@
 {-# LANGUAGE UndecidableInstances      #-}
 {-# LANGUAGE ViewPatterns              #-}
 
--- | This module contains pure implementation of MonadTimed.
+-- |
+-- Module      : Control.TimeWarp.Timed.TimedT
+-- Copyright   : (c) Serokell, 2016
+-- License     : GPL-3 (see the file LICENSE)
+-- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
+-- Stability   : experimental
+-- Portability : POSIX, GHC
+--
+-- This module contains pure implementation of MonadTimed.
 module Control.TimeWarp.Timed.TimedT
        ( TimedT
        , PureThreadId

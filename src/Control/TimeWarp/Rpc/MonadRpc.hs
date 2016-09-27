@@ -6,7 +6,15 @@
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE ViewPatterns          #-}
 
--- | This module contains `MonadRpc` typeclass which abstracts over
+-- |
+-- Module      : Control.TimeWarp.Rpc
+-- Copyright   : (c) Serokell, 2016
+-- License     : GPL-3 (see the file LICENSE)
+-- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
+-- Stability   : experimental
+-- Portability : POSIX, GHC
+--
+-- This module contains `MonadRpc` typeclass which abstracts over
 -- RPC communication.
 
 module Control.TimeWarp.Rpc.MonadRpc

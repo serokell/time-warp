@@ -4,8 +4,16 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies          #-}
 
--- | This module contains implementation of `MonadRpc` for real mode
--- (network capabilities provided by OS are used).
+-- |
+-- Module      : Control.TimeWarp.Rpc.MsgPackRpc
+-- Copyright   : (c) Serokell, 2016
+-- License     : GPL-3 (see the file LICENSE)
+-- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
+-- Stability   : experimental
+-- Portability : POSIX, GHC
+--
+-- This module contains implementation of `MonadRpc` for real mode
+-- (network, time- and thread-management capabilities provided by OS are used).
 
 module Control.TimeWarp.Rpc.MsgPackRpc
        ( MsgPackRpc

@@ -5,7 +5,15 @@
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE ViewPatterns          #-}
 
--- | Real-mode implementation of `MonadTimed`.
+-- |
+-- Module      : Control.TimeWarp.Timed.TimedIO
+-- Copyright   : (c) Serokell, 2016
+-- License     : GPL-3 (see the file LICENSE)
+-- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
+-- Stability   : experimental
+-- Portability : POSIX, GHC
+--
+-- Real-mode implementation of `MonadTimed`.
 -- Each function in inplementation refers to plain `IO`.
 
 module Control.TimeWarp.Timed.TimedIO

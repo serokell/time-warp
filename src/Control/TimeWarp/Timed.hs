@@ -1,4 +1,12 @@
--- | This module provides time- and thread-management capabilities.
+-- |
+-- Module      : Control.TimeWarp.Timed
+-- Copyright   : (c) Serokell, 2016
+-- License     : GPL-3 (see the file LICENSE)
+-- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
+-- Stability   : experimental
+-- Portability : POSIX, GHC
+--
+-- This module provides time- and thread-management capabilities.
 -- It allows to write scenarios over multithreaded systems, which can
 -- then be launched as either real program or emulation with no need
 -- to wait for delays.

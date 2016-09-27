@@ -1,6 +1,14 @@
 {-# LANGUAGE Rank2Types #-}
 
--- | This module helps abstragate from concrete instance of
+-- |
+-- Module      : Control.TimeWarp.Rpc.Restriction
+-- Copyright   : (c) Serokell, 2016
+-- License     : GPL-3 (see the file LICENSE)
+-- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
+-- Stability   : experimental
+-- Portability : POSIX, GHC
+--
+-- This module helps abstragate from concrete instance of
 -- `Control.TimeWarp.Rpc.MonadRpc`.
 --
 -- Consider such example:

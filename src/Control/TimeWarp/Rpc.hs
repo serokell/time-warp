@@ -1,4 +1,12 @@
--- | This module provides RPC capabilities. It allows to write scenarios over
+-- |
+-- Module      : Control.TimeWarp.Rpc
+-- Copyright   : (c) Serokell, 2016
+-- License     : GPL-3 (see the file LICENSE)
+-- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
+-- Stability   : experimental
+-- Portability : POSIX, GHC
+--
+-- This module provides RPC capabilities. It allows to write scenarios over
 -- distributed systems, which can then be launched as either real program or
 -- emulation with network nastiness manually controlled.
 --

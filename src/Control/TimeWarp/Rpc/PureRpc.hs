@@ -7,7 +7,16 @@
 {-# LANGUAGE UndecidableInstances  #-}
 {-# LANGUAGE ViewPatterns          #-}
 
--- | Defines network-emulated implementation of `MonadRpc`.
+-- |
+-- Module      : Control.TimeWarp.Rpc.PureRpc
+-- Copyright   : (c) Serokell, 2016
+-- License     : GPL-3 (see the file LICENSE)
+-- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
+-- Stability   : experimental
+-- Portability : POSIX, GHC
+--
+-- Defines network-emulated implementation of `MonadRpc`. Threads and time are
+-- also emulated via `Control.TimeWarp.Timed.TimedT`.
 module Control.TimeWarp.Rpc.PureRpc
        ( PureRpc
        , runPureRpc
@@ -152,7 +161,7 @@ $(makeLenses ''NetInfo)
 -- Even `throwTo` won't help.
 --
 --     * In implementation, remote method is actually inlined at call position,
--- so `instance WithNamedLogger` would refer to caller's logger name, not
+-- so @instance WithNamedLogger@ would refer to caller's logger name, not
 -- server's one.
 newtype PureRpc m a = PureRpc
     { unwrapPureRpc :: TimedT (StateT (NetInfo (PureRpc m)) m) a
