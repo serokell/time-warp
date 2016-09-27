@@ -51,7 +51,7 @@ import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Host, Method (..),
                                                 methodName, NetworkAddress)
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..),
                                                 PureThreadId, TimedT, for,
-                                                localTime, runTimedT, sleepForever,
+                                                virtualTime, runTimedT, sleepForever,
                                                 wait, ThreadId)
 
 localhost :: Host
@@ -235,7 +235,7 @@ waitDelay
 waitDelay addr =
     PureRpc $
     do delays' <- use delays
-       time    <- localTime
+       time    <- virtualTime
        delay   <- randSeed %%= runRand (evalDelay delays' addr time)
        case delay of
            ConnectedIn connDelay -> wait (for connDelay)

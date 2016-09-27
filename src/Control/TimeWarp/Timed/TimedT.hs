@@ -59,7 +59,7 @@ import           Control.TimeWarp.Logging          (WithNamedLogger (..), Logger
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond,
                                                     MonadTimed (..),
                                                     MonadTimedError (MTTimeoutError), for,
-                                                    localTime, mcs,
+                                                    virtualTime, mcs,
                                                     timeout, ThreadId, schedule, after)
 
 -- Summary, `TimedT` (implementation of emulation mode) consists of several
@@ -319,13 +319,13 @@ type instance ThreadId (TimedT m) = PureThreadId
 
 instance (MonadIO m, MonadThrow m, MonadCatch m) =>
          MonadTimed (TimedT m) where
-    localTime = TimedT $ use curTime
+    virtualTime = TimedT $ use curTime
     -- | Take note, created thread may be killed by async exception
     --   only when it calls "wait"
     fork act
          -- just put new thread to event queue
      = do
-        _timestamp <- localTime
+        _timestamp <- virtualTime
         tid        <- getNextThreadId
         logName    <- getLoggerName
         let _threadCtx =
@@ -343,7 +343,7 @@ instance (MonadIO m, MonadThrow m, MonadCatch m) =>
                           -- to newly created thread
         return tid
     wait relativeToNow = do
-        cur <- localTime
+        cur <- virtualTime
         ctx <- TimedT ask
         let event following =
                 Event

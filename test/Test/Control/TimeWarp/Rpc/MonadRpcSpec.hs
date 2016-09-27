@@ -15,11 +15,11 @@ import           Test.QuickCheck              (Property, Testable (property),
 import           Test.QuickCheck.Monadic      (PropertyM, assert, monadic, run)
 
 import           Control.TimeWarp.Rpc         (Client (..), Host, MonadRpc (..),
-                                               MsgPackRpc (..), NetworkAddress,
+                                               MsgPackRpc, NetworkAddress,
                                                Port, PureRpc, call, method,
                                                runMsgPackRpc, runPureRpc)
 import           Control.TimeWarp.Timed       (for, fork, fork_, killThread, ms,
-                                               runTimedIO, wait, Microsecond)
+                                               wait, Microsecond)
 
 import           Test.Control.TimeWarp.Common ()
 
@@ -28,7 +28,7 @@ spec =
     describe "MonadRpc" $ do
         describe "MsgPackRpc" $
             describe "msgpack-rpc based implementation of RPC layer" $ do
-                runIO $ runTimedIO $ runMsgPackRpc (fork_ server)
+                runIO $ runMsgPackRpc (fork_ server)
                 prop "client should be able to execute server method" $
                     runMsgPackRpcProp serverMethodShouldExecuteSimpleSpec
         describe "PureRpc" $
@@ -43,7 +43,7 @@ assertPure :: Bool -> PureRpcProp ()
 assertPure b = modify (b &&)
 
 runMsgPackRpcProp :: MsgPackRpcProp () -> Property
-runMsgPackRpcProp = monadic $ ioProperty . runTimedIO . runMsgPackRpc
+runMsgPackRpcProp = monadic $ ioProperty . runMsgPackRpc
 
 runPureRpcProp :: PureRpcProp () -> Property
 runPureRpcProp test =

@@ -54,9 +54,9 @@ monadTimedSpec
     -> Spec
 monadTimedSpec description runProp =
     describe description $ do
-        describe "localTime >> localTime" $ do
-            prop "first localTime will run before second localTime" $
-                runProp localTimePassingProp
+        describe "virtualTime >> virtualTime" $ do
+            prop "first virtualTime will run before second virtualTime" $
+                runProp virtualTimePassingProp
         describe "wait t" $ do
             prop "will wait at least t" $
                 runProp . waitPassingProp
@@ -81,9 +81,9 @@ monadTimedTSpec
     -> Spec
 monadTimedTSpec description runProp =
     describe description $ do
-        describe "localTime >> localTime" $ do
-            prop "first localTime will run before second localTime" $
-                runProp localTimePassingTimedProp
+        describe "virtualTime >> virtualTime" $ do
+            prop "first virtualTime will run before second virtualTime" $
+                runProp virtualTimePassingTimedProp
         describe "now" $ do
             prop "now is correct" $
                 runProp . nowProp
@@ -196,8 +196,8 @@ waitPassingProp
 waitPassingProp relativeToNow =
     timePassingProp relativeToNow (wait (fromIntegralRTN relativeToNow) >>)
 
-localTimePassingProp :: (MonadTimed m, MonadIO m) => PropertyM m ()
-localTimePassingProp =
+virtualTimePassingProp :: (MonadTimed m, MonadIO m) => PropertyM m ()
+virtualTimePassingProp =
     timePassingProp 0 id
 
 -- TODO: instead of testing with MVar's we should create PropertyM an instance of MonadTimed.
@@ -210,8 +210,8 @@ timePassingProp
     -> PropertyM m ()
 timePassingProp relativeToNow action = do
     mvar <- liftIO newEmptyMVar
-    t1 <- run localTime
-    run . action $ localTime >>= liftIO . putMVar mvar
+    t1 <- run virtualTime
+    run . action $ virtualTime >>= liftIO . putMVar mvar
     t2 <- liftIO $ takeMVar mvar
     monitor (counterexample $ mconcat
         [ "t1: ", show t1
@@ -323,8 +323,8 @@ waitPassingTimedProp
 waitPassingTimedProp relativeToNow =
     timePassingTimedProp relativeToNow (wait (fromIntegralRTN relativeToNow) >>)
 
-localTimePassingTimedProp :: TimedTProp ()
-localTimePassingTimedProp =
+virtualTimePassingTimedProp :: TimedTProp ()
+virtualTimePassingTimedProp =
     timePassingTimedProp 0 id
 
 -- | Tests that action will be exececuted after relativeToNow
@@ -333,8 +333,8 @@ timePassingTimedProp
     -> (TimedTProp () -> TimedTProp ())
     -> TimedTProp ()
 timePassingTimedProp relativeToNow action = do
-    t1 <- localTime
-    action $ localTime >>= assertTimedT . (fromIntegralRTN relativeToNow t1 <=)
+    t1 <- virtualTime
+    action $ virtualTime >>= assertTimedT . (fromIntegralRTN relativeToNow t1 <=)
 
 -- | Tests that an action will be executed
 actionSemanticTimedProp
@@ -349,9 +349,9 @@ actionSemanticTimedProp action val f = do
 nowProp :: Microsecond -> TimedTProp ()
 nowProp ms = do
     wait $ for ms
-    t1 <- localTime
+    t1 <- virtualTime
     invoke now $ return ()
-    t2 <- localTime
+    t2 <- virtualTime
     assertTimedT $ t1 == t2
 
 

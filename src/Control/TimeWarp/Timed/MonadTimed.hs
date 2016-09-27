@@ -108,7 +108,7 @@ instance Buildable MonadTimedError where
 
 class MonadThrow m => MonadTimed m where
     -- | Acquires virtual time.
-    localTime :: m Microsecond
+    virtualTime :: m Microsecond
 
     -- | Waits for specified amount of time.
     --
@@ -183,7 +183,7 @@ invoke time action = wait time >> action
 -- >>> runTimedT $ wait (for 1 mcs) >> timestamp "Look current time here"
 -- [1µs] Look current time here
 timestamp :: (MonadTimed m, MonadIO m) => String -> m ()
-timestamp msg = localTime >>= \time -> liftIO . putStrLn $
+timestamp msg = virtualTime >>= \time -> liftIO . putStrLn $
     concat [ "[", show time, "] ", msg ]
 
 -- | Similar to `fork`, but doesn't return a result.
@@ -204,7 +204,7 @@ killThread = flip throwTo ThreadKilled
 type instance ThreadId (ReaderT r m) = ThreadId m
 
 instance MonadTimed m => MonadTimed (ReaderT r m) where
-    localTime = lift localTime
+    virtualTime = lift virtualTime
 
     wait = lift . wait
 
@@ -219,7 +219,7 @@ instance MonadTimed m => MonadTimed (ReaderT r m) where
 type instance ThreadId (StateT s m) = ThreadId m
 
 instance MonadTimed m => MonadTimed (StateT s m) where
-    localTime = lift localTime
+    virtualTime = lift virtualTime
 
     wait = lift . wait
 
@@ -300,8 +300,8 @@ now = id
 -- 5000µs
 startTimer :: MonadTimed m => m (m Microsecond)
 startTimer = do
-    start <- localTime
-    return $ subtract start <$> localTime
+    start <- virtualTime
+    return $ subtract start <$> virtualTime
 
 -- | Returns a time in microseconds.
 --

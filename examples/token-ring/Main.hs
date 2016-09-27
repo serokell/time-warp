@@ -14,14 +14,13 @@ import           Data.Typeable              (Typeable)
 
 import           Control.TimeWarp.Logging   (WithNamedLogger (..), usingLoggerName,
                                              logInfo, initLogging, setLoggerName,
-                                             Severity (Info, Debug),
+                                             Severity (..),
                                              LoggerName (..),
-                                             logDebug, logWarning, LoggerNameBox)
+                                             logDebug, LoggerNameBox)
 import           Control.TimeWarp.Timed     (MonadTimed (..), schedule, ThreadId,
                                              killThread, at, for, sleepForever,
-                                             Microsecond, runTimedIO, runTimedT, sec,
+                                             Microsecond, sec,
                                              interval, invoke, after)
-import qualified Control.TimeWarp.Timed.TimedT as TimedT
 import           Control.TimeWarp.Rpc       (MonadRpc (..), Port, NetworkAddress,
                                              Client, ServerT, call, method, runPureRpc,
                                              runMsgPackRpc, DelaysSpecifier,

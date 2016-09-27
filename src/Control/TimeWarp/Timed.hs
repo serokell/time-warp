@@ -17,7 +17,7 @@
 -- example :: MonadTimed m => m ()
 -- example = do
 --     schedule (at 10 minute) $ do
---         time <- toMicroseconds \<\$\> localTime
+--         time <- toMicroseconds \<\$\> virtualTime
 --         liftIO $ putStrLn $ \"Hello! It's \" ++ show time ++ " now"
 --     wait (for 9 minute)
 --     liftIO $ putStrLn \"One more minute...\"

@@ -60,10 +60,10 @@ instance MonadBaseControl IO TimedIO where
 type instance ThreadId TimedIO = C.ThreadId
 
 instance MonadTimed TimedIO where
-    localTime = TimedIO $ (-) <$> lift curTime <*> ask
+    virtualTime = TimedIO $ (-) <$> lift curTime <*> ask
 
     wait relativeToNow = do
-        cur <- localTime
+        cur <- virtualTime
         liftIO $ C.threadDelay $ fromIntegral $ relativeToNow cur - cur
 
     fork (TimedIO a) = TimedIO $ lift . C.forkIO . runReaderT a =<< ask
