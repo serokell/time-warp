@@ -150,6 +150,10 @@ $(makeLenses ''NetInfo)
 --
 --     * Method, once being declared in net, can't be removed.
 -- Even `throwTo` won't help.
+--
+--     * In implementation, remote method is actually inlined at call position,
+-- so `instance WithNamedLogger` would refer to caller's logger name, not
+-- server's one.
 newtype PureRpc m a = PureRpc
     { unwrapPureRpc :: TimedT (StateT (NetInfo (PureRpc m)) m) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
