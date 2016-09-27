@@ -28,22 +28,26 @@ import qualified Network.MessagePack.Server    as S
 
 import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Method (..),
                                                 MonadRpc (..))
-import           Control.TimeWarp.Timed        (MonadTimed (..), TimedIO, ThreadId)
+import           Control.TimeWarp.Timed        (MonadTimed (..), TimedIO, ThreadId,
+                                                runTimedIO)
 
 -- | Wrapper over `Control.TimeWarp.Timed.TimedIO`, which implements `MonadRpc`
 -- using <https://hackage.haskell.org/package/msgpack-rpc-1.0.0 msgpack-rpc>.
 newtype MsgPackRpc a = MsgPackRpc
     { -- | Launches distributed scenario using real network, threads and time.
-      runMsgPackRpc :: TimedIO a
+      unwrapMsgPackRpc :: TimedIO a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadBase IO,
                 MonadThrow, MonadCatch, MonadMask, MonadTimed)
+
+runMsgPackRpc :: MsgPackRpc a -> IO a
+runMsgPackRpc = runTimedIO . unwrapMsgPackRpc
 
 type instance ThreadId MsgPackRpc = C.ThreadId
 
 instance MonadBaseControl IO MsgPackRpc where
     type StM MsgPackRpc a = a
 
-    liftBaseWith f = MsgPackRpc $ liftBaseWith $ \g -> f $ g . runMsgPackRpc
+    liftBaseWith f = MsgPackRpc $ liftBaseWith $ \g -> f $ g . unwrapMsgPackRpc
 
     restoreM = MsgPackRpc . restoreM
 
