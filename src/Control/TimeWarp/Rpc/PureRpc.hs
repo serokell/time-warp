@@ -46,7 +46,7 @@ import           System.Random                 (StdGen)
 import           Data.MessagePack.Object       (MessagePack, fromObject, toObject)
 
 import           Control.TimeWarp.Logging      (WithNamedLogger)
-import           Control.TimeWarp.Rpc.MonadRpc (MonadRpc (..),
+import           Control.TimeWarp.Rpc.MonadRpc (MonadRpc (..), proxyOf,
                                                 NetworkAddress, Host, Port,
                                                 Method (..), getMethodName,
                                                 TransmitionPair (..))
@@ -202,7 +202,7 @@ request req listeners' port =
             ["method \"", name, "\" not found at port ", show port]
         Just (Method f) -> fmap coerce . f . coerce $ req
   where
-    name = methodName req
+    name = methodName $ proxyOf req
 
     -- TODO: how to deceive type checker without serialization?
     coerce :: (MessagePack a, MessagePack b) => a -> b

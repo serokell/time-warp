@@ -29,6 +29,7 @@ module Control.TimeWarp.Rpc.MonadRpc
        , sendTimeout
        , Method (..)
        , getMethodName
+       , proxyOf
 
        , scenario
        ) where
@@ -37,6 +38,7 @@ import           Control.Monad.Catch        (MonadThrow)
 import           Control.Monad.Reader       (ReaderT (..))
 import           Control.Monad.Trans        (lift, MonadIO (..))
 import           Data.ByteString            (ByteString)
+import           Data.Proxy                 (Proxy (..), asProxyTypeOf)
 
 import           Data.MessagePack.Object    (MessagePack(..))
 import           Data.Time.Units            (TimeUnit)
@@ -56,15 +58,11 @@ type NetworkAddress = (Host, Port)
 -- | Defines name and response type of RPC-method to which data of @req@ type
 -- can be delivered.
 --
--- Implementation of `getMethodName` should _not_ operate it's argument, i.e.
--- @getMethodName _|_ /= _|_@.
 -- TODO: create instances of this class by TH.
 class (MessagePack req, MessagePack resp) =>
        TransmitionPair req resp | req -> resp where
-    methodName :: req -> String
+    methodName :: Proxy req -> String
 
-    pseudoRequest :: req
-    pseudoRequest = undefined
 
 -- | Creates RPC-method.
 data Method m =
@@ -87,12 +85,19 @@ sendTimeout
 sendTimeout t addr = timeout t . send addr
 
 getMethodName :: Method m -> String
-getMethodName (Method f) = let req = pseudoRequest
-                               _   = f req
-                           in  methodName req
+getMethodName (Method f) = let rp = requestProxy
+                               -- make rp contain type of f's argument
+                               _ = f $ undefined `asProxyTypeOf` rp
+                           in  methodName rp
+  where
+    requestProxy :: TransmitionPair req resp => Proxy req
+    requestProxy = Proxy
+
+-- | TODO: move to non re-exported module
+proxyOf :: a -> Proxy a
+proxyOf _ = Proxy
 
 -- * Instances
-
 
 instance MonadRpc m => MonadRpc (ReaderT r m) where
     send addr req = lift $ send addr req

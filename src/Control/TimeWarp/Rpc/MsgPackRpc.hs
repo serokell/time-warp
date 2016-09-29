@@ -35,7 +35,8 @@ import qualified Network.MessagePack.Client    as C
 import qualified Network.MessagePack.Server    as S
 
 import           Control.TimeWarp.Rpc.MonadRpc (Method (..), MonadRpc (..),
-                                                TransmitionPair (..), getMethodName)
+                                                TransmitionPair (..), getMethodName,
+                                                proxyOf)
 import           Control.TimeWarp.Timed        (MonadTimed (..), TimedIO, ThreadId,
                                                 runTimedIO)
 
@@ -63,7 +64,7 @@ instance MonadRpc MsgPackRpc where
     send (addr, port) req = liftIO $ do
         box <- newIORef Nothing
         C.execClient addr port $ do
-            res <- C.call (methodName req) req
+            res <- C.call (methodName $ proxyOf req) req
             liftIO . writeIORef box $ Just res
         fromMaybe (error "execClient didn't return a value!")
             <$> readIORef box
