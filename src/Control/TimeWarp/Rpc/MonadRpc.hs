@@ -24,7 +24,7 @@ module Control.TimeWarp.Rpc.MonadRpc
        , Host
        , NetworkAddress
 
-       , TransmitionPair (methodName)
+       , TransmissionPair (methodName)
        , MonadRpc (..)
        , sendTimeout
        , Method (..)
@@ -60,18 +60,18 @@ type NetworkAddress = (Host, Port)
 --
 -- TODO: create instances of this class by TH.
 class (MessagePack req, MessagePack resp) =>
-       TransmitionPair req resp | req -> resp where
+       TransmissionPair req resp | req -> resp where
     methodName :: Proxy req -> String
 
 
 -- | Creates RPC-method.
 data Method m =
-    forall req resp . TransmitionPair req resp => Method (req -> m resp)
+    forall req resp . TransmissionPair req resp => Method (req -> m resp)
 
 -- | Defines protocol of RPC layer.
 class MonadThrow m => MonadRpc m where
     -- | Executes remote method call.
-    send :: TransmitionPair req resp =>
+    send :: TransmissionPair req resp =>
             NetworkAddress -> req -> m resp
 
     -- | Starts RPC server with a set of RPC methods.
@@ -80,7 +80,7 @@ class MonadThrow m => MonadRpc m where
 -- | Same as `execClient`, but allows to set up timeout for a call (see
 -- `Control.TimeWarp.Timed.MonadTimed.timeout`).
 sendTimeout
-    :: (MonadTimed m, MonadRpc m, TransmitionPair req resp, TimeUnit t)
+    :: (MonadTimed m, MonadRpc m, TransmissionPair req resp, TimeUnit t)
     => t -> NetworkAddress -> req -> m resp
 sendTimeout t addr = timeout t . send addr
 
@@ -90,7 +90,7 @@ getMethodName (Method f) = let rp = requestProxy
                                _ = f $ undefined `asProxyTypeOf` rp
                            in  methodName rp
   where
-    requestProxy :: TransmitionPair req resp => Proxy req
+    requestProxy :: TransmissionPair req resp => Proxy req
     requestProxy = Proxy
 
 -- | TODO: move to non re-exported module
@@ -122,7 +122,7 @@ instance MessagePack EpicRequest where
     fromObject o = do (a1, a2) <- fromObject o
                       return $ EpicRequest a1 a2
 
-instance TransmitionPair EpicRequest [Char] where
+instance TransmissionPair EpicRequest [Char] where
     methodName = const "EpicRequest"
 
 scenario :: (MonadTimed m, MonadRpc m, MonadIO m) => m ()

@@ -35,7 +35,7 @@ import qualified Network.MessagePack.Client    as C
 import qualified Network.MessagePack.Server    as S
 
 import           Control.TimeWarp.Rpc.MonadRpc (Method (..), MonadRpc (..),
-                                                TransmitionPair (..), getMethodName,
+                                                TransmissionPair (..), getMethodName,
                                                 proxyOf)
 import           Control.TimeWarp.Timed        (MonadTimed (..), TimedIO, ThreadId,
                                                 runTimedIO)

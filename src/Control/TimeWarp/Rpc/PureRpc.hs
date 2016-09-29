@@ -49,7 +49,7 @@ import           Control.TimeWarp.Logging      (WithNamedLogger)
 import           Control.TimeWarp.Rpc.MonadRpc (MonadRpc (..), proxyOf,
                                                 NetworkAddress, Host, Port,
                                                 Method (..), getMethodName,
-                                                TransmitionPair (..))
+                                                TransmissionPair (..))
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..),
                                                 PureThreadId, TimedT, for,
                                                 virtualTime, runTimedT, sleepForever,
@@ -191,7 +191,7 @@ runPureRpc _randSeed (toDelays -> _delays) rpc =
     net        = NetInfo{..}
     _listeners = Map.empty
 
-request :: (Monad m, MonadThrow m, TransmitionPair req resp)
+request :: (Monad m, MonadThrow m, TransmissionPair req resp)
         => req
         -> Listeners (PureRpc m)
         -> Port
@@ -209,7 +209,7 @@ request req listeners' port =
     coerce = fromMaybe typeError . fromObject . toObject
 
     typeError = error $ "Internal error. Do you have several instances of "
-                     ++ "TransmitionPair with same methodName?"
+                     ++ "TransmissionPair with same methodName?"
 
 instance (MonadIO m, MonadCatch m) =>
          MonadRpc (PureRpc m) where
