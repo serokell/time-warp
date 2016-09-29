@@ -34,7 +34,7 @@ import           Control.TimeWarp.Rpc       (MonadRpc (..), Port, NetworkAddress
 -- * Launch parameters.
 
 launchDuration :: Microsecond
-launchDuration = interval 200 sec
+launchDuration = interval 20 sec
 
 tokenPassingDelay :: Microsecond
 tokenPassingDelay = interval 3 sec
@@ -42,19 +42,26 @@ tokenPassingDelay = interval 3 sec
 nodeNumber :: Int
 nodeNumber = 3
 
-observerCheckInterval :: Microsecond
-observerCheckInterval = interval 3 sec
+allowedProgressDelay :: Microsecond
+allowedProgressDelay = interval 5 sec
 
 networkDelay :: (Microsecond, Microsecond)
 networkDelay = (interval 1 ms, interval 5 ms)
+
+emulationMode :: Bool
+emulationMode = True
 
 -- * Starter
 
 main :: IO ()
 main = do
     initLogging ["node", "observer"] Info
---    runRealMode $
-    runEmulationMode delays (mkStdGen 0) $ do
+    if emulationMode
+        then runEmulationMode delays (mkStdGen 0) scenario
+        else runRealMode scenario
+  where
+    scenario :: WorkMode m => m ()
+    scenario = do
         setLoggerName "node" $ do
             forM_ [1 .. nodeNumber] $
                 \no -> modifyLoggerName (<> LoggerName (show no)) $
@@ -63,7 +70,6 @@ main = do
         setLoggerName ("observer" <> "progress") $
             fork_ $
                 launchObserver
-  where
     delays = Delays $
                 \dest _ -> 
                     if dest == (observerPort ^. fullAddr)
@@ -130,7 +136,7 @@ launchNode no = do
   where
     onValueReceived (ValueReceived v) = do
         logInfo $ sformat ("Got token with value " % shown) v
-        execClient ("127.0.0.1", 5001) $ noteTokenCall v
+        execClient ("127.0.0.1", observerPort) $ noteTokenCall v
         wait (for tokenPassingDelay)
         initPassingToken $ v + 1
 
@@ -175,10 +181,10 @@ launchObserver = do
             wait (for 1 sec)
             (lastTime, value) <- liftIO $ T.readTVarIO lastProgress
             time <- virtualTime
-            when (time - lastTime > observerCheckInterval) $
+            when (time - lastTime > allowedProgressDelay) $
                 logError $
                     sformat ("Token value (" % shown % ") hasn't changed " %
-                             "since " % shown) value lastTime
+                             "since " % shown % shown) value lastTime time
 
     logInfo "Launched"
 
