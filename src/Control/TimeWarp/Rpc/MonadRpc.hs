@@ -93,7 +93,6 @@ getMethodName (Method f) = let rp = requestProxy
     requestProxy :: TransmissionPair req resp => Proxy req
     requestProxy = Proxy
 
--- | TODO: move to non re-exported module
 proxyOf :: a -> Proxy a
 proxyOf _ = Proxy
 
@@ -129,7 +128,7 @@ scenario :: (MonadTimed m, MonadRpc m, MonadIO m) => m ()
 scenario = do
     work (for 5 sec) $
         serve 1234 [method]
-    
+ 
     res <- send ("127.0.0.1", 1234) $
         EpicRequest 14 " men on the dead man's chest"
     liftIO $ print res

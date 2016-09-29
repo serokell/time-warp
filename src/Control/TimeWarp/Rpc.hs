@@ -54,6 +54,6 @@ module Control.TimeWarp.Rpc
        , module Control.TimeWarp.Rpc.PureRpc
        ) where
 
-import           Control.TimeWarp.Rpc.MonadRpc
+import           Control.TimeWarp.Rpc.MonadRpc   hiding (proxyOf)
 import           Control.TimeWarp.Rpc.MsgPackRpc
 import           Control.TimeWarp.Rpc.PureRpc
