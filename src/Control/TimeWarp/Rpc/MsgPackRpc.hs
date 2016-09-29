@@ -34,8 +34,8 @@ import           Data.Maybe                    (fromMaybe)
 import qualified Network.MessagePack.Client    as C
 import qualified Network.MessagePack.Server    as S
 
-import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Method (..),
-                                                MonadRpc (..))
+import           Control.TimeWarp.Rpc.MonadRpc (Method (..), MonadRpc (..),
+                                                TransmitionPair (..), getMethodName)
 import           Control.TimeWarp.Timed        (MonadTimed (..), TimedIO, ThreadId,
                                                 runTimedIO)
 
@@ -60,11 +60,10 @@ instance MonadBaseControl IO MsgPackRpc where
     restoreM = MsgPackRpc . restoreM
 
 instance MonadRpc MsgPackRpc where
-    execClient (addr, port) (Client name args) = liftIO $ do
+    send (addr, port) req = liftIO $ do
         box <- newIORef Nothing
         C.execClient addr port $ do
-            -- note, underlying rpc accepts a single argument - [Object]
-            res <- C.call name args
+            res <- C.call (methodName req) req
             liftIO . writeIORef box $ Just res
         fromMaybe (error "execClient didn't return a value!")
             <$> readIORef box
@@ -72,8 +71,10 @@ instance MonadRpc MsgPackRpc where
     serve port methods = S.serve port $ convertMethod <$> methods
       where
         convertMethod :: Method MsgPackRpc -> S.Method MsgPackRpc
-        convertMethod Method{..} = S.method methodName methodBody
+        convertMethod m@(Method f) = S.method (getMethodName m) (S.ServerT . f)
 
+{-
 instance S.MethodType MsgPackRpc f => S.MethodType MsgPackRpc (MsgPackRpc f)
    where
     toBody res args = res >>= flip S.toBody args
+-}

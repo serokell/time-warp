@@ -30,25 +30,26 @@ import           Control.Exception.Base        (Exception)
 import           Control.Lens                  (both, makeLenses, to, use, (%%=),
                                                 (%~), at, (?=))
 import           Control.Monad                 (forM_, when)
-import           Control.Monad.Catch           (MonadCatch, MonadMask, MonadThrow, throwM)
+import           Control.Monad.Catch           (MonadCatch, MonadMask, MonadThrow)
 import           Control.Monad.Random          (MonadRandom (getRandomR), Rand, runRand)
 import           Control.Monad.State           (MonadState (get, put, state), StateT,
                                                 evalStateT)
 import           Control.Monad.Trans           (MonadIO, MonadTrans, lift)
 import           Data.Default                  (Default, def)
+-- import           Formatting                    (sformat, shown, (%))
 import           Data.Map                      as Map
+import           Data.Maybe                    (fromMaybe)
 import           Data.Time.Units               (fromMicroseconds, toMicroseconds)
 import           Data.Typeable                 (Typeable)
 import           System.Random                 (StdGen)
 
-import           Data.MessagePack              (Object)
 import           Data.MessagePack.Object       (MessagePack, fromObject, toObject)
 
 import           Control.TimeWarp.Logging      (WithNamedLogger)
-import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Host, Method (..),
-                                                MonadRpc (execClient, serve),
-                                                Port, RpcError (..), methodBody,
-                                                methodName, NetworkAddress)
+import           Control.TimeWarp.Rpc.MonadRpc (MonadRpc (..),
+                                                NetworkAddress, Host, Port,
+                                                Method (..), getMethodName,
+                                                TransmitionPair (..))
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..),
                                                 PureThreadId, TimedT, for,
                                                 virtualTime, runTimedT, sleepForever,
@@ -141,7 +142,7 @@ getRandomTR :: MonadRandom m => (Microsecond, Microsecond) -> m Microsecond
 getRandomTR = fmap fromMicroseconds . getRandomR . (both %~ toMicroseconds)
 
 -- | Keeps servers' methods.
-type Listeners m = Map.Map (Port, String) ([Object] -> m Object)
+type Listeners m = Map.Map (Port, String) (Method m)
 
 -- | Keeps global network information.
 data NetInfo m = NetInfo
@@ -190,43 +191,47 @@ runPureRpc _randSeed (toDelays -> _delays) rpc =
     net        = NetInfo{..}
     _listeners = Map.empty
 
-request :: (Monad m, MonadThrow m, MessagePack a)
-        => Client a
+request :: (Monad m, MonadThrow m, TransmitionPair req resp)
+        => req
         -> Listeners (PureRpc m)
         -> Port
-        -> PureRpc m a
-request (Client name args) listeners' port =
+        -> PureRpc m resp
+request req listeners' port =
     case Map.lookup (port, name) listeners' of
-        Nothing -> throwM $ ServerError $ toObject $ mconcat
+        Nothing -> error $ concat
             ["method \"", name, "\" not found at port ", show port]
-        Just f  -> do
-            res <- f args
-            case fromObject res of
-                Nothing -> throwM $ ResultTypeError "type mismatch"
-                Just r  -> return r
+        Just (Method f) -> fmap coerce . f . coerce $ req
+  where
+    name = methodName req
 
+    -- TODO: how to deceive type checker without serialization?
+    coerce :: (MessagePack a, MessagePack b) => a -> b
+    coerce = fromMaybe typeError . fromObject . toObject
+
+    typeError = error $ "Internal error. Do you have several instances of "
+                     ++ "TransmitionPair with same methodName?"
 
 instance (MonadIO m, MonadCatch m) =>
          MonadRpc (PureRpc m) where
-    execClient addr@(host, port) cli =
+    send addr@(host, port) req =
         if host /= localhost
             then
                 error "Can't emulate for host /= localhost"
             else do
                 waitDelay addr
                 ls <- PureRpc $ use listeners
-                request cli ls port
+                request req ls port
     serve port methods =
         PureRpc $
         do lift $
                forM_ methods $
-               \Method {..} -> do
-                    let methodRef = (port, methodName)
-                    defined <- use $ listeners . to (Map.member methodRef)
+               \method -> do
+                    let methodIx = (port, getMethodName method)
+                    defined <- use $ listeners . to (Map.member methodIx)
                     when defined $ return ()
                     -- TODO:
                     --    throwM $ PortAlreadyBindedError port
-                    listeners . at (port, methodName) ?= methodBody
+                    listeners . at methodIx ?= method
            sleepForever
 
 waitDelay

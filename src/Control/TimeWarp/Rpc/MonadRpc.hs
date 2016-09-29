@@ -1,10 +1,12 @@
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE StandaloneDeriving    #-}
-{-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE ViewPatterns          #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts          #-}
+{-# LANGUAGE FlexibleInstances         #-}
+{-# LANGUAGE FunctionalDependencies    #-}
+{-# LANGUAGE GADTs                     #-}
+{-# LANGUAGE MultiParamTypeClasses     #-}
+{-# LANGUAGE Rank2Types                #-}
+{-# LANGUAGE StandaloneDeriving        #-}
+{-# LANGUAGE TypeFamilies              #-}
 
 -- |
 -- Module      : Control.TimeWarp.Rpc
@@ -22,33 +24,25 @@ module Control.TimeWarp.Rpc.MonadRpc
        , Host
        , NetworkAddress
 
-       , MonadRpc (serve, execClient)
-       , RpcType()
-       , execClientTimeout
-       , Method(..)
-       , Client(..)
-       , method
-       , call
-       , S.Server
-       , S.ServerT
-       , S.MethodType
-       , C.RpcError(..)
+       , TransmitionPair (methodName)
+       , MonadRpc (..)
+       , sendTimeout
+       , Method (..)
+       , getMethodName
+
+       , scenario
        ) where
 
-import           Control.Monad.Catch        (MonadCatch (catch),
-                                             MonadThrow (throwM))
+import           Control.Monad.Catch        (MonadThrow)
 import           Control.Monad.Reader       (ReaderT (..))
-import           Control.Monad.Trans        (lift)
+import           Control.Monad.Trans        (lift, MonadIO (..))
 import           Data.ByteString            (ByteString)
 
-import           Data.MessagePack.Object    (MessagePack, Object (..), toObject)
+import           Data.MessagePack.Object    (MessagePack(..))
 import           Data.Time.Units            (TimeUnit)
 
-import qualified Network.MessagePack.Client as C
-import qualified Network.MessagePack.Server as S
-
-import           Control.TimeWarp.Logging   (WithNamedLogger, LoggerNameBox (..))
-import           Control.TimeWarp.Timed     (MonadTimed (timeout))
+import           Control.TimeWarp.Logging   (LoggerNameBox (..))
+import           Control.TimeWarp.Timed     (MonadTimed (timeout), sec, work, for)
 
 -- | Port number.
 type Port = Int
@@ -59,82 +53,82 @@ type Host = ByteString
 -- | Full node address.
 type NetworkAddress = (Host, Port)
 
+-- | Defines name and response type of RPC-method to which data of @req@ type
+-- can be delivered.
+--
+-- Implementation of `getMethodName` should _not_ operate it's argument, i.e.
+-- @getMethodName _|_ /= _|_@.
+-- TODO: create instances of this class by TH.
+class (MessagePack req, MessagePack resp) =>
+       TransmitionPair req resp | req -> resp where
+    methodName :: req -> String
 
-deriving instance (Monad m, WithNamedLogger m) => WithNamedLogger (S.ServerT m)
+    pseudoRequest :: req
+    pseudoRequest = undefined
+
+-- | Creates RPC-method.
+data Method m =
+    forall req resp . TransmitionPair req resp => Method (req -> m resp)
 
 -- | Defines protocol of RPC layer.
-class MonadThrow r => MonadRpc r where
+class MonadThrow m => MonadRpc m where
     -- | Executes remote method call.
-    execClient :: MessagePack a => NetworkAddress -> Client a -> r a
+    send :: TransmitionPair req resp =>
+            NetworkAddress -> req -> m resp
 
     -- | Starts RPC server with a set of RPC methods.
-    serve :: Port -> [Method r] -> r ()
+    serve :: Port -> [Method m] -> m ()
 
 -- | Same as `execClient`, but allows to set up timeout for a call (see
 -- `Control.TimeWarp.Timed.MonadTimed.timeout`).
-execClientTimeout
-    :: (MonadTimed m, MonadRpc m, MessagePack a, TimeUnit t)
-    => t -> NetworkAddress -> Client a -> m a
-execClientTimeout t addr = timeout t . execClient addr
+sendTimeout
+    :: (MonadTimed m, MonadRpc m, TransmitionPair req resp, TimeUnit t)
+    => t -> NetworkAddress -> req -> m resp
+sendTimeout t addr = timeout t . send addr
 
--- * Client part
+getMethodName :: Method m -> String
+getMethodName (Method f) = let req = pseudoRequest
+                               _   = f req
+                           in  methodName req
 
--- | Creates a function call. It accepts function name and arguments.
-call :: RpcType t => String -> t
-call name = rpcc name []
+-- * Instances
 
--- | Collects function name and arguments
--- (it's <https://hackage.haskell.org/package/msgpack-rpc-1.0.0/docs/Network-MessagePack-Client.html#v:call msgpack-rpc> implementation is hidden, need our own).
-class RpcType t where
-    rpcc :: String -> [Object] -> t
-
-instance (RpcType t, MessagePack p) => RpcType (p -> t) where
-    rpcc name objs p = rpcc name $ toObject p : objs
-
--- | Keeps function name and arguments.
-data Client a where
-    Client :: MessagePack a => String -> [Object] -> Client a
-
-instance MessagePack o => RpcType (Client o) where
-    rpcc name args = Client name (reverse args)
-
--- * Server part
-
--- | Keeps method definition.
-data Method m = Method
-    { methodName :: String
-    , methodBody :: [Object] -> m Object
-    }
-
--- | Creates method available for RPC-requests.
---   It accepts method name (which would be refered by clients)
---   and it's body.
-method :: S.MethodType m f => String -> f -> Method m
-method name f = Method
-    { methodName = name
-    , methodBody = S.toBody f
-    }
-
-instance Monad m => S.MethodType m Object where
-    toBody res [] = return res
-    toBody _   _  = error "Too many arguments!"
-
-instance MonadThrow m => MonadThrow (S.ServerT m) where
-    throwM = lift . throwM
-
-instance MonadCatch m =>
-         MonadCatch (S.ServerT m) where
-    catch (S.ServerT action) handler =
-        S.ServerT $ action `catch` (S.runServerT . handler)
 
 instance MonadRpc m => MonadRpc (ReaderT r m) where
-    execClient addr cli = lift $ execClient addr cli
+    send addr req = lift $ send addr req
 
     serve port methods = ReaderT $
                             \r -> serve port (convert r <$> methods)
       where
         convert :: Monad m => r -> Method (ReaderT r m) -> Method m
-        convert r Method {..} =
-            Method methodName (flip runReaderT r . methodBody)
+        convert r (Method f) = Method $ flip runReaderT r . f
 
 deriving instance MonadRpc m => MonadRpc (LoggerNameBox m)
+
+-- * Example (temporal)
+
+data EpicRequest = EpicRequest
+    { num :: Int
+    , msg :: String
+    }
+
+instance MessagePack EpicRequest where
+    toObject (EpicRequest a1 a2) = toObject (a1, a2)
+    fromObject o = do (a1, a2) <- fromObject o
+                      return $ EpicRequest a1 a2
+
+instance TransmitionPair EpicRequest [Char] where
+    methodName = const "EpicRequest"
+
+scenario :: (MonadTimed m, MonadRpc m, MonadIO m) => m ()
+scenario = do
+    work (for 5 sec) $
+        serve 1234 [method]
+    
+    res <- send ("127.0.0.1", 1234) $
+        EpicRequest 14 " men on the dead man's chest"
+    liftIO $ print res
+  where
+    method = Method $ \EpicRequest{..} -> do
+        liftIO $ putStrLn "Got request, answering"
+        return $ show (num + 1) ++ msg

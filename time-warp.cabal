@@ -21,7 +21,6 @@ library
                      , Control.TimeWarp.Rpc.MonadRpc
                      , Control.TimeWarp.Rpc.MsgPackRpc
                      , Control.TimeWarp.Rpc.PureRpc
-                     , Control.TimeWarp.Rpc.Restriction
 
                      , Control.TimeWarp.Timed
                      , Control.TimeWarp.Timed.MonadTimed
@@ -105,7 +104,7 @@ test-suite time-warp-test
                      , GeneralizedNewtypeDeriving
 
 executable token-ring
-  main-is:             Main.hs
+  main-is:             PseudoMain.hs
   build-depends:       async >= 2.0.1
                      , base >=4.8 && <4.9
                      , data-default
