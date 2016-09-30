@@ -10,7 +10,7 @@ packages:
   extra-dep: true
 - location:
     git: https://github.com/serokell/msgpack-haskell.git
-    commit: c84c868a37446ee0671b3c641a6155af142e6d78
+    commit: 7acaea490a9774edd647e1c6dd7c91ba49cb4503
   extra-dep: true
   subdirs:
     - msgpack

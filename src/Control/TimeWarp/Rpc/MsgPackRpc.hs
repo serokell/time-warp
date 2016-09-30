@@ -23,9 +23,11 @@ module Control.TimeWarp.Rpc.MsgPackRpc
        ) where
 
 import qualified Control.Concurrent                as C
+import           Control.Exception                 (Exception)
 import           Control.Monad.Base                (MonadBase)
 import           Control.Monad.Catch               (MonadCatch, MonadMask,
-                                                    MonadThrow (..), handle)
+                                                    MonadThrow (..), handleAll,
+                                                    catches, Handler (..))
 import           Control.Monad.Trans               (MonadIO (..))
 import           Control.Monad.Trans.Control       (MonadBaseControl, StM,
                                                     liftBaseWith, restoreM)
@@ -42,7 +44,8 @@ import qualified Network.MessagePack.Server        as S
 
 import           Control.TimeWarp.Rpc.MonadRpc     (Method (..), MonadRpc (..),
                                                     TransmissionPair (..), getMethodName,
-                                                    proxyOf, RpcError (..))
+                                                    proxyOf, RpcError (..), MethodTry (..),
+                                                    mkMethodTry)
 import           Control.TimeWarp.Timed            (MonadTimed (..), TimedIO, ThreadId,
                                                     runTimedIO)
 
@@ -57,6 +60,9 @@ newtype MsgPackRpc a = MsgPackRpc
 runMsgPackRpc :: MsgPackRpc a -> IO a
 runMsgPackRpc = runTimedIO . unwrapMsgPackRpc
 
+-- message about unexpected error (expected error | result)
+type ResponseData e r = Either T.Text (Either e r)
+
 instance MonadRpc MsgPackRpc where
     send (addr, port) req = liftIO $ do
         box <- newIORef Nothing
@@ -64,20 +70,28 @@ instance MonadRpc MsgPackRpc where
             res <- C.call name req
             liftIO . writeIORef box $ Just res
         maybeRes <- readIORef box
-        maybe
-            (throwM $ InternalError "execClient didn't return a value")
-            return
-            maybeRes
+        (unwrapResponseData req =<<) $
+            maybe
+                (throwM $ InternalError "execClient didn't return a value")
+                return
+                maybeRes
       where
         name = methodName $ proxyOf req
 
+        unwrapResponseData :: (MonadThrow m, TransmissionPair req resp err)
+                           => req -> ResponseData err resp -> m resp
+        unwrapResponseData _ (Left msg)        = throwM $ InternalError msg
+        unwrapResponseData _ (Right (Left e))  = throwM $ ServerError e
+        unwrapResponseData _ (Right (Right r)) = return r
+
         handleExc :: IO a -> IO a
-        handleExc = handle connRefusedH
-                  . handle rpcErrorH
-                  . handle noSuchMethodH
+        handleExc = flip catches [ Handler connRefusedH
+                                 , Handler rpcErrorH
+                                 , Handler noSuchMethodH
+                                 ]
 
         connRefusedH e@IOError{..} =
-            if ioe_errno == Just 111  -- connection refused
+            if ioe_errno == Just 111
             then throwM $ NetworkProblem "Connection refused"
             else throwM e
 
@@ -102,7 +116,16 @@ instance MonadRpc MsgPackRpc where
     serve port methods = S.serve port $ convertMethod <$> methods
       where
         convertMethod :: Method MsgPackRpc -> S.Method MsgPackRpc
-        convertMethod m@(Method f) = S.method (getMethodName m) (S.ServerT . f)
+        convertMethod m =
+            case mkMethodTry m of
+                MethodTry f -> S.method (getMethodName m) $
+                    S.ServerT . handleAny . fmap Right . f
+
+        handleAny :: (MonadCatch m, Exception err)
+                  => m (ResponseData err resp) -> m (ResponseData err resp)
+        handleAny = handleAll $ return . Left .
+                    sformat ("Got unexpected exception in server's method: " % shown)
+        
 
 -- * Instances
 
