@@ -4,6 +4,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies          #-}
 
+{-# LANGUAGE ScopedTypeVariables   #-}
+
 -- |
 -- Module      : Control.TimeWarp.Rpc.MsgPackRpc
 -- Copyright   : (c) Serokell, 2016
@@ -20,25 +22,29 @@ module Control.TimeWarp.Rpc.MsgPackRpc
        , runMsgPackRpc
        ) where
 
-import qualified Control.Concurrent            as C
-import           Control.Monad.Base            (MonadBase)
-import           Control.Monad.Catch           (MonadCatch, MonadMask,
-                                                MonadThrow)
-import           Control.Monad.Trans           (MonadIO (..))
-import           Control.Monad.Trans.Control   (MonadBaseControl, StM,
-                                                liftBaseWith, restoreM)
+import qualified Control.Concurrent                as C
+import           Control.Monad.Base                (MonadBase)
+import           Control.Monad.Catch               (MonadCatch, MonadMask,
+                                                    MonadThrow (..), handle)
+import           Control.Monad.Trans               (MonadIO (..))
+import           Control.Monad.Trans.Control       (MonadBaseControl, StM,
+                                                    liftBaseWith, restoreM)
+import           Data.IORef                        (newIORef, readIORef, writeIORef)
+import           Data.List                         (isPrefixOf)
+import qualified Data.Text                         as T
+import           GHC.IO.Exception                  (IOException (IOError), ioe_errno)
+import           Formatting                        (sformat, shown, (%))
 
-import           Data.IORef                    (newIORef, readIORef, writeIORef)
-import           Data.Maybe                    (fromMaybe)
+import           Data.Conduit.Serialization.Binary (ParseError)
+import           Data.MessagePack.Object           (fromObject)
+import qualified Network.MessagePack.Client        as C
+import qualified Network.MessagePack.Server        as S
 
-import qualified Network.MessagePack.Client    as C
-import qualified Network.MessagePack.Server    as S
-
-import           Control.TimeWarp.Rpc.MonadRpc (Method (..), MonadRpc (..),
-                                                TransmissionPair (..), getMethodName,
-                                                proxyOf)
-import           Control.TimeWarp.Timed        (MonadTimed (..), TimedIO, ThreadId,
-                                                runTimedIO)
+import           Control.TimeWarp.Rpc.MonadRpc     (Method (..), MonadRpc (..),
+                                                    TransmissionPair (..), getMethodName,
+                                                    proxyOf, RpcError (..))
+import           Control.TimeWarp.Timed            (MonadTimed (..), TimedIO, ThreadId,
+                                                    runTimedIO)
 
 -- | Wrapper over `Control.TimeWarp.Timed.TimedIO`, which implements `MonadRpc`
 -- using <https://hackage.haskell.org/package/msgpack-rpc-1.0.0 msgpack-rpc>.
@@ -51,6 +57,55 @@ newtype MsgPackRpc a = MsgPackRpc
 runMsgPackRpc :: MsgPackRpc a -> IO a
 runMsgPackRpc = runTimedIO . unwrapMsgPackRpc
 
+instance MonadRpc MsgPackRpc where
+    send (addr, port) req = liftIO $ do
+        box <- newIORef Nothing
+        handleExc $ C.execClient addr port $ do
+            res <- C.call name req
+            liftIO . writeIORef box $ Just res
+        maybeRes <- readIORef box
+        maybe
+            (throwM $ InternalError "execClient didn't return a value")
+            return
+            maybeRes
+      where
+        name = methodName $ proxyOf req
+
+        handleExc :: IO a -> IO a
+        handleExc = handle connRefusedH
+                  . handle rpcErrorH
+                  . handle noSuchMethodH
+
+        connRefusedH e@IOError{..} =
+            if ioe_errno == Just 111  -- connection refused
+            then throwM $ NetworkProblem "Connection refused"
+            else throwM e
+
+        rpcErrorH :: MonadThrow m => C.RpcError -> m a
+        rpcErrorH (C.ResultTypeError  s) = throwM $ InternalError $ T.pack s
+        rpcErrorH (C.ProtocolError    s) = throwM $ InternalError $ T.pack s
+        rpcErrorH (C.ServerError errObj) = do
+            case fromObject errObj of
+                Nothing  -> throwM $ InternalError "Failed to deserialize error msg"
+                Just err -> if "method" `isPrefixOf` err
+                                then throwM $ NetworkProblem noSuchMethodMsg
+                                else throwM $ InternalError $ T.pack err
+
+        -- when server has no needed method, somehow it ends with `ParseException`,
+        -- not `C.ServerError`
+        noSuchMethodH :: MonadThrow m => ParseError -> m a
+        noSuchMethodH _ = throwM $ NetworkProblem noSuchMethodMsg
+
+        noSuchMethodMsg = sformat ("No method " % shown % " found at port " % shown)
+                              name port
+
+    serve port methods = S.serve port $ convertMethod <$> methods
+      where
+        convertMethod :: Method MsgPackRpc -> S.Method MsgPackRpc
+        convertMethod m@(Method f) = S.method (getMethodName m) (S.ServerT . f)
+
+-- * Instances
+
 type instance ThreadId MsgPackRpc = C.ThreadId
 
 instance MonadBaseControl IO MsgPackRpc where
@@ -59,23 +114,3 @@ instance MonadBaseControl IO MsgPackRpc where
     liftBaseWith f = MsgPackRpc $ liftBaseWith $ \g -> f $ g . unwrapMsgPackRpc
 
     restoreM = MsgPackRpc . restoreM
-
-instance MonadRpc MsgPackRpc where
-    send (addr, port) req = liftIO $ do
-        box <- newIORef Nothing
-        C.execClient addr port $ do
-            res <- C.call (methodName $ proxyOf req) req
-            liftIO . writeIORef box $ Just res
-        fromMaybe (error "execClient didn't return a value!")
-            <$> readIORef box
-
-    serve port methods = S.serve port $ convertMethod <$> methods
-      where
-        convertMethod :: Method MsgPackRpc -> S.Method MsgPackRpc
-        convertMethod m@(Method f) = S.method (getMethodName m) (S.ServerT . f)
-
-{-
-instance S.MethodType MsgPackRpc f => S.MethodType MsgPackRpc (MsgPackRpc f)
-   where
-    toBody res args = res >>= flip S.toBody args
--}

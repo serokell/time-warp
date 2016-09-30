@@ -26,21 +26,18 @@ module Control.TimeWarp.Rpc.PureRpc
        , getRandomTR
        ) where
 
-import           Control.Exception.Base        (Exception)
 import           Control.Lens                  (both, makeLenses, to, use, (%%=),
                                                 (%~), at, (?=))
 import           Control.Monad                 (forM_, when)
-import           Control.Monad.Catch           (MonadCatch, MonadMask, MonadThrow)
+import           Control.Monad.Catch           (MonadCatch, MonadMask, MonadThrow (..))
 import           Control.Monad.Random          (MonadRandom (getRandomR), Rand, runRand)
 import           Control.Monad.State           (MonadState (get, put, state), StateT,
                                                 evalStateT)
 import           Control.Monad.Trans           (MonadIO, MonadTrans, lift)
 import           Data.Default                  (Default, def)
--- import           Formatting                    (sformat, shown, (%))
+import           Formatting                    (sformat, (%), shown)
 import           Data.Map                      as Map
-import           Data.Maybe                    (fromMaybe)
 import           Data.Time.Units               (fromMicroseconds, toMicroseconds)
-import           Data.Typeable                 (Typeable)
 import           System.Random                 (StdGen)
 
 import           Data.MessagePack.Object       (MessagePack, fromObject, toObject)
@@ -49,7 +46,7 @@ import           Control.TimeWarp.Logging      (WithNamedLogger)
 import           Control.TimeWarp.Rpc.MonadRpc (MonadRpc (..), proxyOf,
                                                 NetworkAddress, Host, Port,
                                                 Method (..), getMethodName,
-                                                TransmissionPair (..))
+                                                TransmissionPair (..), RpcError (..))
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..),
                                                 PureThreadId, TimedT, for,
                                                 virtualTime, runTimedT, sleepForever,
@@ -184,8 +181,8 @@ instance MonadState s m => MonadState s (PureRpc m) where
 -- | Launches distributed scenario, emulating work of network.
 runPureRpc
     :: (MonadIO m, MonadCatch m, DelaysSpecifier delays)
-    => StdGen -> delays -> PureRpc m a -> m a
-runPureRpc _randSeed (toDelays -> _delays) rpc =
+    => delays -> StdGen -> PureRpc m a -> m a
+runPureRpc (toDelays -> _delays) _randSeed rpc =
     evalStateT (runTimedT $ unwrapPureRpc rpc) net
   where
     net        = NetInfo{..}
@@ -198,18 +195,21 @@ request :: (Monad m, MonadThrow m, TransmissionPair req resp)
         -> PureRpc m resp
 request req listeners' port =
     case Map.lookup (port, name) listeners' of
-        Nothing -> error $ concat
-            ["method \"", name, "\" not found at port ", show port]
-        Just (Method f) -> fmap coerce . f . coerce $ req
+        Nothing -> throwM $ NetworkProblem $
+            sformat ("Method " % shown % " not found at port " % shown)
+            name port
+        Just (Method f) -> coerce =<< f =<< coerce req
   where
     name = methodName $ proxyOf req
 
     -- TODO: how to deceive type checker without serialization?
-    coerce :: (MessagePack a, MessagePack b) => a -> b
-    coerce = fromMaybe typeError . fromObject . toObject
+    coerce :: (MessagePack a, MessagePack b, MonadThrow m) => a -> m b
+    coerce = maybe typeError return . fromObject . toObject
 
-    typeError = error $ "Internal error. Do you have several instances of "
-                     ++ "TransmissionPair with same methodName?"
+    typeError :: MonadThrow m => m a
+    typeError = throwM $ InternalError $ sformat $
+        "Internal error. Do you have several instances of " %
+        "TransmissionPair with same methodName?"
 
 instance (MonadIO m, MonadCatch m) =>
          MonadRpc (PureRpc m) where
@@ -228,11 +228,16 @@ instance (MonadIO m, MonadCatch m) =>
                \method -> do
                     let methodIx = (port, getMethodName method)
                     defined <- use $ listeners . to (Map.member methodIx)
-                    when defined $ return ()
-                    -- TODO:
-                    --    throwM $ PortAlreadyBindedError port
+                    when defined alreadyBindedError
                     listeners . at methodIx ?= method
            sleepForever
+      where
+        alreadyBindedError = error $ concat
+            ["Can't launch server, port "
+            , show port
+            , " is already bisy"
+            ]
+
 
 waitDelay
     :: (MonadThrow m, MonadIO m, MonadCatch m)
@@ -245,8 +250,3 @@ waitDelay addr =
        case delay of
            ConnectedIn connDelay -> wait (for connDelay)
            NeverConnected        -> sleepForever
-
-data PortAlreadyBindedError = PortAlreadyBindedError Port
-    deriving (Show, Typeable)
-
-instance Exception PortAlreadyBindedError

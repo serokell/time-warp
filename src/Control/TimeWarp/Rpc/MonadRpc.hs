@@ -23,6 +23,7 @@ module Control.TimeWarp.Rpc.MonadRpc
        ( Port
        , Host
        , NetworkAddress
+       , localhost
 
        , TransmissionPair (methodName)
        , MonadRpc (..)
@@ -30,27 +31,32 @@ module Control.TimeWarp.Rpc.MonadRpc
        , Method (..)
        , getMethodName
        , proxyOf
-
-       , scenario
+       , RpcError (..)
        ) where
 
-import           Control.Monad.Catch        (MonadThrow)
+import           Control.Exception          (Exception)
+import           Control.Monad.Catch        (MonadThrow (..))
 import           Control.Monad.Reader       (ReaderT (..))
-import           Control.Monad.Trans        (lift, MonadIO (..))
+import           Control.Monad.Trans        (lift)
 import           Data.ByteString            (ByteString)
 import           Data.Proxy                 (Proxy (..), asProxyTypeOf)
+import           Data.Text                  (Text)
 
 import           Data.MessagePack.Object    (MessagePack(..))
 import           Data.Time.Units            (TimeUnit)
 
 import           Control.TimeWarp.Logging   (LoggerNameBox (..))
-import           Control.TimeWarp.Timed     (MonadTimed (timeout), sec, work, for)
+import           Control.TimeWarp.Timed     (MonadTimed (timeout))
+
 
 -- | Port number.
 type Port = Int
 
 -- | Host address.
 type Host = ByteString
+
+localhost :: Host
+localhost = "127.0.0.1"
 
 -- | Full node address.
 type NetworkAddress = (Host, Port)
@@ -109,30 +115,16 @@ instance MonadRpc m => MonadRpc (ReaderT r m) where
 
 deriving instance MonadRpc m => MonadRpc (LoggerNameBox m)
 
--- * Example (temporal)
+-- * Exceptions
 
-data EpicRequest = EpicRequest
-    { num :: Int
-    , msg :: String
-    }
+data RpcError = -- | Can't find remote method on server's side die to
+                -- network problems or lack of such service
+                NetworkProblem Text
+                -- | Error in RPC protocol with description
+              | InternalError Text
+                -- | Error thrown by server's method
+              | ServerError
+    deriving Show
 
-instance MessagePack EpicRequest where
-    toObject (EpicRequest a1 a2) = toObject (a1, a2)
-    fromObject o = do (a1, a2) <- fromObject o
-                      return $ EpicRequest a1 a2
+instance Exception RpcError
 
-instance TransmissionPair EpicRequest [Char] where
-    methodName = const "EpicRequest"
-
-scenario :: (MonadTimed m, MonadRpc m, MonadIO m) => m ()
-scenario = do
-    work (for 5 sec) $
-        serve 1234 [method]
- 
-    res <- send ("127.0.0.1", 1234) $
-        EpicRequest 14 " men on the dead man's chest"
-    liftIO $ print res
-  where
-    method = Method $ \EpicRequest{..} -> do
-        liftIO $ putStrLn "Got request, answering"
-        return $ show (num + 1) ++ msg
