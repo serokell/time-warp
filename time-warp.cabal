@@ -29,6 +29,7 @@ library
                      , Control.TimeWarp.Timed.TimedT
   build-depends:       ansi-terminal
                      , base == 4.*
+                     , binary-conduit >= 1.2.4.1
                      , bytestring >= 0.10.6.0
                      , containers
                      , data-default
@@ -78,7 +79,7 @@ test-suite time-warp-test
                      , Spec
   type:                exitcode-stdio-1.0
   build-depends:       async >= 2.0.1
-                     , base
+                     , base == 4.*
                      , data-default
                      , exceptions >= 0.8.2.1
                      , hspec >= 2.1.10
@@ -106,7 +107,7 @@ test-suite time-warp-test
 executable token-ring
   main-is:             PseudoMain.hs
   build-depends:       async >= 2.0.1
-                     , base
+                     , base == 4.*
                      , data-default
                      , exceptions >= 0.8.2.1
                      , formatting
