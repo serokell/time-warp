@@ -76,6 +76,7 @@ class (MessagePack req, MessagePack resp, MessagePack err, Exception err) =>
 data Method m =
     forall req resp err . TransmissionPair req resp err => Method (req -> m resp)
 
+-- | Creates RPC-method, which catches exception of `err` type.
 data MethodTry m =
     forall req resp err . TransmissionPair req resp err
                        => MethodTry (req -> m (Either err resp))
@@ -86,8 +87,8 @@ mkMethodTry (Method f) = MethodTry $ try . f
 -- | Defines protocol of RPC layer.
 class MonadThrow m => MonadRpc m where
     -- | Executes remote method call.
-    send :: TransmissionPair req resp err =>
-            NetworkAddress -> req -> m resp
+    send :: TransmissionPair req resp err
+         => NetworkAddress -> req -> m resp
 
     -- | Starts RPC server with a set of RPC methods.
     serve :: Port -> [Method m] -> m ()
@@ -129,7 +130,8 @@ deriving instance MonadRpc m => MonadRpc (LoggerNameBox m)
 data RpcError = -- | Can't find remote method on server's side die to
                 -- network problems or lack of such service
                 NetworkProblem Text
-                -- | Error in RPC protocol with description
+                -- | Error in RPC protocol with description, or server
+                -- threw unserializable error
               | InternalError Text
                 -- | Error thrown by server's method
               | forall e . (MessagePack e, Exception e) => ServerError e

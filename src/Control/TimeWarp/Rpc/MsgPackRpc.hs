@@ -60,7 +60,8 @@ newtype MsgPackRpc a = MsgPackRpc
 runMsgPackRpc :: MsgPackRpc a -> IO a
 runMsgPackRpc = runTimedIO . unwrapMsgPackRpc
 
--- message about unexpected error (expected error | result)
+-- Data which server sends to client.
+-- message about unexpected error | (expected error | result)
 type ResponseData e r = Either T.Text (Either e r)
 
 instance MonadRpc MsgPackRpc where
@@ -98,12 +99,12 @@ instance MonadRpc MsgPackRpc where
         rpcErrorH :: MonadThrow m => C.RpcError -> m a
         rpcErrorH (C.ResultTypeError  s) = throwM $ InternalError $ T.pack s
         rpcErrorH (C.ProtocolError    s) = throwM $ InternalError $ T.pack s
-        rpcErrorH (C.ServerError errObj) = do
+        rpcErrorH (C.ServerError errObj) =
             case fromObject errObj of
                 Nothing  -> throwM $ InternalError "Failed to deserialize error msg"
                 Just err -> if "method" `isPrefixOf` err
-                                then throwM $ NetworkProblem noSuchMethodMsg
-                                else throwM $ InternalError $ T.pack err
+                            then throwM $ NetworkProblem noSuchMethodMsg
+                            else throwM $ InternalError $ T.pack err
 
         -- when server has no needed method, somehow it ends with `ParseException`,
         -- not `C.ServerError`
