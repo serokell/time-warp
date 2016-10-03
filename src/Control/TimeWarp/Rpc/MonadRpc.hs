@@ -41,10 +41,12 @@ import           Control.Monad.Catch        (MonadThrow (..), MonadCatch, try)
 import           Control.Monad.Reader       (ReaderT (..))
 import           Control.Monad.Trans        (lift)
 import           Data.ByteString            (ByteString)
+import           Data.Monoid                ((<>))
 import           Data.Proxy                 (Proxy (..), asProxyTypeOf)
 import           Data.Text                  (Text)
+import           Data.Text.Buildable        (Buildable (..))
 
-import           Data.MessagePack.Object    (MessagePack(..))
+import           Data.MessagePack.Object    (MessagePack (..))
 import           Data.Time.Units            (TimeUnit)
 
 import           Control.TimeWarp.Logging   (LoggerNameBox (..))
@@ -136,10 +138,13 @@ data RpcError = -- | Can't find remote method on server's side die to
                 -- | Error thrown by server's method
               | forall e . (MessagePack e, Exception e) => ServerError e
 
+instance Buildable RpcError where
+    build (NetworkProblem msg) = "Network problem: " <> build msg
+    build (InternalError msg)  = "Internal error: " <> build msg
+    build (ServerError e)    = "Server reports error: " <> build (show e)
+
 instance Show RpcError where
-    show (NetworkProblem msg) = "Network problem: " ++ show msg
-    show (InternalError msg)  = "Internal error: " ++ show msg
-    show (ServerError msg)    = "Server reports error: " ++ show msg
+    show = show . build
 
 instance Exception RpcError
 
