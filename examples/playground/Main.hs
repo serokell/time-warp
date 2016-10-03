@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies          #-}
@@ -14,7 +16,8 @@ import          Control.Exception           (Exception)
 import          Control.Monad.Catch         (MonadCatch, throwM)
 import          Control.Monad.Random        (newStdGen)
 import          Control.Monad.Trans         (MonadIO (..))
-import          Data.MessagePack.Object     (MessagePack (..))
+import          Data.MessagePack.Object     (MessagePack)
+import          GHC.Generics                (Generic)
 
 import          Control.TimeWarp.Timed      (MonadTimed (wait), sec, ms, sec', work,
                                              interval, for, Microsecond)
@@ -39,21 +42,12 @@ runEmulation scenario = do
 data EpicRequest = EpicRequest
     { num :: Int
     , msg :: String
-    }
+    } deriving (Generic, MessagePack)
 
 data EpicException = EpicException String
-    deriving Show
+    deriving (Show, Generic, MessagePack)
 
 instance Exception EpicException
-
-instance MessagePack EpicException where
-    toObject (EpicException s) = toObject s
-    fromObject = fmap EpicException . fromObject
-
-instance MessagePack EpicRequest where
-    toObject (EpicRequest a1 a2) = toObject (a1, a2)
-    fromObject o = do (a1, a2) <- fromObject o
-                      return $ EpicRequest a1 a2
 
 instance RpcRequest EpicRequest where
     type Response EpicRequest = String
@@ -67,7 +61,7 @@ myScenario = do
     work (for 5 sec) $
         serve 1234 [method]
 
-    wait (for 5 ms)
+    wait (for 100 ms)
     res <- send ("127.0.0.1", 1234) $
         EpicRequest 14 " men on the dead man's chest"
 
