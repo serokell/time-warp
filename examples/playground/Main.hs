@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeFamilies          #-}
 
 module Main
     ( main
@@ -19,7 +20,7 @@ import          Control.TimeWarp.Timed      (MonadTimed (wait), sec, ms, sec', w
                                              interval, for, Microsecond)
 import          Control.TimeWarp.Rpc        (MonadRpc (..), MsgPackRpc, PureRpc,
                                              runMsgPackRpc, runPureRpc,
-                                             TransmissionPair (..), Method (..))
+                                             RpcRequest (..), Method (..))
 
 main :: IO ()
 main = return ()  -- use ghci
@@ -54,7 +55,11 @@ instance MessagePack EpicRequest where
     fromObject o = do (a1, a2) <- fromObject o
                       return $ EpicRequest a1 a2
 
-instance TransmissionPair EpicRequest [Char] EpicException where
+instance RpcRequest EpicRequest where
+    type Response EpicRequest = String
+
+    type ExpectedError EpicRequest = EpicException    
+
     methodName = const "EpicRequest"
 
 myScenario :: (MonadTimed m, MonadRpc m, MonadIO m, MonadCatch m) => m ()

@@ -23,7 +23,6 @@ module Control.TimeWarp.Rpc.MsgPackRpc
        ) where
 
 import qualified Control.Concurrent                as C
-import           Control.Exception                 (Exception)
 import           Control.Monad.Base                (MonadBase)
 import           Control.Monad.Catch               (MonadCatch, MonadMask,
                                                     MonadThrow (..), handleAll,
@@ -43,7 +42,7 @@ import qualified Network.MessagePack.Client        as C
 import qualified Network.MessagePack.Server        as S
 
 import           Control.TimeWarp.Rpc.MonadRpc     (Method (..), MonadRpc (..),
-                                                    TransmissionPair (..), getMethodName,
+                                                    RpcRequest (..), getMethodName,
                                                     proxyOf, RpcError (..), MethodTry (..),
                                                     mkMethodTry)
 import           Control.TimeWarp.Timed            (MonadTimed (..), TimedIO, ThreadId,
@@ -62,7 +61,7 @@ runMsgPackRpc = runTimedIO . unwrapMsgPackRpc
 
 -- Data which server sends to client.
 -- message about unexpected error | (expected error | result)
-type ResponseData e r = Either T.Text (Either e r)
+type ResponseData r = Either T.Text (Either (ExpectedError r) (Response r))
 
 instance MonadRpc MsgPackRpc where
     send (addr, port) req = liftIO $ do
@@ -79,8 +78,8 @@ instance MonadRpc MsgPackRpc where
       where
         name = methodName $ proxyOf req
 
-        unwrapResponseData :: (MonadThrow m, TransmissionPair req resp err)
-                           => req -> ResponseData err resp -> m resp
+        unwrapResponseData :: (MonadThrow m, RpcRequest r)
+                           => r -> ResponseData r -> m (Response r)
         unwrapResponseData _ (Left msg)        = throwM $ InternalError msg
         unwrapResponseData _ (Right (Left e))  = throwM $ ServerError e
         unwrapResponseData _ (Right (Right r)) = return r
@@ -122,8 +121,6 @@ instance MonadRpc MsgPackRpc where
                 MethodTry f -> S.method (getMethodName m) $
                     S.ServerT . handleAny . fmap Right . f
 
-        handleAny :: (MonadCatch m, Exception err)
-                  => m (ResponseData err resp) -> m (ResponseData err resp)
         handleAny = handleAll $ return . Left .
                     sformat ("Got unexpected exception in server's method: " % shown)
         

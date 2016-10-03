@@ -1,7 +1,6 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
-{-# LANGUAGE FunctionalDependencies    #-}
 {-# LANGUAGE GADTs                     #-}
 {-# LANGUAGE MultiParamTypeClasses     #-}
 {-# LANGUAGE Rank2Types                #-}
@@ -25,7 +24,7 @@ module Control.TimeWarp.Rpc.MonadRpc
        , NetworkAddress
        , localhost
 
-       , TransmissionPair (methodName)
+       , RpcRequest (..)
        , MonadRpc (..)
        , sendTimeout
        , Method (..)
@@ -65,23 +64,30 @@ localhost = "127.0.0.1"
 -- | Full node address.
 type NetworkAddress = (Host, Port)
 
--- | Defines name and response type of RPC-method to which data of @req@ type
--- can be delivered.
+-- | Defines name, response and expected error types of RPC-method to which data
+-- of @req@ type can be delivered.
+-- Expected error is the one which remote method can catch and send to client;
+-- any other error in remote method raises `InternalError` at client side.
 --
 -- TODO: create instances of this class by TH.
-class (MessagePack req, MessagePack resp, MessagePack err, Exception err) =>
-       TransmissionPair req resp err | req -> resp, req -> err where
-    methodName :: Proxy req -> String
+class (MessagePack r, MessagePack (Response r),
+       MessagePack (ExpectedError r), Exception (ExpectedError r)) =>
+       RpcRequest r where
+    type Response r :: *
+
+    type ExpectedError r :: *
+
+    methodName :: Proxy r -> String
 
 
 -- | Creates RPC-method.
 data Method m =
-    forall req resp err . TransmissionPair req resp err => Method (req -> m resp)
+    forall r . RpcRequest r => Method (r -> m (Response r))
 
 -- | Creates RPC-method, which catches exception of `err` type.
 data MethodTry m =
-    forall req resp err . TransmissionPair req resp err
-                       => MethodTry (req -> m (Either err resp))
+    forall r . RpcRequest r =>
+    MethodTry (r -> m (Either (ExpectedError r) (Response r)))
 
 mkMethodTry :: MonadCatch m => Method m -> MethodTry m
 mkMethodTry (Method f) = MethodTry $ try . f
@@ -89,8 +95,8 @@ mkMethodTry (Method f) = MethodTry $ try . f
 -- | Defines protocol of RPC layer.
 class MonadThrow m => MonadRpc m where
     -- | Executes remote method call.
-    send :: TransmissionPair req resp err
-         => NetworkAddress -> req -> m resp
+    send :: RpcRequest r
+         => NetworkAddress -> r -> m (Response r)
 
     -- | Starts RPC server with a set of RPC methods.
     serve :: Port -> [Method m] -> m ()
@@ -98,8 +104,8 @@ class MonadThrow m => MonadRpc m where
 -- | Same as `execClient`, but allows to set up timeout for a call (see
 -- `Control.TimeWarp.Timed.MonadTimed.timeout`).
 sendTimeout
-    :: (MonadTimed m, MonadRpc m, TransmissionPair req resp err, TimeUnit t)
-    => t -> NetworkAddress -> req -> m resp
+    :: (MonadTimed m, MonadRpc m, RpcRequest r, TimeUnit t)
+    => t -> NetworkAddress -> r -> m (Response r)
 sendTimeout t addr = timeout t . send addr
 
 getMethodName :: Method m -> String
@@ -108,7 +114,7 @@ getMethodName (Method f) = let rp = requestProxy
                                _ = f $ undefined `asProxyTypeOf` rp
                            in  methodName rp
   where
-    requestProxy :: TransmissionPair req resp err => Proxy req
+    requestProxy :: RpcRequest r => Proxy r
     requestProxy = Proxy
 
 proxyOf :: a -> Proxy a
@@ -129,6 +135,7 @@ deriving instance MonadRpc m => MonadRpc (LoggerNameBox m)
 
 -- * Exceptions
 
+-- | Exception which can be thrown on `send` call.
 data RpcError = -- | Can't find remote method on server's side die to
                 -- network problems or lack of such service
                 NetworkProblem Text
@@ -147,4 +154,3 @@ instance Show RpcError where
     show = show . build
 
 instance Exception RpcError
-
