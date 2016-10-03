@@ -123,7 +123,7 @@ instance MonadRpc MsgPackRpc where
 
         handleAny = handleAll $ return . Left .
                     sformat ("Got unexpected exception in server's method: " % shown)
-        
+
 
 -- * Instances
 
