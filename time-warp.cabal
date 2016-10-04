@@ -21,6 +21,7 @@ library
                      , Control.TimeWarp.Rpc.MonadRpc
                      , Control.TimeWarp.Rpc.MsgPackRpc
                      , Control.TimeWarp.Rpc.PureRpc
+                     , Control.TimeWarp.Rpc.TH
 
                      , Control.TimeWarp.Timed
                      , Control.TimeWarp.Timed.MonadTimed

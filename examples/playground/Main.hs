@@ -2,11 +2,12 @@
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeFamilies          #-}
 
 module Main
     ( main
-    , myScenario
+    , yohohoScenario
     , runEmulation
     , runReal
     ) where
@@ -23,7 +24,7 @@ import          Control.TimeWarp.Timed      (MonadTimed (wait), sec, ms, sec', w
                                              interval, for, Microsecond)
 import          Control.TimeWarp.Rpc        (MonadRpc (..), MsgPackRpc, PureRpc,
                                              runMsgPackRpc, runPureRpc,
-                                             RpcRequest (..), Method (..))
+                                             Method (..), mkRequest)
 
 main :: IO ()
 main = return ()  -- use ghci
@@ -39,6 +40,8 @@ runEmulation scenario = do
     delays :: Microsecond
     delays = interval 50 ms
 
+-- * data types
+
 data EpicRequest = EpicRequest
     { num :: Int
     , msg :: String
@@ -49,15 +52,12 @@ data EpicException = EpicException String
 
 instance Exception EpicException
 
-instance RpcRequest EpicRequest where
-    type Response EpicRequest = String
+$(mkRequest ''EpicRequest ''String ''EpicException)
 
-    type ExpectedError EpicRequest = EpicException    
+-- * scenarios
 
-    methodName = const "EpicRequest"
-
-myScenario :: (MonadTimed m, MonadRpc m, MonadIO m, MonadCatch m) => m ()
-myScenario = do
+yohohoScenario :: (MonadTimed m, MonadRpc m, MonadIO m, MonadCatch m) => m ()
+yohohoScenario = do
     work (for 5 sec) $
         serve 1234 [method]
 
