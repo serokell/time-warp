@@ -320,7 +320,7 @@ type instance ThreadId (TimedT m) = PureThreadId
 instance (MonadIO m, MonadThrow m, MonadCatch m) =>
          MonadTimed (TimedT m) where
     virtualTime = TimedT $ use curTime
-    currentTime = virtualTime
+    startTime = return 0
     -- | Take note, created thread may be killed by async exception
     --   only when it calls "wait"
     fork act
