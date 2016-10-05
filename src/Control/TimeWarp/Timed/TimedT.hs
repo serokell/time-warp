@@ -332,10 +332,7 @@ instance (MonadIO m, MonadThrow m, MonadCatch m) =>
         let _threadCtx =
                 ThreadCtx
                 { _threadId   = tid
-                , _handlers   = []
-                   --   [( Handler threadKilledNotifier
-                   --    , contHandler
-                   --    )]
+                , _handlers   = []   -- top-level exceptions are caught below
                 , _loggerName = logName
                 }
             _action = act `catch` threadKilledNotifier
