@@ -110,6 +110,9 @@ class MonadThrow m => MonadTimed m where
     -- | Acquires virtual time.
     virtualTime :: m Microsecond
 
+    -- | Acquires (pseudo-)real time.
+    currentTime :: m Microsecond
+
     -- | Waits for specified amount of time.
     --
     -- Use `for` to specify relative virtual time (counting from now),
@@ -205,6 +208,8 @@ type instance ThreadId (ReaderT r m) = ThreadId m
 
 instance MonadTimed m => MonadTimed (ReaderT r m) where
     virtualTime = lift virtualTime
+    
+    currentTime = lift currentTime
 
     wait = lift . wait
 
@@ -220,6 +225,8 @@ type instance ThreadId (StateT s m) = ThreadId m
 
 instance MonadTimed m => MonadTimed (StateT s m) where
     virtualTime = lift virtualTime
+
+    currentTime = lift currentTime
 
     wait = lift . wait
 

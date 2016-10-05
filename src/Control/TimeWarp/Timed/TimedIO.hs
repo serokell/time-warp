@@ -62,6 +62,8 @@ type instance ThreadId TimedIO = C.ThreadId
 instance MonadTimed TimedIO where
     virtualTime = TimedIO $ (-) <$> lift curTime <*> ask
 
+    currentTime = TimedIO $ lift curTime
+
     wait relativeToNow = do
         cur <- virtualTime
         liftIO $ C.threadDelay $ fromIntegral $ relativeToNow cur - cur
