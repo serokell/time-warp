@@ -188,7 +188,7 @@ runPureRpc (toDelays -> _delays) _randSeed rpc =
     net        = NetInfo{..}
     _listeners = Map.empty
 
-request :: (Monad m, MonadThrow m, RpcRequest r)
+request :: (MonadThrow m, RpcRequest r)
         => r
         -> Listeners (PureRpc m)
         -> Port

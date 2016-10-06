@@ -79,7 +79,6 @@ class (MessagePack r, MessagePack (Response r),
 
     methodName :: Proxy r -> String
 
-
 -- | Creates RPC-method.
 data Method m =
     forall r . RpcRequest r => Method (r -> m (Response r))
@@ -109,13 +108,10 @@ sendTimeout
 sendTimeout t addr = timeout t . send addr
 
 getMethodName :: Method m -> String
-getMethodName (Method f) = let rp = requestProxy
+getMethodName (Method f) = let rp = Proxy :: RpcRequest r => Proxy r
                                -- make rp contain type of f's argument
                                _ = f $ undefined `asProxyTypeOf` rp
                            in  methodName rp
-  where
-    requestProxy :: RpcRequest r => Proxy r
-    requestProxy = Proxy
 
 proxyOf :: a -> Proxy a
 proxyOf _ = Proxy
@@ -128,7 +124,7 @@ instance MonadRpc m => MonadRpc (ReaderT r m) where
     serve port methods = ReaderT $
                             \r -> serve port (convert r <$> methods)
       where
-        convert :: Monad m => r -> Method (ReaderT r m) -> Method m
+        convert :: r -> Method (ReaderT r m) -> Method m
         convert r (Method f) = Method $ flip runReaderT r . f
 
 deriving instance MonadRpc m => MonadRpc (LoggerNameBox m)

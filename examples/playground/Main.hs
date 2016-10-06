@@ -14,7 +14,7 @@ module Main
 
 import          Control.Exception           (Exception)
 
-import          Control.Monad.Catch         (MonadCatch, throwM)
+import          Control.Monad.Catch         (throwM)
 import          Control.Monad.Random        (newStdGen)
 import          Control.Monad.Trans         (MonadIO (..))
 import          Data.MessagePack.Object     (MessagePack)
@@ -56,7 +56,7 @@ $(mkRequest ''EpicRequest ''String ''EpicException)
 
 -- * scenarios
 
-yohohoScenario :: (MonadTimed m, MonadRpc m, MonadIO m, MonadCatch m) => m ()
+yohohoScenario :: (MonadTimed m, MonadRpc m, MonadIO m) => m ()
 yohohoScenario = do
     work (for 5 sec) $
         serve 1234 [method]

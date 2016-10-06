@@ -179,7 +179,7 @@ newtype ContException = ContException SomeException
 
 instance Exception ContException
 
-instance (MonadCatch m, MonadIO m) => MonadCatch (TimedT m) where
+instance (MonadCatch m) => MonadCatch (TimedT m) where
     catch m handler =
         TimedT $
         ReaderT $
@@ -211,8 +211,7 @@ instance (MonadIO m, MonadCatch m) => MonadMask (TimedT m) where
 wrapCore :: Monad m => Core m a -> TimedT m a
 wrapCore = TimedT . lift . lift
 
-unwrapCore :: Monad m
-           => ThreadCtx (Core m)
+unwrapCore :: ThreadCtx (Core m)
            -> (a -> Core m ())
            -> TimedT m a
            -> Core m ()
