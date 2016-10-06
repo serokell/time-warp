@@ -37,7 +37,7 @@ import           GHC.IO.Exception                  (IOException (IOError), ioe_e
 import           Formatting                        (sformat, shown, (%))
 
 import           Data.Conduit.Serialization.Binary (ParseError)
-import           Data.MessagePack.Object           (fromObject)
+import           Data.MessagePack.Object           (fromObject, toObject)
 import qualified Network.MessagePack.Client        as C
 import qualified Network.MessagePack.Server        as S
 
@@ -119,7 +119,7 @@ instance MonadRpc MsgPackRpc where
         convertMethod m =
             case mkMethodTry m of
                 MethodTry f -> S.method (getMethodName m) $
-                    S.ServerT . handleAny . fmap Right . f
+                    S.ServerT . fmap toObject . handleAny . fmap Right . f
 
         handleAny = handleAll $ return . Left .
                     sformat ("Got unexpected exception in server's method: " % shown)
