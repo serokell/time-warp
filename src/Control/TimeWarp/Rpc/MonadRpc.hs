@@ -26,18 +26,16 @@ module Control.TimeWarp.Rpc.MonadRpc
 
        , Request (..)
        , Listener (..)
-       , listener
        , getMethodName
        , proxyOf
 
        , MonadRpc (..)
        , sendTimeout
-       , MonadResponse (..)
        , RpcError (..)
        ) where
 
 import           Control.Exception          (Exception)
-import           Control.Monad.Reader       (ReaderT (..), mapReaderT)
+import           Control.Monad.Reader       (ReaderT (..))
 import           Control.Monad.Trans        (MonadTrans (..))
 import           Data.ByteString            (ByteString)
 import           Data.Monoid                ((<>))
@@ -55,21 +53,14 @@ import           Control.TimeWarp.Timed     (MonadTimed (timeout))
 -- * MonadRpc
 
 -- | Defines protocol of RPC layer.
-class (Monad m, MonadResponse (Response m))
-    => MonadRpc m where
-    -- | Defines monad, used in `Listener`s.
-    type Response m :: * -> *
-
+class Monad m => MonadRpc m where
     -- | Sends a message at specified address.
     -- This method blocks until message fully delivered.
     send :: Request r
          => NetworkAddress -> r -> m ()
 
     -- | Starts RPC server with a set of RPC methods.
-    listen :: Port -> [Listener (Response m)] -> m ()
-
-    -- | Lifts monad rpc
-    liftR :: m a -> (Response m) a
+    listen :: Port -> [Listener m] -> m ()
 
     -- | Closes connection to specified node, if exists.
     close :: NetworkAddress -> m ()
@@ -81,46 +72,12 @@ sendTimeout
     => t -> NetworkAddress -> r -> m ()
 sendTimeout t addr = timeout t . send addr
 
--- | Creates simple listener, which uses same monad as environment.
--- Return value would be send back to companion.
---
--- TODO: how not to send if response is `()`?
-listener :: (MonadRpc m, Request r, Request a)
-         => (r -> m a) -> Listener (Response m)
-listener f = Listener $ \req -> liftR (f req) >>= reply
-
-
--- * MonadResponse
-
--- | When got a request from other node (it is further called /companion/),
--- specifies actions related to communication with that node.
-class Monad m => MonadResponse m where
-    -- | Get /companion/'s address.
-    reply :: Request r => r -> m ()
-
-    closeCompanion :: m ()
-
 
 -- * Listeners
 
 -- | Creates RPC-method.
 data Listener m =
     forall r . Request r => Listener (r -> m ())
-
-{-
--- | Default instance of `MonadResponse`.
-newtype ResponseT m a = ResponseT
-    { getResponseT :: ReaderT NetworkAddress m a  -- ^ keeps /companion/ address
-    } deriving (Functor, Applicative, Monad,
-                MonadIO, MonadThrow, MonadCatch, MonadMask,
-                MonadTrans, MonadState s,
-                MonadTimed, MonadRpc)
-
-type instance ThreadId (ResponseT m) = ThreadId m
-
-runResponseT :: ResponseT m a -> NetworkAddress -> m a
-runResponseT = runReaderT . getResponseT
--}
 
 getMethodName :: Listener m -> String
 getMethodName (Listener f) = let rp = Proxy :: Request r => Proxy r
@@ -178,8 +135,6 @@ instance Exception RpcError
 -- * Instances
 
 instance MonadRpc m => MonadRpc (ReaderT r m) where
-    type Response (ReaderT r m) = ReaderT r (Response m)
-
     send addr req = lift $ send addr req
 
     listen port listeners = ReaderT $
@@ -188,33 +143,13 @@ instance MonadRpc m => MonadRpc (ReaderT r m) where
         convert r (Listener f) =
             Listener $ flip runReaderT r . f
 
-    liftR = mapReaderT liftR
-
     close = lift . close
 
-instance MonadResponse m => MonadResponse (ReaderT r m) where
-    reply = lift . reply
-
-    closeCompanion = lift $ closeCompanion
-
-{-
-instance MonadReader r m => MonadReader r (ResponseT m) where
-    ask = ResponseT $ lift ask
-    local how (ResponseT m) = ResponseT $ mapReaderT (local how) m
-    reader f = ResponseT . lift $ reader f
--}
-
-deriving instance MonadResponse m => MonadResponse (LoggerNameBox m)
-
 instance MonadRpc m => MonadRpc (LoggerNameBox m) where
-    type Response (LoggerNameBox m) = LoggerNameBox (Response m)
-
     send addr req = LoggerNameBox $ send addr req
 
     listen port listeners = LoggerNameBox $ listen port (convert <$> listeners)
       where
         convert (Listener f) = Listener $ loggerNameBoxEntry . f
 
-    liftR = LoggerNameBox . liftR . loggerNameBoxEntry
-
-    close = LoggerNameBox . close
+    close = lift . close

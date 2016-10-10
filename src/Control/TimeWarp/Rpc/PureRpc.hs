@@ -237,7 +237,7 @@ instance (MonadIO m, MonadCatch m) =>
             , show port
             , " is already bisy"
             ]
-
+    close = undefined
 
 waitDelay
     :: (MonadThrow m, MonadIO m, MonadCatch m)

@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE TypeFamilies          #-}
 
 module Main
@@ -12,19 +13,16 @@ module Main
     , runReal
     ) where
 
-import          Control.Exception           (Exception)
-
-import          Control.Monad.Catch         (throwM)
 import          Control.Monad.Random        (newStdGen)
 import          Control.Monad.Trans         (MonadIO (..))
 import          Data.MessagePack.Object     (MessagePack)
 import          GHC.Generics                (Generic)
 
-import          Control.TimeWarp.Timed      (MonadTimed (wait), sec, ms, sec', work,
-                                             interval, for, Microsecond)
+import          Control.TimeWarp.Timed      (MonadTimed (wait), ms, sec', work,
+                                             interval, for, Microsecond, Second, till)
 import          Control.TimeWarp.Rpc        (MonadRpc (..), MsgPackRpc, PureRpc,
-                                             runMsgPackRpc, runPureRpc,
-                                             Method (..), mkRequest)
+                                             runMsgPackRpc, runPureRpc, localhost,
+                                             Listener (..), mkRequest, Port, NetworkAddress)
 
 main :: IO ()
 main = return ()  -- use ghci
@@ -42,33 +40,57 @@ runEmulation scenario = do
 
 -- * data types
 
+data Ping = Ping
+    deriving (Generic, MessagePack)
+$(mkRequest ''Ping)
+
+data Pong = Pong
+    deriving (Generic, MessagePack)
+$(mkRequest ''Pong)
+
 data EpicRequest = EpicRequest
     { num :: Int
     , msg :: String
     } deriving (Generic, MessagePack)
-
-data EpicException = EpicException String
-    deriving (Show, Generic, MessagePack)
-
-instance Exception EpicException
-
-$(mkRequest ''EpicRequest ''String ''EpicException)
+$(mkRequest ''EpicRequest)
 
 -- * scenarios
 
+guy :: Int -> NetworkAddress
+guy = (localhost, ) . guysPort
+
+guysPort :: Int -> Port
+guysPort = (+10000)
+
+-- Emulates dialog of two guys:
+-- 1: Ping
+-- 2: Pong
+-- 1: EpicRequest ...
+-- 2: <prints result>
 yohohoScenario :: (MonadTimed m, MonadRpc m, MonadIO m) => m ()
 yohohoScenario = do
-    work (for 5 sec) $
-        serve 1234 [method]
+    -- guy 1
+    work (till finish) $ do
+        listen (guysPort 2)
+            [ Listener $ \Ping ->
+                send (guy 1) Pong
 
+            , Listener $ \EpicRequest{..} ->
+              do wait (for 0.1 sec')
+                 liftIO . putStrLn $ show (num + 1) ++ msg
+            ]
+
+    -- guy 2
+    work (till finish) $ do
+        listen (guysPort 1)
+            [ Listener $ \Pong ->
+                send (guy 2) $ EpicRequest 14 " men on the dead man's chest"
+            ]
+
+    -- guy 1 initiates dialog
     wait (for 100 ms)
-    res <- send ("127.0.0.1", 1234) $
-        EpicRequest 14 " men on the dead man's chest"
-
-    liftIO $ print res
-  where 
-    method = Method $ \EpicRequest{..} -> do
-        liftIO $ putStrLn "Got request, forming answer..."
-        wait (for 0.1 sec')
-        _ <- throwM $ EpicException "kek"
-        return $ show (num + 1) ++ msg
+    send (guy 2) Ping
+    wait (till finish)
+  where
+    finish :: Second
+    finish = 1

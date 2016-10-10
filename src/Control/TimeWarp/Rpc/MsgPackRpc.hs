@@ -30,7 +30,6 @@ import           Control.Monad.Catch               (MonadCatch, MonadMask,
 import           Control.Monad.Trans               (MonadIO (..))
 import           Control.Monad.Trans.Control       (MonadBaseControl, StM,
                                                     liftBaseWith, restoreM)
-import           Data.IORef                        (newIORef, readIORef, writeIORef)
 import           Data.List                         (isPrefixOf)
 import qualified Data.Text                         as T
 import           GHC.IO.Exception                  (IOException (IOError), ioe_errno)
@@ -60,27 +59,13 @@ runMsgPackRpc = runTimedIO . unwrapMsgPackRpc
 
 -- Data which server sends to client.
 -- message about unexpected error | (expected error | result)
-type ResponseData r = Either T.Text r
-
 instance MonadRpc MsgPackRpc where
     send (addr, port) req = liftIO $ do
-        box <- newIORef Nothing
         handleExc $ C.execClient addr port $ do
-            res <- C.call name req
-            liftIO . writeIORef box $ Just res
-        maybeRes <- readIORef box
-        (unwrapResponseData =<<) $
-            maybe
-                (throwM $ InternalError "execClient didn't return a value")
-                return
-                maybeRes
+            () <- C.call name req
+            return ()
       where
         name = methodName $ proxyOf req
-
-        unwrapResponseData :: (MonadThrow m)
-                           => ResponseData a -> m a
-        unwrapResponseData (Left msg) = throwM $ InternalError msg
-        unwrapResponseData (Right r)  = return r
 
         handleExc :: IO a -> IO a
         handleExc = flip catches [ Handler connRefusedH
@@ -117,8 +102,10 @@ instance MonadRpc MsgPackRpc where
         convertMethod l@(Listener f) =
             S.method (getMethodName l) $
             \r -> S.ServerT $ do
-                fork_ $ runResponseT (f r) undefined
+                fork_ $ f r
                 return ()
+
+    close = undefined
 
 -- * Instances
 
