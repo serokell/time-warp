@@ -139,6 +139,9 @@ class MonadThrow m => MonadTimed m where
     -- if running action exceeds specified time.
     timeout :: TimeUnit t => t -> m a -> m a
 
+    -- | From `slave-thread` library.
+    forkSlave :: m () -> m (ThreadId m)
+
 -- | Type of thread identifier.
 type family ThreadId (m :: * -> *) :: *
 
@@ -221,6 +224,8 @@ instance MonadTimed m => MonadTimed (ReaderT r m) where
 
     timeout t m = lift . timeout t . runReaderT m =<< ask
 
+    forkSlave m = lift . forkSlave . runReaderT m =<< ask
+
 type instance ThreadId (StateT s m) = ThreadId m
 
 instance MonadTimed m => MonadTimed (StateT s m) where
@@ -237,6 +242,8 @@ instance MonadTimed m => MonadTimed (StateT s m) where
     throwTo tid = lift . throwTo tid
 
     timeout t m = lift . timeout t . evalStateT m =<< get
+
+    forkSlave m = lift . forkSlave . evalStateT m =<< get
 
 type instance ThreadId (LoggerNameBox m) = ThreadId m
 

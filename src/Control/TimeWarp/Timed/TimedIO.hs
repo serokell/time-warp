@@ -33,6 +33,7 @@ import           Control.Monad.Trans.Control       (MonadBaseControl, StM,
 import           Data.Time.Clock.POSIX             (getPOSIXTime)
 import           Data.Time.Units                   (toMicroseconds)
 import qualified System.Timeout                    as T
+import           SlaveThread                       as ST
 
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond,
                                                     MonadTimed (..),
@@ -77,6 +78,8 @@ instance MonadTimed TimedIO where
     timeout (toMicroseconds -> t) (TimedIO action) = TimedIO $ do
         res <- liftIO . T.timeout (fromIntegral t) . runReaderT action =<< ask
         maybe (throwM $ MTTimeoutError "Timeout has exceeded") return res
+
+    forkSlave (TimedIO a) = TimedIO $ lift . ST.fork . runReaderT a =<< ask
 
 -- | Launches scenario using real time and threads.
 runTimedIO :: TimedIO a -> IO a

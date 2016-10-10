@@ -373,6 +373,7 @@ instance (MonadIO m, MonadThrow m, MonadCatch m) =>
             (liftIO (readIORef done) >>=) . flip unless $
                 throwTo pid $ MTTimeoutError "Timeout exceeded"
         action' `finally` liftIO (writeIORef done True)
+    forkSlave = undefined
 
 -- | Name which is used by logger (see `WithNamedLogger`) if no other one was specified.
 defaultLoggerName :: LoggerName

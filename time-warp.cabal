@@ -51,6 +51,7 @@ library
                      , random >= 1.1
                      , safe
                      , serokell-core
+                     , slave-thread >= 1.0
                      , stm >= 2.4.4
                      , template-haskell
                      , text >= 1.2.2.0
