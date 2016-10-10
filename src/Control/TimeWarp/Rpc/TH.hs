@@ -6,9 +6,9 @@ module Control.TimeWarp.Rpc.TH
 
 import           Language.Haskell.TH
 
-import           Control.TimeWarp.Rpc.MonadRpc    (RpcRequest (..))
+import           Control.TimeWarp.Rpc.MonadRpc    (Request (..))
 
--- | Generates `RpcRequest` instance by given names of request, response and
+-- | Generates `Request` instance by given names of request, response and
 -- expected exception types.
 --
 -- The following code
@@ -20,29 +20,21 @@ import           Control.TimeWarp.Rpc.MonadRpc    (RpcRequest (..))
 -- generates
 --
 -- @
--- instance RpcRequest MyRequest where
+-- instance Request MyRequest where
 --     type Response      MyRequest = MyResponse
 --     type ExpectedError MyRequest = MyError
 --     methodName _ = "<module name>.MyRequest"
 -- @
 
-mkRequest :: Name -> Name -> Name -> Q [Dec]
-mkRequest reqType respType errType =
+mkRequest :: Name -> Q [Dec]
+mkRequest reqType =
     (:[]) <$> mkInstance
   where
     mkInstance =
         instanceD
         (cxt [])
-        (appT (conT ''RpcRequest) (conT reqType))
-        [ typeFamily ''Response      respType
-        , typeFamily ''ExpectedError errType
-        , func
-        ]
-
-    typeFamily n t = do
-        rc <- conT reqType
-        ct <- conT t
-        return $ TySynInstD n (TySynEqn [rc] ct)
+        (appT (conT ''Request) (conT reqType))
+        [func]
 
     func = return $ FunD 'methodName
         [ Clause [WildP] (NormalB . LitE . StringL $ show reqType) []

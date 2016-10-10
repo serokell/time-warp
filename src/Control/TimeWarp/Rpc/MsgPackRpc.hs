@@ -25,7 +25,7 @@ module Control.TimeWarp.Rpc.MsgPackRpc
 import qualified Control.Concurrent                as C
 import           Control.Monad.Base                (MonadBase)
 import           Control.Monad.Catch               (MonadCatch, MonadMask,
-                                                    MonadThrow (..), handleAll,
+                                                    MonadThrow (..),
                                                     catches, Handler (..))
 import           Control.Monad.Trans               (MonadIO (..))
 import           Control.Monad.Trans.Control       (MonadBaseControl, StM,
@@ -37,16 +37,15 @@ import           GHC.IO.Exception                  (IOException (IOError), ioe_e
 import           Formatting                        (sformat, shown, (%))
 
 import           Data.Conduit.Serialization.Binary (ParseError)
-import           Data.MessagePack.Object           (fromObject, toObject)
+import           Data.MessagePack.Object           (fromObject)
 import qualified Network.MessagePack.Client        as C
 import qualified Network.MessagePack.Server        as S
 
-import           Control.TimeWarp.Rpc.MonadRpc     (Method (..), MonadRpc (..),
-                                                    RpcRequest (..), getMethodName,
-                                                    proxyOf, RpcError (..), MethodTry (..),
-                                                    mkMethodTry)
-import           Control.TimeWarp.Timed            (MonadTimed (..), TimedIO, ThreadId,
-                                                    runTimedIO)
+import           Control.TimeWarp.Rpc.MonadRpc     (Listener (..), MonadRpc (..),
+                                                    Request (..), getMethodName,
+                                                    proxyOf, RpcError (..))
+import           Control.TimeWarp.Timed            (MonadTimed, TimedIO, ThreadId,
+                                                    runTimedIO, fork_)
 
 -- | Wrapper over `Control.TimeWarp.Timed.TimedIO`, which implements `MonadRpc`
 -- using <https://hackage.haskell.org/package/msgpack-rpc-1.0.0 msgpack-rpc>.
@@ -61,7 +60,7 @@ runMsgPackRpc = runTimedIO . unwrapMsgPackRpc
 
 -- Data which server sends to client.
 -- message about unexpected error | (expected error | result)
-type ResponseData r = Either T.Text (Either (ExpectedError r) (Response r))
+type ResponseData r = Either T.Text r
 
 instance MonadRpc MsgPackRpc where
     send (addr, port) req = liftIO $ do
@@ -70,7 +69,7 @@ instance MonadRpc MsgPackRpc where
             res <- C.call name req
             liftIO . writeIORef box $ Just res
         maybeRes <- readIORef box
-        (unwrapResponseData req =<<) $
+        (unwrapResponseData =<<) $
             maybe
                 (throwM $ InternalError "execClient didn't return a value")
                 return
@@ -78,11 +77,10 @@ instance MonadRpc MsgPackRpc where
       where
         name = methodName $ proxyOf req
 
-        unwrapResponseData :: (MonadThrow m, RpcRequest r)
-                           => r -> ResponseData r -> m (Response r)
-        unwrapResponseData _ (Left msg)        = throwM $ InternalError msg
-        unwrapResponseData _ (Right (Left e))  = throwM $ ServerError e
-        unwrapResponseData _ (Right (Right r)) = return r
+        unwrapResponseData :: (MonadThrow m)
+                           => ResponseData a -> m a
+        unwrapResponseData (Left msg) = throwM $ InternalError msg
+        unwrapResponseData (Right r)  = return r
 
         handleExc :: IO a -> IO a
         handleExc = flip catches [ Handler connRefusedH
@@ -113,17 +111,14 @@ instance MonadRpc MsgPackRpc where
         noSuchMethodMsg = sformat ("No method " % shown % " found at port " % shown)
                               name port
 
-    serve port methods = S.serve port $ convertMethod <$> methods
+    listen port methods = S.serve port $ convertMethod <$> methods
       where
-        convertMethod :: Method MsgPackRpc -> S.Method MsgPackRpc
-        convertMethod m =
-            case mkMethodTry m of
-                MethodTry f -> S.method (getMethodName m) $
-                    S.ServerT . fmap toObject . handleAny . fmap Right . f
-
-        handleAny = handleAll $ return . Left .
-                    sformat ("Got unexpected exception in server's method: " % shown)
-
+        convertMethod :: Listener MsgPackRpc -> S.Method MsgPackRpc
+        convertMethod l@(Listener f) =
+            S.method (getMethodName l) $
+            \r -> S.ServerT $ do
+                fork_ $ runResponseT (f r) undefined
+                return ()
 
 -- * Instances
 

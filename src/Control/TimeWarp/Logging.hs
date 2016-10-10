@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
 {-# LANGUAGE ViewPatterns          #-}
 
@@ -47,6 +48,7 @@ import           Control.Monad.Reader      (MonadReader (..), ReaderT, runReader
 import           Control.Monad.State       (MonadState (get), StateT, evalStateT)
 import           Control.Monad.Trans       (MonadIO (liftIO), MonadTrans, lift)
 import           Control.Monad.Trans.Cont  (ContT, mapContT)
+import           Control.Lens              (Wrapped (..), iso)
 
 import           Data.String               (IsString)
 import qualified Data.Text                 as T
@@ -187,6 +189,10 @@ instance MonadReader r m => MonadReader r (LoggerNameBox m) where
     ask = lift ask
     reader = lift . reader
     local f (LoggerNameBox m) = getLoggerName >>= lift . local f . runReaderT m
+
+instance Wrapped (LoggerNameBox m a) where
+    type Unwrapped (LoggerNameBox m a) = ReaderT LoggerName m a
+    _Wrapped' = iso loggerNameBoxEntry LoggerNameBox
 
 -- | Runs a `LoggerNameBox` with specified initial `LoggerName`.
 usingLoggerName :: LoggerName -> LoggerNameBox m a -> m a
