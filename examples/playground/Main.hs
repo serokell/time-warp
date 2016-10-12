@@ -9,24 +9,26 @@
 module Main
     ( main
     , yohohoScenario
-    , runEmulation
-    , runReal
+--    , runEmulation
+--    , runReal
     ) where
 
 import          Control.Monad.Random        (newStdGen)
 import          Control.Monad.Trans         (MonadIO (..))
+import          Data.Binary                 (Binary)
 import          Data.MessagePack.Object     (MessagePack)
 import          GHC.Generics                (Generic)
 
 import          Control.TimeWarp.Timed      (MonadTimed (wait), ms, sec', work,
                                              interval, for, Microsecond, Second, till)
-import          Control.TimeWarp.Rpc        (MonadRpc (..), MsgPackRpc, PureRpc,
-                                             runMsgPackRpc, runPureRpc, localhost,
-                                             Listener (..), mkRequest, Port, NetworkAddress)
+import          Control.TimeWarp.Rpc        (MonadRpc (..), localhost, Listener (..),
+                                             mkMessage, Port, NetworkAddress, send,
+                                             listen)
 
 main :: IO ()
 main = return ()  -- use ghci
 
+{-
 runReal :: MsgPackRpc a -> IO a
 runReal = runMsgPackRpc
 
@@ -37,22 +39,23 @@ runEmulation scenario = do
   where
     delays :: Microsecond
     delays = interval 50 ms
+-}
 
 -- * data types
 
 data Ping = Ping
-    deriving (Generic, MessagePack)
-$(mkRequest ''Ping)
+    deriving (Generic, Binary, MessagePack)
+$(mkMessage ''Ping)
 
 data Pong = Pong
-    deriving (Generic, MessagePack)
-$(mkRequest ''Pong)
+    deriving (Generic, Binary, MessagePack)
+$(mkMessage ''Pong)
 
 data EpicRequest = EpicRequest
     { num :: Int
     , msg :: String
-    } deriving (Generic, MessagePack)
-$(mkRequest ''EpicRequest)
+    } deriving (Generic, Binary, MessagePack)
+$(mkMessage ''EpicRequest)
 
 -- * scenarios
 
@@ -73,10 +76,12 @@ yohohoScenario = do
     work (till finish) $ do
         listen (guysPort 2)
             [ Listener $ \Ping ->
-                send (guy 1) Pong
+                -- can send an answer
+                reply Pong
 
             , Listener $ \EpicRequest{..} ->
               do wait (for 0.1 sec')
+                 -- can do IO
                  liftIO . putStrLn $ show (num + 1) ++ msg
             ]
 
@@ -84,6 +89,7 @@ yohohoScenario = do
     work (till finish) $ do
         listen (guysPort 1)
             [ Listener $ \Pong ->
+                -- can send another request
                 send (guy 2) $ EpicRequest 14 " men on the dead man's chest"
             ]
 

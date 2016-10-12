@@ -8,7 +8,7 @@
 {-# LANGUAGE TypeFamilies              #-}
 
 -- |
--- Module      : Control.TimeWarp.Rpc
+-- Module      : Control.TimeWarp.MonadRpc
 -- Copyright   : (c) Serokell, 2016
 -- License     : GPL-3 (see the file LICENSE)
 -- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
@@ -25,131 +25,90 @@ module Control.TimeWarp.Rpc.MonadRpc
        , localhost
 
        , Request (..)
-       , Listener (..)
-       , getMethodName
-       , proxyOf
+       , Method (..)
 
        , MonadRpc (..)
-       , sendTimeout
+       , Rpc (..)
        , RpcError (..)
        ) where
 
-import           Control.Exception          (Exception)
-import           Control.Monad.Reader       (ReaderT (..))
-import           Control.Monad.Trans        (MonadTrans (..))
-import           Data.ByteString            (ByteString)
-import           Data.Monoid                ((<>))
-import           Data.Proxy                 (Proxy (..), asProxyTypeOf)
-import           Data.Text                  (Text)
-import           Data.Text.Buildable        (Buildable (..))
+import           Control.Monad.Catch               (MonadThrow, MonadCatch, MonadMask)
+import           Control.Exception                 (Exception)
+import           Control.Monad.Reader              (ReaderT (..), MonadReader)
+import           Control.Monad.State               (MonadState)
+import           Control.Monad.Trans               (MonadTrans (..), MonadIO)
 
-import           Data.MessagePack.Object    (MessagePack (..))
-import           Data.Time.Units            (TimeUnit)
 
-import           Control.TimeWarp.Logging   (LoggerNameBox (..))
-import           Control.TimeWarp.Timed     (MonadTimed (timeout))
+import           Control.TimeWarp.Logging          (WithNamedLogger, LoggerNameBox (..))
+import           Control.TimeWarp.Timed.MonadTimed (MonadTimed, ThreadId)
+import           Control.TimeWarp.Rpc.MonadDialog  (MonadDialog (..), NetworkAddress,
+                                                    Host, Port, RpcError (..), Message,
+                                                    localhost, ResponseT, mapResponseT)
+import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer)
 
 
 -- * MonadRpc
 
 -- | Defines protocol of RPC layer.
-class Monad m => MonadRpc m where
-    -- | Sends a message at specified address.
-    -- This method blocks until message fully delivered.
-    send :: Request r
-         => NetworkAddress -> r -> m ()
+class MonadDialog m => MonadRpc m where
+    -- | Remote method call.
+    call :: NetworkAddress -> r -> m (Response r)
 
     -- | Starts RPC server with a set of RPC methods.
-    listen :: Port -> [Listener m] -> m ()
-
-    -- | Closes connection to specified node, if exists.
-    close :: NetworkAddress -> m ()
-
--- | Same as `execClient`, but allows to set up timeout for a call (see
--- `Control.TimeWarp.Timed.MonadTimed.timeout`).
-sendTimeout
-    :: (MonadTimed m, MonadRpc m, Request r, TimeUnit t)
-    => t -> NetworkAddress -> r -> m ()
-sendTimeout t addr = timeout t . send addr
+    serve :: Port -> [Method m] -> m ()
 
 
--- * Listeners
+-- * Rpc request
+
+class ( Message r 
+      , Message (Response r)
+      , Message (ExpectedException r)
+      , Exception (ExpectedException r)
+      ) => Request r where
+    type Response r :: *
+
+    type ExpectedException r :: *
+
+
+-- * Methods
 
 -- | Creates RPC-method.
-data Listener m =
-    forall r . Request r => Listener (r -> m ())
-
-getMethodName :: Listener m -> String
-getMethodName (Listener f) = let rp = Proxy :: Request r => Proxy r
-                                 -- make rp contain type of f's argument
-                                 _ = f $ undefined `asProxyTypeOf` rp
-                             in  methodName rp
-
-proxyOf :: a -> Proxy a
-proxyOf _ = Proxy
+data Method m =
+    forall r . Request r => Method (r -> ResponseT m (Response r))
 
 
--- * Related datatypes
+-- * Default instance of `MonadRpc`
 
--- | Port number.
-type Port = Int
+newtype Rpc m a = Rpc
+    { runRpc :: m a
+    } deriving (Functor, Applicative, Monad, MonadIO,
+                MonadThrow, MonadCatch, MonadMask,
+                MonadReader r, MonadState s,
+                WithNamedLogger, MonadTimed, MonadTransfer, MonadDialog)
 
--- | Host address.
-type Host = ByteString
+type instance ThreadId (Rpc m) = ThreadId m
 
-localhost :: Host
-localhost = "127.0.0.1"
+instance MonadDialog m => MonadRpc (Rpc m) where
+    call = undefined
 
--- | Full node address.
-type NetworkAddress = (Host, Port)
-
--- | Defines method name corresponding to this request type.
--- TODO: use ready way to get datatype's name
-class MessagePack r => Request r where
-    methodName :: Proxy r -> String
-
-instance Request () where
-    methodName _ = "()"
-
-
--- * Exceptions
-
--- | Exception which can be thrown on `send` call.
-data RpcError = -- | Can't find remote method on server's side die to
-                -- network problems or lack of such service
-                NetworkProblem Text
-                -- | Error in RPC protocol with description, or server
-                -- threw unserializable error
-              | InternalError Text
-
-instance Buildable RpcError where
-    build (NetworkProblem msg) = "Network problem: " <> build msg
-    build (InternalError msg)  = "Internal error: " <> build msg
-
-instance Show RpcError where
-    show = show . build
-
-instance Exception RpcError
+    serve = undefined
 
 
 -- * Instances
 
 instance MonadRpc m => MonadRpc (ReaderT r m) where
-    send addr req = lift $ send addr req
+    call addr req = lift $ call addr req
 
-    listen port listeners = ReaderT $
-                            \r -> listen port (convert r <$> listeners)
+    serve port listeners = ReaderT $
+                            \r -> serve port (convert r <$> listeners)
       where
-        convert r (Listener f) =
-            Listener $ flip runReaderT r . f
-
-    close = lift . close
+        convert r (Method f) =
+            Method $ mapResponseT (flip runReaderT r) . f
 
 instance MonadRpc m => MonadRpc (LoggerNameBox m) where
-    send addr req = LoggerNameBox $ send addr req
+    call addr req = LoggerNameBox $ call addr req
 
-    listen port listeners = LoggerNameBox $ listen port (convert <$> listeners)
+    serve port listeners = LoggerNameBox $ serve port (convert <$> listeners)
       where
-        convert (Listener f) = Listener $ loggerNameBoxEntry . f
-
-    close = lift . close
+        convert (Method f) =
+            Method $ mapResponseT loggerNameBoxEntry . f

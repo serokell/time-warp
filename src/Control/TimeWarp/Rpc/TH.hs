@@ -1,39 +1,36 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 module Control.TimeWarp.Rpc.TH
-    ( mkRequest
+    ( mkMessage
     ) where
 
 import           Language.Haskell.TH
 
-import           Control.TimeWarp.Rpc.MonadRpc    (Request (..))
+import           Control.TimeWarp.Rpc.MonadDialog    (Message (..))
 
--- | Generates `Request` instance by given names of request, response and
--- expected exception types.
+-- | Generates `Message` instance for given datatype.
 --
 -- The following code
 --
 -- @
--- $(mkRequest ''MyRequest ''MyResponse ''MyError)
+-- $(mkMessage ''MyRequest)
 -- @
 --
 -- generates
 --
 -- @
--- instance Request MyRequest where
---     type Response      MyRequest = MyResponse
---     type ExpectedError MyRequest = MyError
---     methodName _ = "<module name>.MyRequest"
+-- instance Message MyMessage where
+--     methodName _ = "<module name>.MyMessage"
 -- @
 
-mkRequest :: Name -> Q [Dec]
-mkRequest reqType =
+mkMessage :: Name -> Q [Dec]
+mkMessage reqType =
     (:[]) <$> mkInstance
   where
     mkInstance =
         instanceD
         (cxt [])
-        (appT (conT ''Request) (conT reqType))
+        (appT (conT ''Message) (conT reqType))
         [func]
 
     func = return $ FunD 'methodName

@@ -49,13 +49,13 @@
 -- [90000102µs] Answer is 2
 
 module Control.TimeWarp.Rpc
-       ( module Control.TimeWarp.Rpc.MonadRpc
-       , module Control.TimeWarp.Rpc.MsgPackRpc
-       , module Control.TimeWarp.Rpc.PureRpc
+       ( module Control.TimeWarp.Rpc.MonadDialog
+       , module Control.TimeWarp.Rpc.MonadRpc
+       , module Control.TimeWarp.Rpc.MonadTransfer
        , module Control.TimeWarp.Rpc.TH
        ) where
 
-import           Control.TimeWarp.Rpc.MonadRpc   hiding (proxyOf)
-import           Control.TimeWarp.Rpc.MsgPackRpc
-import           Control.TimeWarp.Rpc.PureRpc
+import           Control.TimeWarp.Rpc.MonadDialog
+import           Control.TimeWarp.Rpc.MonadRpc
+import           Control.TimeWarp.Rpc.MonadTransfer
 import           Control.TimeWarp.Rpc.TH
