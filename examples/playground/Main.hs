@@ -26,7 +26,7 @@ import          Control.TimeWarp.Timed      (MonadTimed (wait), ms, sec', work,
 import          Control.TimeWarp.Rpc        (MonadRpc (..), localhost, Listener (..),
                                              mkMessage, Port, NetworkAddress, send,
                                              listen, MonadDialog, Request (..), reply,
-                                             Method (..))
+                                             Method (..), mkRequest)
 
 main :: IO ()
 main = return ()  -- use ghci
@@ -60,9 +60,7 @@ instance Binary Void where
     get = return undefined
     put = absurd
 
-instance Request Ping where
-    type Response Ping = Pong
-    type ExpectedError Ping = Void
+$(mkRequest ''Ping ''Pong ''Void)
 
 data EpicRequest = EpicRequest
     { num :: Int
