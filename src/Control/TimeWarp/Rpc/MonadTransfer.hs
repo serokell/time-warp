@@ -25,7 +25,6 @@ module Control.TimeWarp.Rpc.MonadTransfer
        , localhost
 
        , MonadTransfer (..)
-       , Variant (..)
        
        , MonadResponse (..)
        , ResponseT (..)
@@ -64,15 +63,12 @@ class Monad m => MonadTransfer m where
     -- If parsing failed, protocol attempts to parse input starting from next character;
     -- consider checking for /magic/ sequence first while parsing.
     listenRaw :: Port                      -- ^ Port to bind server
-              -> [Variant m]               -- ^ Cases of input data
+              -> Get a                     -- ^ Parser for input byte sequence
+              -> (a -> m ())               -- ^ Handler for received data
               -> m ()
 
     -- | Closes connection to specified node, if exists.
     close :: NetworkAddress -> m ()
-
--- | Specifies case of input data and according action to process this data.
-data Variant m =
-    forall a . Variant (Get a) (a -> ResponseT m ())
 
 
 -- * MonadResponse
