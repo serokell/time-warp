@@ -43,7 +43,8 @@ import           Control.TimeWarp.Logging          (WithNamedLogger, LoggerNameB
 import           Control.TimeWarp.Timed.MonadTimed (MonadTimed, ThreadId)
 import           Control.TimeWarp.Rpc.MonadDialog  (MonadDialog (..), NetworkAddress,
                                                     Host, Port, RpcError (..), Message,
-                                                    localhost, ResponseT, mapResponseT)
+                                                    localhost, ResponseT (..),
+                                                    mapResponseT)
 import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer)
 
 
@@ -62,12 +63,12 @@ class MonadDialog m => MonadRpc m where
 
 class ( Message r 
       , Message (Response r)
-      , Message (ExpectedException r)
-      , Exception (ExpectedException r)
+      , Message (ExpectedError r)
+      , Exception (ExpectedError r)
       ) => Request r where
     type Response r :: *
 
-    type ExpectedException r :: *
+    type ExpectedError r :: *
 
 
 -- * Methods
@@ -112,3 +113,5 @@ instance MonadRpc m => MonadRpc (LoggerNameBox m) where
       where
         convert (Method f) =
             Method $ mapResponseT loggerNameBoxEntry . f
+
+deriving instance MonadRpc m => MonadRpc (ResponseT m)

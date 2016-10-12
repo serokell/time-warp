@@ -9,21 +9,24 @@
 module Main
     ( main
     , yohohoScenario
+    , rpcScenario
 --    , runEmulation
 --    , runReal
     ) where
 
 import          Control.Monad.Random        (newStdGen)
 import          Control.Monad.Trans         (MonadIO (..))
-import          Data.Binary                 (Binary)
+import          Data.Binary                 (Binary, get, put)
 import          Data.MessagePack.Object     (MessagePack)
+import          Data.Void                   (Void, absurd)
 import          GHC.Generics                (Generic)
 
 import          Control.TimeWarp.Timed      (MonadTimed (wait), ms, sec', work,
                                              interval, for, Microsecond, Second, till)
 import          Control.TimeWarp.Rpc        (MonadRpc (..), localhost, Listener (..),
                                              mkMessage, Port, NetworkAddress, send,
-                                             listen)
+                                             listen, MonadDialog, Request (..), reply,
+                                             Method (..))
 
 main :: IO ()
 main = return ()  -- use ghci
@@ -51,6 +54,16 @@ data Pong = Pong
     deriving (Generic, Binary, MessagePack)
 $(mkMessage ''Pong)
 
+$(mkMessage ''Void)
+
+instance Binary Void where
+    get = return undefined
+    put = absurd
+
+instance Request Ping where
+    type Response Ping = Pong
+    type ExpectedError Ping = Void
+
 data EpicRequest = EpicRequest
     { num :: Int
     , msg :: String
@@ -70,10 +83,10 @@ guysPort = (+10000)
 -- 2: Pong
 -- 1: EpicRequest ...
 -- 2: <prints result>
-yohohoScenario :: (MonadTimed m, MonadRpc m, MonadIO m) => m ()
+yohohoScenario :: (MonadTimed m, MonadDialog m, MonadIO m) => m ()
 yohohoScenario = do
     -- guy 1
-    work (till finish) $ do
+    work (till finish) $
         listen (guysPort 2)
             [ Listener $ \Ping ->
                 -- can send an answer
@@ -86,7 +99,7 @@ yohohoScenario = do
             ]
 
     -- guy 2
-    work (till finish) $ do
+    work (till finish) $
         listen (guysPort 1)
             [ Listener $ \Pong ->
                 -- can send another request
@@ -100,3 +113,16 @@ yohohoScenario = do
   where
     finish :: Second
     finish = 1
+
+rpcScenario :: (MonadTimed m, MonadRpc m, MonadIO m) => m ()
+rpcScenario = do
+    work (till finish) $
+        serve 1234 [ Method $ \Ping -> return Pong
+                   ]
+
+    wait (for 100 ms)
+    Pong <- call (localhost, 1234) Ping
+    return ()
+  where
+    finish :: Second
+    finish = 5
