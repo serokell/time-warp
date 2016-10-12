@@ -81,11 +81,7 @@ send addr msg = sendRaw addr =<< packMsg mname msg
 
 -- | Starts server.
 listen :: MonadDialog m => Port -> [Listener m] -> m ()
-listen port listeners = listenRaw port $ convert <$> listeners
-  where
-    convert = undefined
---        flip Variant f $ undefined undefined
---             unpackMsg >>= \(_, name) -> guard $ name == getMethodName m
+listen port listeners = listenRaw port undefined undefined
 
 -- | Sends a message to /peer/ node.
 reply :: (MonadDialog m, MonadResponse m, Message r) => r -> m ()

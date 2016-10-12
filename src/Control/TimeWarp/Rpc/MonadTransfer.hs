@@ -64,7 +64,7 @@ class Monad m => MonadTransfer m where
     -- consider checking for /magic/ sequence first while parsing.
     listenRaw :: Port                      -- ^ Port to bind server
               -> Get a                     -- ^ Parser for input byte sequence
-              -> (a -> m ())               -- ^ Handler for received data
+              -> (a -> ResponseT m ())     -- ^ Handler for received data
               -> m ()
 
     -- | Closes connection to specified node, if exists.
@@ -146,10 +146,9 @@ instance Exception RpcError
 instance MonadTransfer m => MonadTransfer (ReaderT r m) where
     sendRaw addr req = lift $ sendRaw addr req
 
-    listenRaw port vars =
-        ReaderT $ \r -> listenRaw port $ convert r <$> vars
-      where
-        convert r (Variant a f) = Variant a $ mapResponseT (flip runReaderT r) . f
+    listenRaw port parser listener =
+        ReaderT $ \r -> listenRaw port parser $
+                        mapResponseT (flip runReaderT r) . listener
 
     close = lift . close
 
