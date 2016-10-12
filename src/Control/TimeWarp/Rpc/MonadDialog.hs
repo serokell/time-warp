@@ -38,11 +38,12 @@ module Control.TimeWarp.Rpc.MonadDialog
        , RpcError (..)
        ) where
 
+import           Control.Monad                      (when)
 import           Control.Monad.Catch                (MonadThrow, MonadCatch, MonadMask)
 import           Control.Monad.Reader               (MonadReader, ReaderT)
 import           Control.Monad.State                (MonadState)
 import           Control.Monad.Trans                (MonadIO, lift)
-import           Data.Binary                        (Binary, Get, Put, put)
+import           Data.Binary                        (Binary, Get, Put, put, get)
 import           Data.Proxy                         (Proxy (..))
 
 import           Control.TimeWarp.Logging           (WithNamedLogger, LoggerNameBox (..))
@@ -57,18 +58,26 @@ import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer (..),
 -- * MonadRpc
 
 -- | Defines communication based on messages.
+-- It allows to specify service data (/header/) for use by overlying protocols.
 class MonadTransfer m => MonadDialog m where
     -- | Way of packing data into raw bytes.
-    packMsg :: Message r => r -> m Put
+    packMsg :: Message r
+            => Put    -- ^ Packed header
+            -> r      -- ^ Message
+            -> m Put  -- ^ Packed (header + message)
 
     -- | Way of unpacking raw bytes to data.
-    unpackMsg :: Message r => m (Get (r, String))
+    unpackMsg :: Message r
+              => Get header           -- ^ Header parser
+              -> m (Get (header, r))  -- ^ (header + message) parser
 
 
 -- | Sends a message at specified address.
 -- This method blocks until message fully delivered.
 send :: (MonadDialog m, Message r) => NetworkAddress -> r -> m ()
-send addr msg = sendRaw addr =<< packMsg msg
+send addr msg = sendRaw addr =<< packMsg mname msg
+  where
+    mname = put $ methodName $ proxyOf msg
 
 -- | Starts server.
 listen :: MonadDialog m => Port -> [Listener m] -> m ()
@@ -95,6 +104,9 @@ getMethodName (Listener f) = methodName $ proxyOfArg f
     proxyOfArg :: (a -> b) -> Proxy a
     proxyOfArg _ = Proxy
 
+proxyOf :: a -> Proxy a
+proxyOf _ = Proxy
+
 class Binary m => Message m where
     methodName :: Proxy m -> String
 
@@ -104,6 +116,7 @@ instance Message () where
 
 -- * Default instance
 
+-- Uses simple packing: magic + header + packed message
 newtype BinaryDialog m a = BinaryDialog (m a)
     deriving (Functor, Applicative, Monad, MonadIO,
               MonadThrow, MonadCatch, MonadMask,
@@ -113,21 +126,28 @@ newtype BinaryDialog m a = BinaryDialog (m a)
 type instance ThreadId (BinaryDialog m) = ThreadId m
 
 instance MonadTransfer m => MonadDialog (BinaryDialog m) where
-    packMsg = return . put
+    packMsg header msg = return $ do
+        put binaryDialogMagic
+        header
+        put msg
 
-    unpackMsg = return undefined
+    unpackMsg header = return $ do
+        magic <- get
+        when (magic /= binaryDialogMagic) $
+            fail "No magic number at the beginning"
+        (,) <$> header <*> get
+
+binaryDialogMagic :: Int
+binaryDialogMagic = 43532423
 
 
 -- * Instances
 
 instance MonadDialog m => MonadDialog (ReaderT r m) where
-    packMsg = lift . packMsg
+    packMsg header msg = lift $ packMsg header msg
 
-    unpackMsg = lift unpackMsg
+    unpackMsg = lift . unpackMsg
 
 deriving instance MonadDialog m => MonadDialog (LoggerNameBox m)
 
-instance MonadDialog m => MonadDialog (ResponseT m) where
-    packMsg = lift . packMsg
-
-    unpackMsg = undefined
+deriving instance MonadDialog m => MonadDialog (ResponseT m)
