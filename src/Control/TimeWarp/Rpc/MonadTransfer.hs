@@ -60,8 +60,9 @@ class Monad m => MonadTransfer m where
             -> m ()
 
     -- | Starts server.
-    -- If parsing failed, protocol attempts to parse input starting from next character;
-    -- consider checking for /magic/ sequence first while parsing.
+    --
+    -- If parsing of input byte stream failed, protocol skips one octet and tries again.
+    -- Consider checking for /magic/ sequence first while parsing.
     listenRaw :: Port                      -- ^ Port to bind server
               -> Get a                     -- ^ Parser for input byte sequence
               -> (a -> ResponseT m ())     -- ^ Handler for received data
