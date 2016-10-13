@@ -22,6 +22,7 @@ library
                      , Control.TimeWarp.Rpc.MonadTransfer
                      , Control.TimeWarp.Rpc.MonadRpc
                      , Control.TimeWarp.Rpc.TH
+                     , Control.TimeWarp.Rpc.Transfer
 
                      , Control.TimeWarp.Timed
                      , Control.TimeWarp.Timed.MonadTimed
@@ -33,8 +34,11 @@ library
                      , binary >= 0.7.5
                      , binary-conduit >= 1.2.4.1
                      , bytestring >= 0.10.6.0
+                     , conduit >= 1.2.6
+                     , conduit-extra >= 1.1
                      , containers
                      , data-default
+                     , deepseq >= 1.4.1
                      , exceptions
                      , formatting
                      , hslogger
@@ -46,6 +50,7 @@ library
                      , monad-control
                      , msgpack >= 1.0.0
                      , msgpack-rpc >= 1.0.0
+                     , network >= 2.6
                      , pqueue
                      , QuickCheck >= 2.8.1
                      , quickcheck-instances
@@ -54,6 +59,7 @@ library
                      , serokell-core
                      , slave-thread >= 1.0
                      , stm >= 2.4.4
+                     , streaming-commons >= 0.1.15
                      , template-haskell
                      , text >= 1.2.2.0
                      , text-format
