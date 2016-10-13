@@ -43,8 +43,7 @@ import           Control.TimeWarp.Logging          (WithNamedLogger, LoggerNameB
 import           Control.TimeWarp.Timed.MonadTimed (MonadTimed, ThreadId)
 import           Control.TimeWarp.Rpc.MonadDialog  (MonadDialog (..), NetworkAddress,
                                                     Host, Port, RpcError (..), Message,
-                                                    localhost, ResponseT (..),
-                                                    mapResponseT)
+                                                    localhost, ResponseT (..))
 import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer)
 
 
@@ -75,7 +74,7 @@ class ( Message r
 
 -- | Creates RPC-method.
 data Method m =
-    forall r . Request r => Method (r -> ResponseT m (Response r))
+    forall r . Request r => Method (r -> m (Response r))
 
 
 -- * Default instance of `MonadRpc`
@@ -103,15 +102,13 @@ instance MonadRpc m => MonadRpc (ReaderT r m) where
     serve port listeners = ReaderT $
                             \r -> serve port (convert r <$> listeners)
       where
-        convert r (Method f) =
-            Method $ mapResponseT (flip runReaderT r) . f
+        convert r (Method f) = Method $ flip runReaderT r . f
 
 instance MonadRpc m => MonadRpc (LoggerNameBox m) where
     call addr req = LoggerNameBox $ call addr req
 
     serve port listeners = LoggerNameBox $ serve port (convert <$> listeners)
       where
-        convert (Method f) =
-            Method $ mapResponseT loggerNameBoxEntry . f
+        convert (Method f) = Method $ loggerNameBoxEntry . f
 
 deriving instance MonadRpc m => MonadRpc (ResponseT m)
