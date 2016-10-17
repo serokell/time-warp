@@ -29,6 +29,7 @@ module Control.TimeWarp.Rpc.MonadDialog
 
        , send
        , listen
+       , reply
        , Listener (..)
        , getMethodName
        , ResponseT (..)
@@ -47,9 +48,9 @@ import           Data.Proxy                         (Proxy (..))
 
 import           Control.TimeWarp.Logging           (WithNamedLogger, LoggerNameBox (..))
 import           Control.TimeWarp.Timed             (MonadTimed, ThreadId)
-import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer (..),
-                                                     Host, Port, mapResponseT,
-                                                     NetworkAddress, ResponseT (..),
+import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer (..), ResponseT (..),
+                                                     Host, Port, MonadResponse (replyRaw),
+                                                     NetworkAddress, mapResponseT,
                                                      RpcError (..), localhost,
                                                      sendRaw)
 
@@ -104,6 +105,8 @@ class Binary m => Message m where
 instance Message () where
     methodName _ = "()"
 
+reply :: (MonadResponse m, MonadDialog m, Message r) => r -> m ()
+reply msg = replyRaw =<< packMsg (pure ()) msg
 
 -- * Default instance
 
