@@ -210,7 +210,7 @@ getOutConnOrOpen addr@(host, port) = do
                        OutputConnection
                        { outConnSend = sender
                        , outConnSrc  = incomingSrc
-                       , outConnClose = NS.sClose sock
+                       , outConnClose = NS.close sock
                        }
                 outputConn . at (nid, addr) ?= conn
                 return conn

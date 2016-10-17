@@ -33,7 +33,7 @@ library
                      , Control.TimeWarp.Timed.TimedT
   build-depends:       ansi-terminal
                      , base == 4.*
-                     , binary >= 0.7.5
+                     , binary >= 0.8.3
                      , binary-conduit >= 1.2.4.1
                      , bytestring >= 0.10.6.0
                      , conduit >= 1.2.6
@@ -117,7 +117,7 @@ executable playground
   main-is:             Main.hs
   build-depends:       async >= 2.0.1
                      , base == 4.*
-                     , binary >= 0.7.5
+                     , binary >= 0.8.3
                      , data-default
                      , exceptions >= 0.8.2.1
                      , formatting
