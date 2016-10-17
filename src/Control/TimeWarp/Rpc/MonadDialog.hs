@@ -29,7 +29,6 @@ module Control.TimeWarp.Rpc.MonadDialog
 
        , send
        , listen
-       , reply
        , Listener (..)
        , getMethodName
        , ResponseT (..)
@@ -52,7 +51,7 @@ import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer (..),
                                                      Host, Port, mapResponseT,
                                                      NetworkAddress, ResponseT (..),
                                                      RpcError (..), localhost,
-                                                     MonadResponse (..))
+                                                     sendRaw)
 
 
 -- * MonadRpc
@@ -81,11 +80,7 @@ send addr msg = sendRaw addr =<< packMsg mname msg
 
 -- | Starts server.
 listen :: MonadDialog m => Port -> [Listener m] -> m ()
-listen port listeners = listenRaw port undefined undefined
-
--- | Sends a message to /peer/ node.
-reply :: (MonadDialog m, MonadResponse m, Message r) => r -> m ()
-reply msg = peerAddr >>= flip send msg
+listen port _ = listenRaw port undefined undefined
 
 
 -- * Listeners

@@ -14,18 +14,17 @@ module Main
 --    , runReal
     ) where
 
-import          Control.Monad.Random        (newStdGen)
 import          Control.Monad.Trans         (MonadIO (..))
 import          Data.Binary                 (Binary, get, put)
-import          Data.MessagePack.Object     (MessagePack)
+import          Data.MessagePack.Class      (MessagePack (..))
 import          Data.Void                   (Void, absurd)
 import          GHC.Generics                (Generic)
 
 import          Control.TimeWarp.Timed      (MonadTimed (wait), ms, sec', work,
-                                             interval, for, Microsecond, Second, till)
+                                             for, Second, till)
 import          Control.TimeWarp.Rpc        (MonadRpc (..), localhost, Listener (..),
                                              mkMessage, Port, NetworkAddress, send,
-                                             listen, MonadDialog, Request (..), reply,
+                                             listen, MonadDialog,
                                              Method (..), mkRequest)
 
 main :: IO ()
@@ -47,12 +46,21 @@ runEmulation scenario = do
 -- * data types
 
 data Ping = Ping
-    deriving (Generic, Binary, MessagePack)
+    deriving (Generic, Binary)
 $(mkMessage ''Ping)
 
+instance MessagePack Ping where
+    toObject _ = toObject ()
+    fromObject _ = pure Ping
+
 data Pong = Pong
-    deriving (Generic, Binary, MessagePack)
+    deriving (Generic, Binary)
 $(mkMessage ''Pong)
+
+instance MessagePack Pong where
+    toObject _ = toObject ()
+    fromObject _ = pure Pong
+
 
 $(mkMessage ''Void)
 
@@ -65,8 +73,12 @@ $(mkRequest ''Ping ''Pong ''Void)
 data EpicRequest = EpicRequest
     { num :: Int
     , msg :: String
-    } deriving (Generic, Binary, MessagePack)
+    } deriving (Generic, Binary)
 $(mkMessage ''EpicRequest)
+
+instance MessagePack EpicRequest where
+    toObject EpicRequest{..} = toObject (num, msg)
+    fromObject o = uncurry EpicRequest <$> fromObject o
 
 -- * scenarios
 
@@ -88,7 +100,7 @@ yohohoScenario = do
         listen (guysPort 2)
             [ Listener $ \Ping ->
                 -- can send an answer
-                reply Pong
+                send (guy 1) Pong
 
             , Listener $ \EpicRequest{..} ->
               do wait (for 0.1 sec')
