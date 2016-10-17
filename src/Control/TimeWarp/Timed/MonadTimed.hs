@@ -62,6 +62,7 @@ import           Data.Time.Units          (Microsecond, Millisecond, Minute, Sec
                                            TimeUnit (..), convertUnit)
 import           Data.Typeable            (Typeable)
 
+import           Control.TimeWarp.Node    (NodeField (..), NodeProcess (..))
 import           Control.TimeWarp.Logging (LoggerNameBox (..))
 
 -- | Defines some time point basing on current virtual time.
@@ -226,6 +227,7 @@ instance MonadTimed m => MonadTimed (ReaderT r m) where
 
     forkSlave m = lift . forkSlave . runReaderT m =<< ask
 
+
 type instance ThreadId (StateT s m) = ThreadId m
 
 instance MonadTimed m => MonadTimed (StateT s m) where
@@ -245,9 +247,21 @@ instance MonadTimed m => MonadTimed (StateT s m) where
 
     forkSlave m = lift . forkSlave . evalStateT m =<< get
 
-type instance ThreadId (LoggerNameBox m) = ThreadId m
 
 deriving instance MonadTimed m => MonadTimed (LoggerNameBox m)
+
+type instance ThreadId (LoggerNameBox m) = ThreadId m
+
+
+deriving instance MonadTimed m => MonadTimed (NodeField m)
+
+type instance ThreadId (NodeField m) = ThreadId m
+
+
+deriving instance MonadTimed m => MonadTimed (NodeProcess m)
+
+type instance ThreadId (NodeProcess m) = ThreadId m
+
 
 -- | Converts a specified time to `Microsecond`.
 mcs, ms, sec, minute, hour :: Int -> Microsecond

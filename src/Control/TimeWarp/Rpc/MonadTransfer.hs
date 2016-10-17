@@ -25,12 +25,12 @@ module Control.TimeWarp.Rpc.MonadTransfer
        , localhost
 
        , MonadTransfer (..)
-       
+
        , MonadResponse (..)
+       , ResponseContext (..)
        , ResponseT (..)
+       , runResponseT
        , mapResponseT
-       , replyRaw
-       , closePeer
 
        , RpcError (..)
        ) where
@@ -39,7 +39,7 @@ import           Control.Exception          (Exception)
 import           Control.Monad.Catch        (MonadThrow, MonadCatch, MonadMask)
 import           Control.Monad.Reader       (ReaderT (..), MonadReader (..), mapReaderT)
 import           Control.Monad.State        (MonadState)
-import           Control.Monad.Trans        (MonadTrans (..), MonadIO)
+import           Control.Monad.Trans        (MonadTrans (..), MonadIO (..))
 import           Data.Binary                (Get, Put)
 import           Data.ByteString            (ByteString)
 import           Data.Monoid                ((<>))
@@ -55,18 +55,22 @@ import           Control.TimeWarp.Timed     (MonadTimed, ThreadId)
 -- | Allows to send/receive raw byte sequences.
 class Monad m => MonadTransfer m where
     -- | Sends raw data.
-    sendRaw :: NetworkAddress  -- ^ Receiver's address
+    sendRaw :: NetworkAddress  -- ^ Destination address
             -> Put             -- ^ Data to send
             -> m ()
 
-    -- | Starts server.
-    --
-    -- If parsing of input byte stream failed, protocol skips one octet and tries again.
-    -- Consider checking for /magic/ sequence first while parsing.
-    listenRaw :: Port                      -- ^ Port to bind server
-              -> Get a                     -- ^ Parser for input byte sequence
-              -> (a -> ResponseT m ())     -- ^ Handler for received data
+    -- | Starts server with specified handler of incoming byte stream.
+    listenRaw :: Port                    -- ^ Port to bind server
+              -> Get a                   -- ^ Parser for input byte sequence
+              -> (a -> ResponseT m ())   -- ^ Handler for received data
               -> m ()
+
+    -- | Specifies incomings handler on outboud connection. Establishes connection
+    -- if is doesn't exists.
+    listenOutbound :: NetworkAddress
+                   -> Get a
+                   -> (a -> ResponseT m ())
+                   -> m ()
 
     -- | Closes connection to specified node, if exists.
     close :: NetworkAddress -> m ()
@@ -77,35 +81,39 @@ class Monad m => MonadTransfer m where
 -- | Provides operations with /peer/ node. Peer is a node, which this node is
 -- currently communicating with.
 class Monad m => MonadResponse m where
-    peerAddr :: m NetworkAddress
+    replyRaw :: Put -> m ()
+
+    closeR :: m ()
+
+data ResponseContext = ResponseContext
+    { respSend  :: Put -> IO ()
+    , respClose :: IO ()
+    }
 
 newtype ResponseT m a = ResponseT
-    { runResponseT :: ReaderT NetworkAddress m a
+    { getResponseT :: ReaderT ResponseContext m a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadTrans,
                 MonadThrow, MonadCatch, MonadMask,
                 MonadState s,
                 WithNamedLogger, MonadTimed, MonadTransfer)
 
-type instance ThreadId (ResponseT m) = ThreadId m
+runResponseT :: ResponseT m a -> ResponseContext -> m a
+runResponseT = runReaderT . getResponseT
 
-instance MonadTransfer m => MonadResponse (ResponseT m) where
-    peerAddr = ResponseT ask
+type instance ThreadId (ResponseT m) = ThreadId m
 
 instance MonadReader r m => MonadReader r (ResponseT m) where
     ask = lift ask
     reader f = lift $ reader f
     local = mapResponseT . local
 
+instance (MonadTransfer m, MonadIO m) => MonadResponse (ResponseT m) where
+    replyRaw dat = ResponseT $ ask >>= \ctx -> liftIO $ respSend ctx dat
+
+    closeR = ResponseT $ ask >>= liftIO . respClose
+
 mapResponseT :: (m a -> n b) -> ResponseT m a -> ResponseT n b
-mapResponseT how = ResponseT . mapReaderT how . runResponseT
-
--- | Sends data to /peer/ node.
-replyRaw :: (MonadTransfer m, MonadResponse m) => Put -> m ()
-replyRaw s = peerAddr >>= flip sendRaw s
-
--- | Closes connection with /peer/ node.
-closePeer :: (MonadTransfer m, MonadResponse m) => m ()
-closePeer = peerAddr >>= close
+mapResponseT how = ResponseT . mapReaderT how . getResponseT
 
 -- * Related datatypes
 
@@ -151,7 +159,10 @@ instance MonadTransfer m => MonadTransfer (ReaderT r m) where
         ReaderT $ \r -> listenRaw port parser $
                         mapResponseT (flip runReaderT r) . listener
 
+    listenOutbound addr parser listener =
+        ReaderT $ \r -> listenOutbound addr parser $
+                        mapResponseT (flip runReaderT r) . listener
+
     close = lift . close
 
 deriving instance MonadTransfer m => MonadTransfer (LoggerNameBox m)
-
