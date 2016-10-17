@@ -35,7 +35,7 @@ import           Control.Monad.Catch                (MonadCatch, MonadMask,
                                                      bracket, handleAll)
 import           Control.Monad                      (forM_, unless, void, guard)
 import           Control.Monad.Base                 (MonadBase)
-import           Control.Monad.Reader               (ReaderT (..), ask, mapReaderT)
+import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (runStateT, StateT (..))
 import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
@@ -51,7 +51,7 @@ import           Data.Maybe                         (isJust, fromJust)
 import           Data.Streaming.Network             (getSocketFamilyTCP,
                                                      runTCPServerWithHandle,
                                                      serverSettingsTCP, safeRecv)
--- import           Formatting                         (sformat, shown, (%))
+import           Formatting                         (sformat, shown, (%))
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
 import           Network.Socket                     as NS
 import           Network.Socket.ByteString          (sendAll)
@@ -60,18 +60,15 @@ import           Data.Conduit                       (($$+), ($$++), yield,
                                                      ResumableSource)
 import           Data.Conduit.Serialization.Binary  (sinkGet)
 
---import           Control.TimeWarp.Logging           (logInfo, initLogging,
---                                                     Severity (Info), setLoggerName,
---                                                     WithNamedLogger)
-import           Control.TimeWarp.Node              (NodeField, NodeProcess, NodeId,
-                                                     WithNodes (..), InsideNode (..))
+import           Control.TimeWarp.Logging           (logInfo, logWarning, initLogging,
+                                                     Severity (Info), usingLoggerName)
 import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer (..), NetworkAddress,
                                                      runResponseT, sendRaw,
                                                      ResponseT, ResponseContext (..),
-                                                     runResponseT, localhost)
+                                                     runResponseT, localhost, replyRaw)
 import           Control.TimeWarp.Timed             (MonadTimed, TimedIO, ThreadId,
                                                      wait, for, ms,
-                                                     schedule, after, work)
+                                                     schedule, after, work, runTimedIO)
 
 -- * Realted datatypes
 
@@ -79,6 +76,7 @@ import           Control.TimeWarp.Timed             (MonadTimed, TimedIO, Thread
 
 data OutputConnection = OutputConnection
     { outConnSend  :: Put -> IO ()
+      -- | When someone starts listening, it should swap content with `Nothing`
     , outConnSrc   :: TVar (Maybe (ResumableSource IO ByteString))
     , outConnClose :: IO ()
     }
@@ -94,7 +92,7 @@ type InConnId = Int
 
 data Manager = Manager
     { _inputConn        :: M.Map InConnId InputConnection
-    , _outputConn       :: M.Map (NodeId, NetworkAddress) OutputConnection
+    , _outputConn       :: M.Map NetworkAddress OutputConnection
     , _inputConnCounter :: InConnId
     }
 $(makeLenses ''Manager)
@@ -111,25 +109,14 @@ initManager =
 -- * Transfer
 
 newtype Transfer a = Transfer
-    { getTransfer :: ReaderT (MVar Manager) (NodeProcess TimedIO) a
-    } deriving (Functor, Applicative, Monad, MonadIO, MonadBase IO,
-                MonadThrow, MonadCatch, MonadMask, MonadTimed,
-                InsideNode)
-
-type instance ThreadId Transfer = C.ThreadId
-
-newtype TransferContext a = TransferContext
-    { getTransferCtx :: ReaderT (MVar Manager) (NodeField TimedIO) a
+    { getTransfer :: ReaderT (MVar Manager) TimedIO a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadBase IO,
                 MonadThrow, MonadCatch, MonadMask, MonadTimed)
 
-type instance ThreadId TransferContext = C.ThreadId
+type instance ThreadId Transfer = C.ThreadId
 
-runTransfer :: TransferContext a -> NodeField TimedIO a
-runTransfer t = liftIO (newMVar initManager) >>= runReaderT (getTransferCtx t)
-
-instance WithNodes Transfer TransferContext where
-    newNode (Transfer m) = TransferContext $ mapReaderT newNode $ m
+runTransfer :: Transfer a -> TimedIO a
+runTransfer t = liftIO (newMVar initManager) >>= runReaderT (getTransfer t)
 
 modifyManager :: StateT Manager IO a -> Transfer a
 modifyManager how = Transfer $
@@ -171,8 +158,7 @@ instance MonadTransfer Transfer where
             maybeOutConnSrc
 
     close addr = do
-        nid <- getNodeId
-        maybeWasConn <- modifyManager $ outputConn . at (nid, addr) <<.= Nothing
+        maybeWasConn <- modifyManager $ outputConn . at addr <<.= Nothing
         liftIO $ forM_ maybeWasConn outConnClose
 
 
@@ -190,14 +176,13 @@ acceptRequests sender parser listener src = do
     responseCtx =
         ResponseContext
         { respSend  = sender
-        , respClose = error "acceptRequests: respClose"
+        , respClose = error "acceptRequests: respClose not implemented"
         }
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
 getOutConnOrOpen addr@(host, port) = do
-    nid <- getNodeId
     modifyManager $ do
-        existing <- use $ outputConn . at (nid, addr)
+        existing <- use $ outputConn . at addr
         if isJust existing
             then
                 return $ fromJust existing
@@ -212,7 +197,7 @@ getOutConnOrOpen addr@(host, port) = do
                        , outConnSrc  = incomingSrc
                        , outConnClose = NS.close sock
                        }
-                outputConn . at (nid, addr) ?= conn
+                outputConn . at addr ?= conn
                 return conn
 
 mkSender :: MonadIO m => Socket -> m (Put -> IO ())
@@ -240,8 +225,6 @@ socketSource sock = liftIO $ fst <$> (source $$+ return ())
 
 -- * Instances
 
-type instance ThreadId Transfer = C.ThreadId
-
 instance MonadBaseControl IO Transfer where
     type StM Transfer a = StM (ReaderT (MVar Manager) TimedIO) a
     liftBaseWith io =
@@ -251,39 +234,46 @@ instance MonadBaseControl IO Transfer where
 
 -- * Example
 
-exampleTransfer :: TransferContext ()
-exampleTransfer = do
-    -- liftIO $ initLogging ["node"] Info
-    -- setLoggerName "node" $ do
-        newNode $ work (for 500 ms) $ ha $
-            listenRaw 1234 parser $ 
+
+exampleTransfer :: IO ()
+exampleTransfer = runTimedIO $ do
+    liftIO $ initLogging ["node"] Info
+    runTransfer $ usingLoggerName "node.server" $
+        work (for 500 ms) $ ha $
+            listenRaw 1234 decoder $
             \req -> do
-                liftIO $ print req
-            --    logInfo $ sformat ("Got "%shown) req
-                -- replyRaw $ put ("Ok!" :: ByteString)
-    
-        wait (for 100 ms)
+                logInfo $ sformat ("Got "%shown) req
+                replyRaw $ put $ sformat "Ok!"
 
-        newNode $
-            schedule (after 200 ms) $ ha $ do
-                forM_ [1..7] $ sendRaw (localhost, 1234) . (put bad >> ) . writer . Left
-                -- listenOutbound (localhost, 1234) (get :: Get ByteString) (liftIO . print)
+    wait (for 100 ms)
 
-        newNode $
-            schedule (after 200 ms) $ ha $ do
-                forM_ [1..5] $ sendRaw (localhost, 1234) . writer . Right . (-1, )
-                listenOutbound (localhost, 1234) (get :: Get ByteString) (liftIO . print)
+    runTransfer $ usingLoggerName "node.client-1" $
+        schedule (after 200 ms) $ ha $ do
+            work (for 500 ms) $ ha $
+                listenOutbound (localhost, 1234) get logInfo
+            forM_ [1..7] $ sendRaw (localhost, 1234) . (put bad >> ) . encoder . Left
+
+    runTransfer $ usingLoggerName "node.client-2" $
+        schedule (after 200 ms) $ ha $ do
+            forM_ [1..5] $ sendRaw (localhost, 1234) . encoder . Right . (-1, )
+            work (for 500 ms) $ ha $
+                listenOutbound (localhost, 1234) get logInfo
+
+    wait (for 500 ms)
   where
-    ha = handleAll (liftIO . print)
+    ha = handleAll $ logWarning . sformat ("Exception: "%shown)
 
-    parser :: Get (Either Int (Int, Int))
-    parser = do
+    decoder :: Get (Either Int (Int, Int))
+    decoder = do
         magic <- get
-        guard $ magic == (234 :: Int)
+        guard $ magic == magicVal
         get
 
-    writer :: Either Int (Int, Int) -> Put
-    writer d = put (234 :: Int) >> put d
+    encoder :: Either Int (Int, Int) -> Put
+    encoder d = put magicVal >> put d
+
+    magicVal :: Int
+    magicVal = 234
 
     bad :: String
     bad = "345"
