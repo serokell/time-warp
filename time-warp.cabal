@@ -17,8 +17,6 @@ description:
 library
   exposed-modules:     Control.TimeWarp.Logging
 
-                     , Control.TimeWarp.Node
-
                      , Control.TimeWarp.Rpc
                      , Control.TimeWarp.Rpc.MonadDialog
                      , Control.TimeWarp.Rpc.MonadTransfer

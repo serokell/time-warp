@@ -60,7 +60,7 @@ class MonadDialog m => MonadRpc m where
 
 -- * Rpc request
 
-class ( Message r 
+class ( Message r
       , Message (Response r)
       , Message (ExpectedError r)
       , Exception (ExpectedError r)
