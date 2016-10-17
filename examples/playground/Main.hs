@@ -15,9 +15,9 @@ module Main
     ) where
 
 import          Control.Monad.Trans         (MonadIO (..))
-import          Data.Binary                 (Binary, get, put)
+import          Data.Binary                 (Binary)
 import          Data.MessagePack.Class      (MessagePack (..))
-import          Data.Void                   (Void, absurd)
+import          Data.Void                   (Void)
 import          GHC.Generics                (Generic)
 
 import          Control.TimeWarp.Timed      (MonadTimed (wait), ms, sec', work,
@@ -63,10 +63,6 @@ instance MessagePack Pong where
 
 
 $(mkMessage ''Void)
-
-instance Binary Void where
-    get = return undefined
-    put = absurd
 
 $(mkRequest ''Ping ''Pong ''Void)
 
@@ -124,7 +120,7 @@ yohohoScenario = do
     finish :: Second
     finish = 1
 
-rpcScenario :: (MonadTimed m, MonadRpc m, MonadIO m) => m ()
+rpcScenario :: (MonadTimed m, MonadRpc m) => m ()
 rpcScenario = do
     work (till finish) $
         serve 1234 [ Method $ \Ping -> return Pong

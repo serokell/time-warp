@@ -89,7 +89,7 @@ listen port _ = listenRaw port undefined undefined
 data Listener m =
     forall r . Message r => Listener (r -> ResponseT m ())
 
-getMethodName :: MonadDialog m => Listener m -> String
+getMethodName :: Listener m -> String
 getMethodName (Listener f) = methodName $ proxyOfArg f
   where
     proxyOfArg :: (a -> b) -> Proxy a
