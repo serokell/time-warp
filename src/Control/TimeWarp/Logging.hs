@@ -50,6 +50,8 @@ import           Control.Monad.Trans       (MonadIO (liftIO), MonadTrans, lift)
 import           Control.Monad.Trans.Cont  (ContT, mapContT)
 import           Control.Lens              (Wrapped (..), iso)
 
+import qualified Data.Semigroup            as Semigroup
+import           Data.Semigroup            (Semigroup)
 import           Data.String               (IsString)
 import qualified Data.Text                 as T
 import           Data.Typeable             (Typeable)
@@ -85,8 +87,10 @@ newtype LoggerName = LoggerName
 -- (see <http://hackage.haskell.org/package/hslogger-1.2.10/docs/System-Log-Logger.html hslogger description>).
 instance Monoid LoggerName where
     mempty = ""
+    mappend = (Semigroup.<>)
 
-    LoggerName base `mappend` LoggerName suffix
+instance Semigroup LoggerName where
+    LoggerName base <> LoggerName suffix
         | null base = LoggerName suffix
         | otherwise = LoggerName $ base ++ "." ++ suffix
 
