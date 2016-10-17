@@ -58,6 +58,7 @@ library
                      , random >= 1.1
                      , safe
                      , serokell-core
+                     , semigroups
                      , slave-thread >= 1.0
                      , stm >= 2.4.4
                      , streaming-commons >= 0.1.15
