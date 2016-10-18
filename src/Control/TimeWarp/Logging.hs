@@ -91,8 +91,9 @@ instance Monoid LoggerName where
 
 instance Semigroup LoggerName where
     LoggerName base <> LoggerName suffix
-        | null base = LoggerName suffix
-        | otherwise = LoggerName $ base ++ "." ++ suffix
+        | null base   = LoggerName suffix
+        | null suffix = LoggerName base
+        | otherwise   = LoggerName $ base ++ "." ++ suffix
 
 convertSeverity :: Severity -> Priority
 convertSeverity Debug   = DEBUG
