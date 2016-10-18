@@ -62,7 +62,7 @@ import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer (..), Network
                                                      runResponseT, sendRaw,
                                                      ResponseT, ResponseContext (..),
                                                      runResponseT)
-import           Control.TimeWarp.Timed             (MonadTimed, TimedIO, ThreadId)
+import           Control.TimeWarp.Timed             (MonadTimed, TimedIO, ThreadId, fork_)
 
 
 -- * Realted datatypes
@@ -164,7 +164,7 @@ acceptRequests :: (Put -> IO ())
                -> Transfer ()
 acceptRequests sender parser listener src = do
     (src', rec) <- liftIO $ src $$++ sinkGet insistantParser
-    runResponseT (listener rec) responseCtx
+    fork_ $ runResponseT (listener rec) responseCtx
     acceptRequests sender parser listener src'
   where
     insistantParser = parser <|> (getWord8 >> insistantParser)
