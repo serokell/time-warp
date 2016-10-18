@@ -97,16 +97,16 @@ instance (MonadTimed m, MonadDialog m, MonadIO m, MonadMask m)
         -- make slot for response
         slot <- liftIO newEmptyMVar
         fork_ $ listenIncoming
-        bracket (allocateRespSlot slot)
+        bracket (allocateResponseSlot slot)
                 (\msgid -> modifyManager $ msgSlots . at msgid .= Nothing) $
                  \msgid -> do
                     -- send
                     sendH addr (put msgid) req
-                    -- process answer
+                    -- wait for answer
                     resp <- liftIO $ takeMVar slot
                     return $ fromDyn resp typeMismatchError
       where
-        allocateRespSlot slot = modifyManager $ do
+        allocateResponseSlot slot = modifyManager $ do
             msgid <- msgCounter <<+= 1
             msgSlots . at msgid ?= slot
             return msgid
@@ -117,8 +117,7 @@ instance (MonadTimed m, MonadDialog m, MonadIO m, MonadMask m)
                 liftIO . forM_ maybeSlot $ 
                     flip putMVar $ toDyn $ restrictType req resp
             ]
-        restrictType :: 
-                     r -> Response r -> Response r
+        restrictType :: r -> Response r -> Response r
         restrictType = const id
         typeMismatchError = error "Type mismatch! Probably msgid duplicate"
 
