@@ -9,7 +9,7 @@
 {-# LANGUAGE UndecidableInstances      #-}
 
 -- |
--- Module      : Control.TimeWarp.MonadTransfer
+-- Module      : Control.TimeWarp.Rpc.MonadTransfer
 -- Copyright   : (c) Serokell, 2016
 -- License     : GPL-3 (see the file LICENSE)
 -- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>

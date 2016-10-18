@@ -8,7 +8,7 @@
 {-# LANGUAGE TypeFamilies              #-}
 
 -- |
--- Module      : Control.TimeWarp.MonadRpc
+-- Module      : Control.TimeWarp.Rpc.MonadRpc
 -- Copyright   : (c) Serokell, 2016
 -- License     : GPL-3 (see the file LICENSE)
 -- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
@@ -28,23 +28,18 @@ module Control.TimeWarp.Rpc.MonadRpc
        , Method (..)
 
        , MonadRpc (..)
-       , Rpc (..)
        , RpcError (..)
        ) where
 
-import           Control.Monad.Catch               (MonadThrow, MonadCatch, MonadMask)
 import           Control.Exception                 (Exception)
-import           Control.Monad.Reader              (ReaderT (..), MonadReader)
-import           Control.Monad.State               (MonadState)
-import           Control.Monad.Trans               (MonadTrans (..), MonadIO)
+import           Control.Monad.Reader              (ReaderT (..))
+import           Control.Monad.Trans               (MonadTrans (..))
 
-
-import           Control.TimeWarp.Logging          (WithNamedLogger, LoggerNameBox (..))
-import           Control.TimeWarp.Timed.MonadTimed (MonadTimed, ThreadId)
+import           Control.TimeWarp.Logging          (LoggerNameBox (..))
 import           Control.TimeWarp.Rpc.MonadDialog  (MonadDialog (..), NetworkAddress,
                                                     Host, Port, RpcError (..), Message,
-                                                    localhost, ResponseT (..))
-import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer)
+                                                    localhost)
+import           Control.TimeWarp.Rpc.MonadTransfer (ResponseT (..), mapResponseT)
 
 
 -- * MonadRpc
@@ -52,7 +47,7 @@ import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer)
 -- | Defines protocol of RPC layer.
 class MonadDialog m => MonadRpc m where
     -- | Remote method call.
-    call :: NetworkAddress -> r -> m (Response r)
+    call :: Request r => NetworkAddress -> r -> m (Response r)
 
     -- | Starts RPC server with a set of RPC methods.
     serve :: Port -> [Method m] -> m ()
@@ -74,24 +69,7 @@ class ( Message r
 
 -- | Creates RPC-method.
 data Method m =
-    forall r . Request r => Method (r -> m (Response r))
-
-
--- * Default instance of `MonadRpc`
-
-newtype Rpc m a = Rpc
-    { runRpc :: m a
-    } deriving (Functor, Applicative, Monad, MonadIO,
-                MonadThrow, MonadCatch, MonadMask,
-                MonadReader r, MonadState s,
-                WithNamedLogger, MonadTimed, MonadTransfer, MonadDialog)
-
-type instance ThreadId (Rpc m) = ThreadId m
-
-instance MonadDialog m => MonadRpc (Rpc m) where
-    call = undefined
-
-    serve = undefined
+    forall r . Request r => Method (r -> ResponseT m (Response r))
 
 
 -- * Instances
@@ -102,13 +80,8 @@ instance MonadRpc m => MonadRpc (ReaderT r m) where
     serve port listeners = ReaderT $
                             \r -> serve port (convert r <$> listeners)
       where
-        convert r (Method f) = Method $ flip runReaderT r . f
+        convert r (Method f) = Method $ mapResponseT (flip runReaderT r) . f
 
-instance MonadRpc m => MonadRpc (LoggerNameBox m) where
-    call addr req = LoggerNameBox $ call addr req
-
-    serve port listeners = LoggerNameBox $ serve port (convert <$> listeners)
-      where
-        convert (Method f) = Method $ loggerNameBoxEntry . f
+deriving instance MonadRpc m => MonadRpc (LoggerNameBox m)
 
 deriving instance MonadRpc m => MonadRpc (ResponseT m)

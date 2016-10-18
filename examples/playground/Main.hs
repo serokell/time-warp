@@ -36,7 +36,7 @@ import          Control.TimeWarp.Rpc        (MonadRpc (..), localhost, Listener 
                                              listen, runTransfer, reply, listenOutbound,
                                              Method (..), mkRequest, runBinaryDialog,
                                              listenOutboundRaw, listenRaw,
-                                             sendRaw, replyRaw)
+                                             sendRaw, replyRaw, runRpc)
 
 main :: IO ()
 main = return ()  -- use ghci
@@ -127,14 +127,23 @@ yohohoScenario = runTimedIO $ do
     ha = handleAll $ logError . sformat shown
 
 -- * Simple Rpc scenario
-rpcScenario :: (MonadTimed m, MonadRpc m) => m ()
-rpcScenario = do
-    work (till finish) $
-        serve 1234 [ Method $ \Ping -> return Pong
-                   ]
+rpcScenario :: IO ()
+rpcScenario = runTimedIO $ do
+    liftIO $ initLogging ["server", "cli"] Debug
+    runTransfer . runBinaryDialog . runRpc . usingLoggerName "server" $
+        work (till finish) $
+            serve 1234
+                [ Method $ \Ping -> do
+                  do logInfo "Got Ping! Wait a sec..."
+                     wait (for 1000 ms)
+                     logInfo "Replying"
+                     return Pong
+                ]
 
     wait (for 100 ms)
-    Pong <- call (localhost, 1234) Ping
+    runTransfer . runBinaryDialog . runRpc . usingLoggerName "cli" $ do
+        Pong <- call (localhost, 1234) Ping
+        logInfo "Got Pong!"
     return ()
   where
     finish :: Second
