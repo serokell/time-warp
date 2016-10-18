@@ -67,10 +67,10 @@ class Monad m => MonadTransfer m where
 
     -- | Specifies incomings handler on outboud connection. Establishes connection
     -- if is doesn't exists.
-    listenOutbound :: NetworkAddress
-                   -> Get a
-                   -> (a -> ResponseT m ())
-                   -> m ()
+    listenOutboundRaw :: NetworkAddress
+                      -> Get a
+                      -> (a -> ResponseT m ())
+                      -> m ()
 
     -- | Closes connection to specified node, if exists.
     close :: NetworkAddress -> m ()
@@ -159,8 +159,8 @@ instance MonadTransfer m => MonadTransfer (ReaderT r m) where
         ReaderT $ \r -> listenRaw port parser $
                         mapResponseT (flip runReaderT r) . listener
 
-    listenOutbound addr parser listener =
-        ReaderT $ \r -> listenOutbound addr parser $
+    listenOutboundRaw addr parser listener =
+        ReaderT $ \r -> listenOutboundRaw addr parser $
                         mapResponseT (flip runReaderT r) . listener
 
     close = lift . close

@@ -14,18 +14,22 @@ module Main
 --    , runReal
     ) where
 
-import          Control.Monad.Trans         (MonadIO (..))
+import          Control.Monad.Catch         (handleAll)
+import          Control.Monad.Trans         (liftIO)
 import          Data.Binary                 (Binary)
-import          Data.MessagePack.Class      (MessagePack (..))
+import          Data.MessagePack            (MessagePack (..))
 import          Data.Void                   (Void)
 import          GHC.Generics                (Generic)
+import          Formatting                  (sformat, (%), shown, string)
 
+import          Control.TimeWarp.Logging    (usingLoggerName, logDebug, logInfo,
+                                             initLogging, Severity (Debug), logError)
 import          Control.TimeWarp.Timed      (MonadTimed (wait), ms, sec', work,
-                                             for, Second, till)
+                                             for, Second, till, fork_, runTimedIO)
 import          Control.TimeWarp.Rpc        (MonadRpc (..), localhost, Listener (..),
                                              mkMessage, Port, NetworkAddress, send,
-                                             listen, MonadDialog,
-                                             Method (..), mkRequest)
+                                             listen, runTransfer, reply, listenOutbound,
+                                             Method (..), mkRequest, runBinaryDialog)
 
 main :: IO ()
 main = return ()  -- use ghci
@@ -46,35 +50,22 @@ runEmulation scenario = do
 -- * data types
 
 data Ping = Ping
-    deriving (Generic, Binary)
+    deriving (Generic, Binary, MessagePack)
 $(mkMessage ''Ping)
 
-instance MessagePack Ping where
-    toObject _ = toObject ()
-    fromObject _ = pure Ping
-
 data Pong = Pong
-    deriving (Generic, Binary)
+    deriving (Generic, Binary, MessagePack)
 $(mkMessage ''Pong)
 
-instance MessagePack Pong where
-    toObject _ = toObject ()
-    fromObject _ = pure Pong
-
-
 $(mkMessage ''Void)
-
 $(mkRequest ''Ping ''Pong ''Void)
 
 data EpicRequest = EpicRequest
     { num :: Int
     , msg :: String
-    } deriving (Generic, Binary)
+    } deriving (Generic, Binary, MessagePack)
 $(mkMessage ''EpicRequest)
 
-instance MessagePack EpicRequest where
-    toObject EpicRequest{..} = toObject (num, msg)
-    fromObject o = uncurry EpicRequest <$> fromObject o
 
 -- * scenarios
 
@@ -89,36 +80,44 @@ guysPort = (+10000)
 -- 2: Pong
 -- 1: EpicRequest ...
 -- 2: <prints result>
-yohohoScenario :: (MonadTimed m, MonadDialog m, MonadIO m) => m ()
-yohohoScenario = do
+yohohoScenario :: IO ()
+yohohoScenario = runTimedIO $ do
+    liftIO $ initLogging ["guy"] Debug
+
     -- guy 1
-    work (till finish) $
-        listen (guysPort 2)
-            [ Listener $ \Ping ->
-                -- can send an answer
-                send (guy 1) Pong
-
-            , Listener $ \EpicRequest{..} ->
-              do wait (for 0.1 sec')
-                 -- can do IO
-                 liftIO . putStrLn $ show (num + 1) ++ msg
-            ]
-
+    runTransfer . runBinaryDialog . usingLoggerName "guy.1" . fork_ $ do
+        work (till finish) $
+            listen (guysPort 1)
+                [ Listener $ \Pong -> ha $
+                  do logDebug "Got Pong!"
+                     reply $ EpicRequest 14 " men on the dead man's chest"
+                ]
+        -- guy 1 initiates dialog
+        wait (for 100 ms)
+        send (guy 2) Ping
+ 
     -- guy 2
-    work (till finish) $
-        listen (guysPort 1)
-            [ Listener $ \Pong ->
-                -- can send another request
-                send (guy 2) $ EpicRequest 14 " men on the dead man's chest"
-            ]
+    runTransfer . runBinaryDialog . usingLoggerName "guy.2" . fork_ $ do
+        work (till finish) $
+            listen (guysPort 2)
+                [ Listener $ \Ping ->
+                  do logDebug "Got Ping!"
+                     send (guy 1) Pong
+                ] 
+        work (till finish) $
+            listenOutbound (guy 1) $
+                [ Listener $ \EpicRequest{..} -> ha $
+                  do logDebug "Got EpicRequest!"
+                     wait (for 0.1 sec')
+                     logInfo $ sformat (shown%string) (num + 1) msg
+                ]
 
-    -- guy 1 initiates dialog
-    wait (for 100 ms)
-    send (guy 2) Ping
     wait (till finish)
   where
     finish :: Second
     finish = 1
+
+    ha = handleAll $ logError . sformat shown
 
 rpcScenario :: (MonadTimed m, MonadRpc m) => m ()
 rpcScenario = do

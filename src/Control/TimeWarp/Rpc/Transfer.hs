@@ -70,6 +70,7 @@ import           Control.TimeWarp.Timed             (MonadTimed, TimedIO, Thread
                                                      wait, for, ms,
                                                      schedule, after, work, runTimedIO)
 
+
 -- * Realted datatypes
 
 -- ** Connections
@@ -149,7 +150,7 @@ instance MonadTransfer Transfer where
                 inputConn . at connId .= Just conn
             return src
 
-    listenOutbound addr parser listener = do
+    listenOutboundRaw addr parser listener = do
         conn <- getOutConnOrOpen addr
         maybeOutConnSrc <- liftIO . atomically $ swapTVar (outConnSrc conn) Nothing
         maybe
@@ -250,16 +251,16 @@ exampleTransfer = runTimedIO $ do
     runTransfer $ usingLoggerName "node.client-1" $
         schedule (after 200 ms) $ ha $ do
             work (for 500 ms) $ ha $
-                listenOutbound (localhost, 1234) get logInfo
+                listenOutboundRaw (localhost, 1234) get logInfo
             forM_ [1..7] $ sendRaw (localhost, 1234) . (put bad >> ) . encoder . Left
 
     runTransfer $ usingLoggerName "node.client-2" $
         schedule (after 200 ms) $ ha $ do
             forM_ [1..5] $ sendRaw (localhost, 1234) . encoder . Right . (-1, )
             work (for 500 ms) $ ha $
-                listenOutbound (localhost, 1234) get logInfo
+                listenOutboundRaw (localhost, 1234) get logInfo
 
-    wait (for 500 ms)
+    wait (for 800 ms)
   where
     ha = handleAll $ logWarning . sformat ("Exception: "%shown)
 
