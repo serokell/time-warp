@@ -19,6 +19,7 @@ import          Control.Monad               (guard, forM_)
 import          Control.Monad.Catch         (handleAll)
 import          Control.Monad.Trans         (liftIO)
 import          Data.Binary                 (Binary, Get, Put, get, put)
+import          Data.Data                   (Data)
 import          Data.MessagePack            (MessagePack (..))
 import          Data.Void                   (Void)
 import          GHC.Generics                (Generic)
@@ -31,7 +32,7 @@ import          Control.TimeWarp.Timed      (MonadTimed (wait), ms, sec', work,
                                              for, Second, till, fork_, runTimedIO,
                                              after, schedule)
 import          Control.TimeWarp.Rpc        (MonadRpc (..), localhost, Listener (..),
-                                             mkMessage, Port, NetworkAddress, send,
+                                             Message, Port, NetworkAddress, send,
                                              listen, runTransfer, reply, listenOutbound,
                                              Method (..), mkRequest, runBinaryDialog,
                                              listenOutboundRaw, listenRaw,
@@ -56,21 +57,21 @@ runEmulation scenario = do
 -- * data types
 
 data Ping = Ping
-    deriving (Generic, Binary, MessagePack)
-$(mkMessage ''Ping)
+    deriving (Generic, Data, Binary, MessagePack, Message)
 
 data Pong = Pong
-    deriving (Generic, Binary, MessagePack)
-$(mkMessage ''Pong)
+    deriving (Generic, Data, Binary, MessagePack, Message)
 
-$(mkMessage ''Void)
+instance Message Void
+
 $(mkRequest ''Ping ''Pong ''Void)
 
 data EpicRequest = EpicRequest
     { num :: Int
     , msg :: String
-    } deriving (Generic, Binary, MessagePack)
-$(mkMessage ''EpicRequest)
+    } deriving (Generic, Data, Binary, MessagePack)
+
+instance Message EpicRequest
 
 
 -- * scenarios

@@ -1,3 +1,4 @@
+{-# LANGUAGE DefaultSignatures         #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
@@ -57,10 +58,11 @@ import           Control.Monad.Reader               (MonadReader, ReaderT)
 import           Control.Monad.State                (MonadState)
 import           Control.Monad.Trans                (MonadIO, lift)
 import           Data.Binary                        (Binary, Get, Put, put, get)
+import           Data.Data                          (dataTypeOf, dataTypeName, Data)
 import           Data.Dynamic                       (Typeable, Dynamic, toDyn, fromDyn)
 import           Data.Foldable                      (foldMap)
 import           Data.Monoid                        (Alt (..))
-import           Data.Proxy                         (Proxy (..))
+import           Data.Proxy                         (Proxy (..), asProxyTypeOf)
 import qualified Data.Traversable                   as T
 
 import           Control.TimeWarp.Logging           (WithNamedLogger, LoggerNameBox (..))
@@ -186,6 +188,8 @@ proxyOf _ = Proxy
 
 class (Typeable m, Binary m) => Message m where
     methodName :: Proxy m -> String
+    default methodName :: Data m => Proxy m -> String
+    methodName proxy = dataTypeName . dataTypeOf $ undefined `asProxyTypeOf` proxy
 
 instance Message () where
     methodName _ = "()"
