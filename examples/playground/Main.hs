@@ -10,26 +10,32 @@ module Main
     ( main
     , yohohoScenario
     , rpcScenario
+    , transferScenario
 --    , runEmulation
 --    , runReal
     ) where
 
+import          Control.Monad               (guard, forM_)
 import          Control.Monad.Catch         (handleAll)
 import          Control.Monad.Trans         (liftIO)
-import          Data.Binary                 (Binary)
+import          Data.Binary                 (Binary, Get, Put, get, put)
 import          Data.MessagePack            (MessagePack (..))
 import          Data.Void                   (Void)
 import          GHC.Generics                (Generic)
 import          Formatting                  (sformat, (%), shown, string)
 
 import          Control.TimeWarp.Logging    (usingLoggerName, logDebug, logInfo,
-                                             initLogging, Severity (Debug), logError)
+                                             initLogging, Severity (Debug), logError,
+                                             logWarning)
 import          Control.TimeWarp.Timed      (MonadTimed (wait), ms, sec', work,
-                                             for, Second, till, fork_, runTimedIO)
+                                             for, Second, till, fork_, runTimedIO,
+                                             after, schedule)
 import          Control.TimeWarp.Rpc        (MonadRpc (..), localhost, Listener (..),
                                              mkMessage, Port, NetworkAddress, send,
                                              listen, runTransfer, reply, listenOutbound,
-                                             Method (..), mkRequest, runBinaryDialog)
+                                             Method (..), mkRequest, runBinaryDialog,
+                                             listenOutboundRaw, listenRaw,
+                                             sendRaw, replyRaw)
 
 main :: IO ()
 main = return ()  -- use ghci
@@ -119,6 +125,7 @@ yohohoScenario = runTimedIO $ do
 
     ha = handleAll $ logError . sformat shown
 
+-- * Simple Rpc scenario
 rpcScenario :: (MonadTimed m, MonadRpc m) => m ()
 rpcScenario = do
     work (till finish) $
@@ -131,3 +138,48 @@ rpcScenario = do
   where
     finish :: Second
     finish = 5
+
+-- | Example of `Transfer` usage
+transferScenario :: IO ()
+transferScenario = runTimedIO $ do
+    liftIO $ initLogging ["node"] Debug
+    runTransfer $ usingLoggerName "node.server" $
+        work (for 500 ms) $ ha $
+            listenRaw 1234 decoder $
+            \req -> do
+                logInfo $ sformat ("Got "%shown) req
+                replyRaw $ put $ sformat "Ok!"
+
+    wait (for 100 ms)
+
+    runTransfer $ usingLoggerName "node.client-1" $
+        schedule (after 200 ms) $ ha $ do
+            work (for 500 ms) $ ha $
+                listenOutboundRaw (localhost, 1234) get logInfo
+            forM_ [1..7] $ sendRaw (localhost, 1234) . (put bad >> ) . encoder . Left
+
+    runTransfer $ usingLoggerName "node.client-2" $
+        schedule (after 200 ms) $ ha $ do
+            forM_ [1..5] $ sendRaw (localhost, 1234) . encoder . Right . (-1, )
+            work (for 500 ms) $ ha $
+                listenOutboundRaw (localhost, 1234) get logInfo
+
+    wait (for 800 ms)
+  where
+    ha = handleAll $ logWarning . sformat ("Exception: "%shown)
+
+    decoder :: Get (Either Int (Int, Int))
+    decoder = do
+        magic <- get
+        guard $ magic == magicVal
+        get
+
+    encoder :: Either Int (Int, Int) -> Put
+    encoder d = put magicVal >> put d
+
+    magicVal :: Int
+    magicVal = 234
+
+    bad :: String
+    bad = "345"
+
