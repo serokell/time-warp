@@ -21,6 +21,7 @@ library
                      , Control.TimeWarp.Rpc.MonadDialog
                      , Control.TimeWarp.Rpc.MonadTransfer
                      , Control.TimeWarp.Rpc.MonadRpc
+                     , Control.TimeWarp.Rpc.Rpc
                      , Control.TimeWarp.Rpc.TH
                      , Control.TimeWarp.Rpc.Transfer
 
