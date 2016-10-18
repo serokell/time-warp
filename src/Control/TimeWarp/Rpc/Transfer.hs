@@ -19,7 +19,6 @@
 module Control.TimeWarp.Rpc.Transfer
        ( Transfer (..)
        , runTransfer
-       , exampleTransfer
        ) where
 
 import           Control.Applicative                ((<|>))
@@ -32,8 +31,8 @@ import           Control.Lens                       (makeLenses, (<<.=), at,
                                                      (?=), use, (<<+=), (.=))
 import           Control.Monad.Catch                (MonadCatch, MonadMask,
                                                      MonadThrow (..),
-                                                     bracket, handleAll)
-import           Control.Monad                      (forM_, unless, void, guard)
+                                                     bracket)
+import           Control.Monad                      (forM_, unless, void)
 import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (runStateT, StateT (..))
@@ -41,7 +40,7 @@ import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
 import           Data.Tuple                         (swap)
 import qualified Data.Map                           as M
-import           Data.Binary                        (Put, Get, get, put)
+import           Data.Binary                        (Put, Get)
 import           Data.Binary.Get                    (getWord8)
 import           Data.Binary.Put                    (runPut)
 import           Data.ByteString                    (ByteString)
@@ -51,7 +50,6 @@ import           Data.Maybe                         (isJust, fromJust)
 import           Data.Streaming.Network             (getSocketFamilyTCP,
                                                      runTCPServerWithHandle,
                                                      serverSettingsTCP, safeRecv)
-import           Formatting                         (sformat, shown, (%))
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
 import           Network.Socket                     as NS
 import           Network.Socket.ByteString          (sendAll)
@@ -60,15 +58,11 @@ import           Data.Conduit                       (($$+), ($$++), yield,
                                                      ResumableSource)
 import           Data.Conduit.Serialization.Binary  (sinkGet)
 
-import           Control.TimeWarp.Logging           (logInfo, logWarning, initLogging,
-                                                     Severity (Info), usingLoggerName)
 import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer (..), NetworkAddress,
                                                      runResponseT, sendRaw,
                                                      ResponseT, ResponseContext (..),
-                                                     runResponseT, localhost, replyRaw)
-import           Control.TimeWarp.Timed             (MonadTimed, TimedIO, ThreadId,
-                                                     wait, for, ms,
-                                                     schedule, after, work, runTimedIO)
+                                                     runResponseT)
+import           Control.TimeWarp.Timed             (MonadTimed, TimedIO, ThreadId)
 
 
 -- * Realted datatypes
@@ -231,51 +225,3 @@ instance MonadBaseControl IO Transfer where
     liftBaseWith io =
         Transfer $ liftBaseWith $ \runInBase -> io $ runInBase . getTransfer
     restoreM = Transfer . restoreM
-
-
--- * Example
-
-
-exampleTransfer :: IO ()
-exampleTransfer = runTimedIO $ do
-    liftIO $ initLogging ["node"] Info
-    runTransfer $ usingLoggerName "node.server" $
-        work (for 500 ms) $ ha $
-            listenRaw 1234 decoder $
-            \req -> do
-                logInfo $ sformat ("Got "%shown) req
-                replyRaw $ put $ sformat "Ok!"
-
-    wait (for 100 ms)
-
-    runTransfer $ usingLoggerName "node.client-1" $
-        schedule (after 200 ms) $ ha $ do
-            work (for 500 ms) $ ha $
-                listenOutboundRaw (localhost, 1234) get logInfo
-            forM_ [1..7] $ sendRaw (localhost, 1234) . (put bad >> ) . encoder . Left
-
-    runTransfer $ usingLoggerName "node.client-2" $
-        schedule (after 200 ms) $ ha $ do
-            forM_ [1..5] $ sendRaw (localhost, 1234) . encoder . Right . (-1, )
-            work (for 500 ms) $ ha $
-                listenOutboundRaw (localhost, 1234) get logInfo
-
-    wait (for 800 ms)
-  where
-    ha = handleAll $ logWarning . sformat ("Exception: "%shown)
-
-    decoder :: Get (Either Int (Int, Int))
-    decoder = do
-        magic <- get
-        guard $ magic == magicVal
-        get
-
-    encoder :: Either Int (Int, Int) -> Put
-    encoder d = put magicVal >> put d
-
-    magicVal :: Int
-    magicVal = 234
-
-    bad :: String
-    bad = "345"
-
