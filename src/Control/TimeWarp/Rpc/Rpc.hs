@@ -23,28 +23,28 @@ module Control.TimeWarp.Rpc.Rpc
        , runRpc
        ) where
 
-import           Control.Concurrent.MVar           (MVar, newEmptyMVar, takeMVar,
-                                                    putMVar)
-import           Control.Concurrent.STM            (STM, atomically)
-import           Control.Concurrent.STM.TVar       (TVar, newTVarIO, readTVar,
-                                                    writeTVar)
-import           Control.Lens                      (makeLenses, (<<+=), at, (?=), (.=),
-                                                    use)
-import           Control.Monad.Catch               (MonadThrow, MonadCatch, MonadMask,
-                                                    bracket)
-import           Control.Monad                     (forM_)
-import           Control.Monad.Reader              (ReaderT (..), ask)
-import           Control.Monad.State               (MonadState, StateT, runStateT)
-import           Control.Monad.Trans               (MonadTrans (..), MonadIO (..))
-import           Data.Binary                       (Get, get, put)
-import           Data.Dynamic                      (Dynamic, toDyn, fromDyn)
-import qualified Data.Map                          as M
+import           Control.Concurrent.MVar            (MVar, newEmptyMVar, takeMVar,
+                                                     putMVar)
+import           Control.Concurrent.STM             (STM, atomically)
+import           Control.Concurrent.STM.TVar        (TVar, newTVarIO, readTVar,
+                                                     writeTVar)
+import           Control.Lens                       (makeLenses, (<<+=), at, (?=), (.=),
+                                                     use)
+import           Control.Monad.Catch                (MonadThrow, MonadCatch, MonadMask,
+                                                     bracket)
+import           Control.Monad                      (forM_)
+import           Control.Monad.Reader               (ReaderT (..), ask)
+import           Control.Monad.State                (MonadState, StateT, runStateT)
+import           Control.Monad.Trans                (MonadTrans (..), MonadIO (..))
+import           Data.Binary                        (Get, get, put)
+import           Data.Dynamic                       (Dynamic, toDyn, fromDyn)
+import qualified Data.Map                           as M
 
-import           Control.TimeWarp.Logging          (WithNamedLogger)
-import           Control.TimeWarp.Rpc.MonadDialog  (MonadDialog (..), ResponseT (..),
-                                                    ListenerH (..),
-                                                    listenH, replyH, sendH,
-                                                    listenOutboundH)
+import           Control.TimeWarp.Logging           (WithNamedLogger)
+import           Control.TimeWarp.Rpc.MonadDialog   (MonadDialog (..), ResponseT (..),
+                                                     ListenerH (..),
+                                                     listenH, replyH, sendH,
+                                                     listenOutboundH)
 import           Control.TimeWarp.Rpc.MonadRpc      (MonadRpc (..), Request (..),
                                                      Method (..))
 import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer)
@@ -68,7 +68,8 @@ initManager =
     , _msgSlots   = M.empty
     }
 
--- * Default instance of `MonadRpc`
+
+-- * `MonadRpc` implementation
 
 newtype Rpc m a = Rpc
     { getRpc :: ReaderT (TVar Manager) m a
@@ -114,16 +115,17 @@ instance (MonadTimed m, MonadDialog m, MonadIO m, MonadMask m)
         listenIncoming = listenOutboundH addr (get :: Get MsgId)
             [ ListenerH $ \(msgid, resp) -> lift $ do
                 maybeSlot <- modifyManager $ use $ msgSlots . at msgid
-                liftIO . forM_ maybeSlot $ 
-                    flip putMVar $ toDyn $ restrictType req resp
+                liftIO . forM_ maybeSlot $
+                    flip putMVar $ toDyn $ responseTypeOf req resp
             ]
-        restrictType :: r -> Response r -> Response r
-        restrictType = const id
+
+        responseTypeOf :: r -> Response r -> Response r
+        responseTypeOf = const id
+
         typeMismatchError = error "Type mismatch! Probably msgid duplicate"
 
     serve port methods = listenH port (get :: Get MsgId) $ convert <$> methods
       where
         convert (Method f) = ListenerH $
             \(msgid, req) -> f req >>= replyH (put msgid)
-
 

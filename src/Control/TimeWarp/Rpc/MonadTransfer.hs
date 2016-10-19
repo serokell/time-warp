@@ -65,11 +65,11 @@ class Monad m => MonadTransfer m where
               -> (a -> ResponseT m ())   -- ^ Handler for received data
               -> m ()
 
-    -- | Specifies incomings handler on outboud connection. Establishes connection
+    -- | Specifies incomings handler on outbound connection. Establishes connection
     -- if is doesn't exists.
-    listenOutboundRaw :: NetworkAddress
-                      -> Get a
-                      -> (a -> ResponseT m ())
+    listenOutboundRaw :: NetworkAddress         -- ^ Where connection is opened to
+                      -> Get a                  -- ^ Parser for input byte sequence
+                      -> (a -> ResponseT m ())  -- ^ Handler for received data
                       -> m ()
 
     -- | Closes connection to specified node, if exists.
@@ -78,7 +78,7 @@ class Monad m => MonadTransfer m where
 
 -- * MonadResponse
 
--- | Provides operations with /peer/ node. Peer is a node, which this node is
+-- | Provides operations related to /peer/ node. Peer is a node, which this node is
 -- currently communicating with.
 class Monad m => MonadResponse m where
     replyRaw :: Put -> m ()

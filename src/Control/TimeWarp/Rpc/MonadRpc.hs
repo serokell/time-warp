@@ -31,14 +31,14 @@ module Control.TimeWarp.Rpc.MonadRpc
        , RpcError (..)
        ) where
 
-import           Control.Exception                 (Exception)
-import           Control.Monad.Reader              (ReaderT (..))
-import           Control.Monad.Trans               (MonadTrans (..))
+import           Control.Exception                  (Exception)
+import           Control.Monad.Reader               (ReaderT (..))
+import           Control.Monad.Trans                (MonadTrans (..))
 
-import           Control.TimeWarp.Logging          (LoggerNameBox (..))
-import           Control.TimeWarp.Rpc.MonadDialog  (MonadDialog (..), NetworkAddress,
-                                                    Host, Port, RpcError (..), Message,
-                                                    localhost)
+import           Control.TimeWarp.Logging           (LoggerNameBox (..))
+import           Control.TimeWarp.Rpc.Message       (Message (..))
+import           Control.TimeWarp.Rpc.MonadDialog   (MonadDialog (..), NetworkAddress,
+                                                     Host, Port, RpcError (..), localhost)
 import           Control.TimeWarp.Rpc.MonadTransfer (ResponseT (..), mapResponseT)
 
 
@@ -77,8 +77,7 @@ data Method m =
 instance MonadRpc m => MonadRpc (ReaderT r m) where
     call addr req = lift $ call addr req
 
-    serve port listeners = ReaderT $
-                            \r -> serve port (convert r <$> listeners)
+    serve port listeners = ReaderT $ \r -> serve port (convert r <$> listeners)
       where
         convert r (Method f) = Method $ mapResponseT (flip runReaderT r) . f
 

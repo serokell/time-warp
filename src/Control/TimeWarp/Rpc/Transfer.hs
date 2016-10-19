@@ -131,13 +131,18 @@ instance MonadTransfer Transfer where
             \sock _ _ -> void . runInBase $ do
                 src <- saveConn sock
                 sender <- mkSender sock
-                acceptRequests sender parser listener src
+                let responseCtx =
+                        ResponseContext
+                        { respSend  = sender
+                        , respClose = NS.close sock
+                        }
+                acceptRequests responseCtx parser listener src
       where
         saveConn sock = do
             src <- socketSource sock
             let conn =
                     InputConnection
-                    { -- _inConnClose = NS.sClose sock
+                    { -- _inConnClose = NS.close sock
                     }
             modifyManager $ do
                 connId <- inputConnCounter <<+= 1
@@ -147,32 +152,35 @@ instance MonadTransfer Transfer where
     listenOutboundRaw addr parser listener = do
         conn <- getOutConnOrOpen addr
         maybeOutConnSrc <- liftIO . atomically $ swapTVar (outConnSrc conn) Nothing
+        let responseCtx =
+                ResponseContext
+                { respSend  = outConnSend conn
+                , respClose = outConnClose conn
+                }
         maybe
             (error $ "Already listening at outbound connection to " ++ show addr)
-            (acceptRequests (outConnSend conn) parser listener)
+            (acceptRequests responseCtx parser listener)
             maybeOutConnSrc
 
     close addr = do
         maybeWasConn <- modifyManager $ outputConn . at addr <<.= Nothing
         liftIO $ forM_ maybeWasConn outConnClose
 
-
-acceptRequests :: (Put -> IO ())
+-- | Infinitelly takes bytes from source, parses and invokes listener in another thread.
+acceptRequests :: ResponseContext
                -> Get a
                -> (a -> ResponseT Transfer ())
                -> ResumableSource IO ByteString
                -> Transfer ()
-acceptRequests sender parser listener src = do
-    (src', rec) <- liftIO $ src $$++ sinkGet insistantParser
-    fork_ $ runResponseT (listener rec) responseCtx
-    acceptRequests sender parser listener src'
+acceptRequests responseCtx parser listener =
+    loop
   where
+    loop src = do
+        (src', rec) <- liftIO $ src $$++ sinkGet insistantParser
+        fork_ $ runResponseT (listener rec) responseCtx
+        loop src'
+    -- if failed, skip one octet and try again. More detailed consideration required
     insistantParser = parser <|> (getWord8 >> insistantParser)
-    responseCtx =
-        ResponseContext
-        { respSend  = sender
-        , respClose = error "acceptRequests: respClose not implemented"
-        }
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
 getOutConnOrOpen addr@(host, port) = do
@@ -195,6 +203,7 @@ getOutConnOrOpen addr@(host, port) = do
                 outputConn . at addr ?= conn
                 return conn
 
+-- | Create a synchronious sender function for specified socket.
 mkSender :: MonadIO m => Socket -> m (Put -> IO ())
 mkSender sock = liftIO $ do
     lock <- newEmptyMVar
