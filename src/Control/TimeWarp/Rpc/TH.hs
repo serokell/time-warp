@@ -8,7 +8,7 @@ module Control.TimeWarp.Rpc.TH
 
 import           Language.Haskell.TH
 
-import           Control.TimeWarp.Rpc.MonadDialog    (Message (..))
+import           Control.TimeWarp.Rpc.Message        (Message (..))
 import           Control.TimeWarp.Rpc.MonadRpc       (Request (..))
 
 -- | Generates `Message` instance for given datatype.
@@ -23,7 +23,7 @@ import           Control.TimeWarp.Rpc.MonadRpc       (Request (..))
 --
 -- @
 -- instance Message MyMessage where
---     methodName _ = "<module name>.MyMessage"
+--     messageName _ = "<module name>.MyMessage"
 -- @
 
 mkMessage :: Name -> Q [Dec]
@@ -36,7 +36,7 @@ mkMessage reqType =
         (appT (conT ''Message) (conT reqType))
         [func]
 
-    func = return $ FunD 'methodName
+    func = return $ FunD 'messageName
         [ Clause [WildP] (NormalB . LitE . StringL $ show reqType) []
         ]
 

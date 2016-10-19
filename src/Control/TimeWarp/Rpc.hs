@@ -11,7 +11,8 @@
 -- emulation with network nastiness manually controlled.
 
 module Control.TimeWarp.Rpc
-       ( module Control.TimeWarp.Rpc.MonadDialog
+       ( module Control.TimeWarp.Rpc.Message
+       , module Control.TimeWarp.Rpc.MonadDialog
        , module Control.TimeWarp.Rpc.MonadRpc
        , module Control.TimeWarp.Rpc.MonadTransfer
        , module Control.TimeWarp.Rpc.Rpc
@@ -19,6 +20,7 @@ module Control.TimeWarp.Rpc
        , module Control.TimeWarp.Rpc.TH
        ) where
 
+import           Control.TimeWarp.Rpc.Message
 import           Control.TimeWarp.Rpc.MonadDialog
 import           Control.TimeWarp.Rpc.MonadRpc
 import           Control.TimeWarp.Rpc.MonadTransfer
