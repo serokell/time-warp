@@ -92,7 +92,7 @@ yohohoScenario = runTimedIO $ do
     liftIO $ initLogging ["guy"] Debug
 
     -- guy 1
-    runTransfer . runBinaryDialog . usingLoggerName "guy.1" . fork_ $ do
+    usingLoggerName "guy.1" . runTransfer . runBinaryDialog . fork_ $ do
         work (till finish) $
             listen (guysPort 1)
                 [ Listener $ \Pong -> ha $
@@ -104,7 +104,7 @@ yohohoScenario = runTimedIO $ do
         send (guy 2) Ping
  
     -- guy 2
-    runTransfer . runBinaryDialog . usingLoggerName "guy.2" . fork_ $ do
+    usingLoggerName "guy.2" . runTransfer . runBinaryDialog . fork_ $ do
         work (till finish) $
             listen (guysPort 2)
                 [ Listener $ \Ping ->
@@ -130,7 +130,7 @@ yohohoScenario = runTimedIO $ do
 rpcScenario :: IO ()
 rpcScenario = runTimedIO $ do
     liftIO $ initLogging ["server", "cli"] Debug
-    runTransfer . runBinaryDialog . runRpc . usingLoggerName "server" $
+    usingLoggerName "server" . runTransfer . runBinaryDialog . runRpc $
         work (till finish) $
             serve 1234
                 [ Method $ \Ping -> do
@@ -141,7 +141,7 @@ rpcScenario = runTimedIO $ do
                 ]
 
     wait (for 100 ms)
-    runTransfer . runBinaryDialog . runRpc . usingLoggerName "cli" $ do
+    usingLoggerName "client" . runTransfer . runBinaryDialog . runRpc $ do
         Pong <- call (localhost, 1234) Ping
         logInfo "Got Pong!"
     return ()
@@ -153,7 +153,7 @@ rpcScenario = runTimedIO $ do
 transferScenario :: IO ()
 transferScenario = runTimedIO $ do
     liftIO $ initLogging ["node"] Debug
-    runTransfer $ usingLoggerName "node.server" $
+    usingLoggerName "node.server" $ runTransfer $
         work (for 500 ms) $ ha $
             listenRaw 1234 decoder $
             \req -> do
@@ -162,13 +162,13 @@ transferScenario = runTimedIO $ do
 
     wait (for 100 ms)
 
-    runTransfer $ usingLoggerName "node.client-1" $
+    usingLoggerName "node.client-1" $ runTransfer $
         schedule (after 200 ms) $ ha $ do
             work (for 500 ms) $ ha $
                 listenOutboundRaw (localhost, 1234) get logInfo
             forM_ [1..7] $ sendRaw (localhost, 1234) . (put bad >> ) . encoder . Left
 
-    runTransfer $ usingLoggerName "node.client-2" $
+    usingLoggerName "node.client-2" $ runTransfer $
         schedule (after 200 ms) $ ha $ do
             forM_ [1..5] $ sendRaw (localhost, 1234) . encoder . Right . (-1, )
             work (for 500 ms) $ ha $

@@ -58,6 +58,7 @@ import           Data.Conduit                       (($$+), ($$++), yield,
                                                      ResumableSource)
 import           Data.Conduit.Serialization.Binary  (sinkGet)
 
+import           Control.TimeWarp.Logging           (WithNamedLogger, LoggerNameBox)
 import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer (..), NetworkAddress,
                                                      runResponseT, sendRaw,
                                                      ResponseT, ResponseContext (..),
@@ -104,13 +105,13 @@ initManager =
 -- * Transfer
 
 newtype Transfer a = Transfer
-    { getTransfer :: ReaderT (MVar Manager) TimedIO a
+    { getTransfer :: ReaderT (MVar Manager) (LoggerNameBox TimedIO) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadBase IO,
-                MonadThrow, MonadCatch, MonadMask, MonadTimed)
+                MonadThrow, MonadCatch, MonadMask, MonadTimed, WithNamedLogger)
 
 type instance ThreadId Transfer = C.ThreadId
 
-runTransfer :: Transfer a -> TimedIO a
+runTransfer :: Transfer a -> LoggerNameBox TimedIO a
 runTransfer t = liftIO (newMVar initManager) >>= runReaderT (getTransfer t)
 
 modifyManager :: StateT Manager IO a -> Transfer a
