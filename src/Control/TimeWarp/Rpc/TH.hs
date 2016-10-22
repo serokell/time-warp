@@ -1,45 +1,12 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 module Control.TimeWarp.Rpc.TH
-    ( mkMessage
-    , mkRequest
-    , mkRequest'
+    ( mkRequest
     ) where
 
 import           Language.Haskell.TH
 
-import           Control.TimeWarp.Rpc.Message        (Message (..))
 import           Control.TimeWarp.Rpc.MonadRpc       (Request (..))
-
--- | Generates `Message` instance for given datatype.
---
--- The following code
---
--- @
--- $(mkMessage ''MyRequest)
--- @
---
--- generates
---
--- @
--- instance Message MyMessage where
---     messageName _ = "<module name>.MyMessage"
--- @
-
-mkMessage :: Name -> Q [Dec]
-mkMessage reqType =
-    (:[]) <$> mkInstance
-  where
-    mkInstance =
-        instanceD
-        (cxt [])
-        (appT (conT ''Message) (conT reqType))
-        [func]
-
-    func = return $ FunD 'messageName
-        [ Clause [WildP] (NormalB . LitE . StringL $ show reqType) []
-        ]
-
 
 -- | Generates `Request` instance by given names of request, response and
 -- expected exception types.
@@ -53,7 +20,7 @@ mkMessage reqType =
 -- generates
 --
 -- @
--- instance Request MyRequest wherea
+-- instance Request MyRequest where
 --     type Response      MyRequest = MyResponse
 --     type ExpectedError MyRequest = MyError
 -- @
@@ -74,8 +41,3 @@ mkRequest reqType respType errType =
         rc <- conT reqType
         ct <- conT t
         return $ TySynInstD n (TySynEqn [rc] ct)
-
--- | Creates both instances of `Message` and `Request`.
-mkRequest' :: Name -> Name -> Name -> Q [Dec]
-mkRequest' reqType respType errType =
-    (++) <$> mkMessage reqType <*> mkRequest reqType respType errType
