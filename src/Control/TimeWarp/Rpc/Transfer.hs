@@ -21,47 +21,42 @@ module Control.TimeWarp.Rpc.Transfer
        , runTransfer
        ) where
 
-import           Control.Applicative                ((<|>))
 import qualified Control.Concurrent                 as C
-import           Control.Concurrent.MVar            (MVar, newEmptyMVar, newMVar,
-                                                     takeMVar, putMVar, modifyMVar)
+import           Control.Concurrent.MVar            (MVar, newMVar, modifyMVar,
+                                                     newEmptyMVar, takeMVar, putMVar)
 import           Control.Concurrent.STM             (atomically)
+import           Control.Concurrent.STM.TBMChan     (TBMChan, newTBMChanIO)
 import           Control.Concurrent.STM.TVar        (TVar, newTVarIO, swapTVar)
 import           Control.Lens                       (makeLenses, (<<.=), at,
                                                      (?=), use, (<<+=), (.=))
-import           Control.Monad.Catch                (MonadCatch, MonadMask,
-                                                     MonadThrow (..),
-                                                     bracket)
-import           Control.Monad                      (forM_, unless, void)
+import           Control.Monad                      (forM_, void)
 import           Control.Monad.Base                 (MonadBase)
+import           Control.Monad.Catch                (MonadCatch, MonadMask,
+                                                     MonadThrow (..), handleAll, bracket)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (runStateT, StateT (..))
 import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
 import           Data.Tuple                         (swap)
 import qualified Data.Map                           as M
-import           Data.Binary                        (Put, Get)
-import           Data.Binary.Get                    (getWord8)
-import           Data.Binary.Put                    (runPut)
-import           Data.ByteString                    (ByteString)
 import qualified Data.ByteString                    as BS
-import           Data.ByteString.Lazy               (toStrict)
-import           Data.Maybe                         (isJust, fromJust)
+import           Data.Conduit                       (($$), ($=), Source, Producer)
+import qualified Data.Conduit.List                  as CL
+import           Data.Conduit.Network               (sourceSocket, sinkSocket)
+import           Data.Conduit.TMChan                (sourceTBMChan, sinkTBMChan)
+import           Data.Maybe                         (isJust, fromJust, isNothing)
 import           Data.Streaming.Network             (getSocketFamilyTCP,
                                                      runTCPServerWithHandle,
-                                                     serverSettingsTCP, safeRecv)
+                                                     serverSettingsTCP)
+import           Formatting                         (sformat, shown, (%))
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
 import           Network.Socket                     as NS
-import           Network.Socket.ByteString          (sendAll)
 
-import           Data.Conduit                       (($$+), ($$++), yield,
-                                                     ResumableSource)
-import           Data.Conduit.Serialization.Binary  (sinkGet)
-
-import           Control.TimeWarp.Logging           (WithNamedLogger, LoggerNameBox)
+import           Control.TimeWarp.Logging           (WithNamedLogger, LoggerNameBox,
+                                                     logWarning)
 import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer (..), NetworkAddress,
                                                      runResponseT, sendRaw,
-                                                     ResponseT, ResponseContext (..),
+                                                     ResponseContext (..),
                                                      runResponseT)
 import           Control.TimeWarp.Timed             (MonadTimed, TimedIO, ThreadId, fork_)
 
@@ -71,9 +66,9 @@ import           Control.TimeWarp.Timed             (MonadTimed, TimedIO, Thread
 -- ** Connections
 
 data OutputConnection = OutputConnection
-    { outConnSend  :: Put -> IO ()
+    { outConnSend  :: Producer IO BS.ByteString -> IO ()
       -- | When someone starts listening, it should swap content with `Nothing`
-    , outConnSrc   :: TVar (Maybe (ResumableSource IO ByteString))
+    , outConnSrc   :: TVar (Maybe (Source IO BS.ByteString))
     , outConnClose :: IO ()
     }
 
@@ -126,21 +121,23 @@ instance MonadTransfer Transfer where
         conn <- getOutConnOrOpen addr
         liftIO $ outConnSend conn dat
 
-    listenRaw port parser listener =
+    listenRaw port condParser listener =
         liftBaseWith $
         \runInBase -> runTCPServerWithHandle (serverSettingsTCP port "*") $
             \sock _ _ -> void . runInBase $ do
-                src <- saveConn sock
-                sender <- mkSender sock
-                let responseCtx =
+                saveConn sock
+                synchronously <- synchronizer
+                let source = sourceSocket sock
+                    responseCtx =
                         ResponseContext
-                        { respSend  = sender
+                        { respSend  = \prod -> synchronously $ prod $$ sinkSocket sock
                         , respClose = NS.close sock
                         }
-                acceptRequests responseCtx parser listener src
+                requestsChan <- startListener $ flip runResponseT responseCtx . listener
+                logOnErr . liftIO $
+                    source $$ condParser $= sinkTBMChan requestsChan True
       where
-        saveConn sock = do
-            src <- socketSource sock
+        saveConn _ = do
             let conn =
                     InputConnection
                     { -- _inConnClose = NS.close sock
@@ -148,40 +145,57 @@ instance MonadTransfer Transfer where
             modifyManager $ do
                 connId <- inputConnCounter <<+= 1
                 inputConn . at connId .= Just conn
-            return src
 
-    listenOutboundRaw addr parser listener = do
+    listenOutboundRaw addr condParser listener = do
         conn <- getOutConnOrOpen addr
-        maybeOutConnSrc <- liftIO . atomically $ swapTVar (outConnSrc conn) Nothing
+        maybeSource <- liftIO . atomically $ swapTVar (outConnSrc conn) Nothing
         let responseCtx =
                 ResponseContext
                 { respSend  = outConnSend conn
                 , respClose = outConnClose conn
                 }
-        maybe
-            (error $ "Already listening at outbound connection to " ++ show addr)
-            (acceptRequests responseCtx parser listener)
-            maybeOutConnSrc
+        if isNothing maybeSource
+            then error $ "Already listening at outbound connection to " ++ show addr
+            else do
+                let source = fromJust maybeSource
+                requestsChan <- startListener $ flip runResponseT responseCtx . listener
+                logOnErr . liftIO $
+                    source $$ condParser $= sinkTBMChan requestsChan True
+      where
 
     close addr = do
         maybeWasConn <- modifyManager $ outputConn . at addr <<.= Nothing
         liftIO $ forM_ maybeWasConn outConnClose
 
--- | Infinitelly takes bytes from source, parses and invokes listener in another thread.
-acceptRequests :: ResponseContext
-               -> Get a
-               -> (a -> ResponseT Transfer ())
-               -> ResumableSource IO ByteString
-               -> Transfer ()
-acceptRequests responseCtx parser listener =
-    loop
+logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
+logOnErr = handleAll $
+    logWarning . sformat ("Server error: "%shown)
+
+startListener :: (a -> Transfer ()) -> Transfer (TBMChan a)
+startListener handler = do
+    chan <- liftIO $ newTBMChanIO 1000
+    fork_ $ sourceTBMChan chan $$ CL.mapM_ (fork_ . notifyOnError . handler)
+    return chan
   where
-    loop src = do
-        (src', rec) <- liftIO $ src $$++ sinkGet insistantParser
-        fork_ $ runResponseT (listener rec) responseCtx
-        loop src'
-    -- if failed, skip one octet and try again. More detailed consideration required
-    insistantParser = parser <|> (getWord8 >> insistantParser)
+    notifyOnError = handleAll $
+        logWarning . sformat ("Uncaught exception in server handler: "%shown)
+
+{-
+splitToChans :: MonadIO m => TBMChan a -> TBMChan b -> Sink (Either a b) m ()
+splitToChans ca cb =
+    awaitForever $ \m ->
+        case m of
+            Left a  -> yield a $$ sinkTBMChan ca False
+            Right b -> yield b $$ sinkTBMChan cb False
+-}
+
+synchronizer :: MonadIO m => m (IO () -> IO ())
+synchronizer = do
+    lock <- liftIO newEmptyMVar
+    return $ \action ->
+        bracket (putMVar lock ())
+                (const $ takeMVar lock)
+                (const action)
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
 getOutConnOrOpen addr@(host, port) = do
@@ -192,40 +206,17 @@ getOutConnOrOpen addr@(host, port) = do
                 return $ fromJust existing
             else do
                 -- TODO: use ResourceT
-                (sock, _)   <- lift $ getSocketFamilyTCP host port NS.AF_UNSPEC
-                incomingSrc <- lift $ newTVarIO =<< Just <$> socketSource sock
-                sender      <- lift $ mkSender sock
+                (sock, _)     <- lift $ getSocketFamilyTCP host port NS.AF_UNSPEC
+                source        <- lift . newTVarIO $ Just (sourceSocket sock)
+                synchronously <- lift synchronizer
                 let conn =
                        OutputConnection
-                       { outConnSend = sender
-                       , outConnSrc  = incomingSrc
+                       { outConnSend  = \prod -> synchronously $ prod $$ sinkSocket sock
+                       , outConnSrc   = source
                        , outConnClose = NS.close sock
                        }
                 outputConn . at addr ?= conn
                 return conn
-
--- | Create a synchronious sender function for specified socket.
-mkSender :: MonadIO m => Socket -> m (Put -> IO ())
-mkSender sock = liftIO $ do
-    lock <- newEmptyMVar
-    return $ sendData lock . toStrict . runPut
-  where
-    sendData :: MVar () -> ByteString -> IO ()
-    sendData lock !bs =
-        bracket
-            (putMVar lock ())
-            (const $ takeMVar lock)
-            (const $ sendAll sock bs)
-
-socketSource :: MonadIO m => Socket -> m (ResumableSource IO ByteString)
-socketSource sock = liftIO $ fst <$> (source $$+ return ())
-  where
-    read' = safeRecv sock 4096
-    source = do
-        bs <- liftIO read'
-        unless (BS.null bs) $ do
-            yield bs
-            source
 
 
 -- * Instances

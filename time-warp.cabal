@@ -21,9 +21,9 @@ library
                      , Control.TimeWarp.Rpc.Message
                      , Control.TimeWarp.Rpc.MonadDialog
                      , Control.TimeWarp.Rpc.MonadTransfer
-                     , Control.TimeWarp.Rpc.MonadRpc
-                     , Control.TimeWarp.Rpc.Rpc
-                     , Control.TimeWarp.Rpc.TH
+--                     , Control.TimeWarp.Rpc.MonadRpc
+--                     , Control.TimeWarp.Rpc.Rpc
+--                     , Control.TimeWarp.Rpc.TH
                      , Control.TimeWarp.Rpc.Transfer
 
                      , Control.TimeWarp.Timed
@@ -61,6 +61,8 @@ library
                      , semigroups
                      , slave-thread >= 1.0
                      , stm >= 2.4.4
+                     , stm-chans >= 3.0.0
+                     , stm-conduit >= 3.0
                      , streaming-commons >= 0.1.15
                      , template-haskell
                      , text >= 1.2.2.0
@@ -119,6 +121,8 @@ executable playground
   build-depends:       async >= 2.0.1
                      , base == 4.*
                      , binary >= 0.8.3
+                     , binary-conduit >= 1.2.4.1
+                     , conduit >= 1.2.6
                      , data-default
                      , exceptions >= 0.8.2.1
                      , formatting

@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds           #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
@@ -47,7 +48,7 @@ import           Control.TimeWarp.Rpc.MonadDialog   (MonadDialog (..), ResponseT
                                                      listenOutboundH)
 import           Control.TimeWarp.Rpc.MonadRpc      (MonadRpc (..), Request (..),
                                                      Method (..))
-import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer)
+import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer, MonadResponse)
 import           Control.TimeWarp.Timed.MonadTimed  (MonadTimed, ThreadId, fork_)
 
 
@@ -92,9 +93,19 @@ modifyManager how = Rpc $ do
         writeTVar t s'
         return a
 
-instance (MonadTimed m, MonadDialog m, MonadIO m, MonadMask m)
-       => MonadRpc (Rpc m) where
-    call addr req = do
+type RpcConstraint m =
+    ( MonadTimed m
+    , MonadDialog m
+    , MonadIO m
+    , MonadMask m
+    )
+
+-- * Logic
+
+instance RpcConstraint m => MonadRpc (Rpc m) where
+    -- | Accepts function of `MonadDialog layer`, which accepts header, and sends
+    -- rpc-request via it.
+    callWith caller req = do
         -- make slot for response
         slot <- liftIO newEmptyMVar
         fork_ $ listenIncoming
@@ -102,7 +113,7 @@ instance (MonadTimed m, MonadDialog m, MonadIO m, MonadMask m)
                 (\msgid -> modifyManager $ msgSlots . at msgid .= Nothing) $
                  \msgid -> do
                     -- send
-                    sendH addr (put msgid) req
+                    caller (put msgid) req
                     -- wait for answer
                     resp <- liftIO $ takeMVar slot
                     return $ fromDyn resp typeMismatchError
@@ -124,8 +135,13 @@ instance (MonadTimed m, MonadDialog m, MonadIO m, MonadMask m)
 
         typeMismatchError = error "Type mismatch! Probably msgid duplicate"
 
-    serve port methods = listenH port (get :: Get MsgId) $ convert <$> methods
-      where
-        convert (Method f) = ListenerH $
-            \(msgid, req) -> f req >>= replyH (put msgid)
+    serve port methods =
+        listenH port (get :: Get MsgId) $ methodToListener <$> methods
+ 
+    serveOutbound addr methods =
+        listenOutboundH port (get :: Get MsgId) $ methodToListener <$> methods
+ 
+methodToListener :: Monad m => Method m -> ListenerH MsgId m
+methodToListener (Method f) = ListenerH $
+    \(msgid, req) -> f req >>= replyH (put msgid)
 
