@@ -2,6 +2,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
+{-# LANGUAGE FunctionalDependencies    #-}
 {-# LANGUAGE ConstraintKinds           #-}
 {-# LANGUAGE GADTs                     #-}
 {-# LANGUAGE LambdaCase                #-}
@@ -10,6 +11,7 @@
 {-# LANGUAGE StandaloneDeriving        #-}
 {-# LANGUAGE TupleSections             #-}
 {-# LANGUAGE TypeFamilies              #-}
+{-# LANGUAGE UndecidableInstances      #-}
 
 -- |
 -- Module      : Control.TimeWarp.Rpc.MonadDialog
@@ -27,45 +29,53 @@ module Control.TimeWarp.Rpc.MonadDialog
        , NetworkAddress
        , localhost
 
-       , MonadDialog (..)
+       , sendP
+       , listenP
+       , listenPE
+       , listenOutboundP
+       , listenOutboundPE
+       , replyP
 
+       , MonadDialog (..)
        , send
-       , sendH
        , listen
-       , listenH
+       , listenE
        , listenOutbound
-       , listenOutboundH
+       , listenOutboundE
        , reply
-       , replyH
+
        , Listener (..)
-       , ListenerH (..)
-       , getMethodName
-       , getMethodNameH
+       , getListenerName
 
        , ResponseT (..)
        , mapResponseT
 
-       , BinaryDialog (..)
+       , Dialog (..)
+       , runDialog
 
        , RpcError (..)
        ) where
 
-import           Control.Lens                       ((<&>))
-import           Control.Monad                      (when)
+import           Control.Lens                       ((^.), at)
+import           Control.Monad                      (forever)
 import           Control.Monad.Catch                (MonadThrow, MonadCatch, MonadMask)
-import           Control.Monad.Reader               (MonadReader, ReaderT)
+import           Control.Monad.Reader               (MonadReader (ask), ReaderT (..))
 import           Control.Monad.State                (MonadState)
 import           Control.Monad.Trans                (MonadIO, lift)
-import           Data.Binary                        (Get, Put, put, get)
-import           Data.Dynamic                       (Typeable, Dynamic, toDyn, fromDyn)
-import           Data.Foldable                      (foldMap)
-import           Data.Monoid                        (Alt (..))
+import           Data.ByteString                    (ByteString)
+import           Data.Conduit                       (Conduit, ($=), (=$), yield)
+import           Data.Conduit.List                  as CL
+import           Data.Dynamic                       (Dynamic, fromDyn, toDyn)
+import           Data.Map                           as M
 import           Data.Proxy                         (Proxy (..))
-import qualified Data.Traversable                   as T
+import qualified Data.Text                          as T
+import           Formatting                         (sformat, (%), shown)
 
 import           Control.TimeWarp.Logging           (WithNamedLogger, LoggerNameBox (..))
 import           Control.TimeWarp.Timed             (MonadTimed, ThreadId)
-import           Control.TimeWarp.Rpc.Message       (Message (..))
+import           Control.TimeWarp.Rpc.Message       (Message (..), Serializable (..),
+                                                     NamedSerializable,
+                                                     NamedPacking (..))
 import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer (..), ResponseT (..),
                                                      Host, Port, MonadResponse (replyRaw),
                                                      NetworkAddress, mapResponseT,
@@ -77,160 +87,176 @@ import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer (..), Respons
 
 -- | Defines communication based on messages.
 -- It allows to specify service data (/header/) for use by overlying protocols.
-class MonadTransfer m => MonadDialog m where
-    -- | Way of packing data into raw bytes.
-    packMsg :: Message r
-            => Put    -- ^ Packed header
-            -> r      -- ^ Message
-            -> m Put  -- ^ Packed (header + message name + message content)
-
-    -- | Way of unpacking raw bytes to data. Should fail, if /message name/ doesn't
-    -- match
-    unpackMsg :: Message r
-              => Get header           -- ^ Header parser
-              -> m (Get (header, r))  -- ^ (header + message) parser
-
+class MonadTransfer m => MonadDialog p m | m -> p where
+    packingType :: m p
 
 -- * Communication methods
--- Methods, which name end with *H* accept /header/ and aren't type-safe; use them
--- to implement overlying protocol.
+
+-- ** Packing type manually defined
 
 -- | Send a message.
-sendH :: (MonadDialog m, Message r) => NetworkAddress -> Put -> r -> m ()
-sendH addr header msg = sendRaw addr =<< packMsg header msg
-
-send :: (MonadDialog m, Message r) => NetworkAddress -> r -> m ()
-send addr msg = sendH addr (pure ()) msg
+sendP :: (Serializable p r, MonadTransfer m)
+      => p -> NetworkAddress -> r -> m ()
+sendP packing addr msg = sendRaw addr $ yield msg $= packMsg packing
 
 -- | Sends message to peer node.
-replyH :: (MonadResponse m, MonadDialog m, Message r) => Put -> r -> m ()
-replyH header msg = replyRaw =<< packMsg header msg
+replyP :: (Serializable p r, MonadResponse m)
+       => p -> r -> m ()
+replyP packing msg = replyRaw $ yield msg $= packMsg packing
 
-reply :: (MonadResponse m, MonadDialog m, Message r) => r -> m ()
-reply msg = replyH (pure ()) msg
+-- | Starts server, allows to specify error handler.
+listenPE :: (NamedPacking p, MonadTransfer m)
+       => p -> Port -> ErrorHandler m -> [Listener p m] -> m ()
+listenPE packing port handler listeners =
+    uncurry (listenRaw port) $ mergeListeners packing listeners handler
 
 -- | Starts server.
-listenH :: MonadDialog m => Port -> Get h -> [ListenerH h m] -> m ()
-listenH port headParser listeners =
-    mergeListeners headParser listeners >>= uncurry (listenRaw port)
+listenP :: (NamedPacking p, MonadTransfer m)
+       => p -> Port -> [Listener p m] -> m ()
+listenP packing port = listenPE packing port nopHandler
 
-listen :: MonadDialog m => Port -> [Listener m] -> m ()
-listen port listeners = listenH port (pure ()) $ convert <$> listeners
-  where
-    convert (Listener f) = ListenerH $ f . snd
+-- | Listens for incomings on outbound connection. Allows to specify error handler.
+listenOutboundPE :: (NamedPacking p, MonadTransfer m)
+               => p -> NetworkAddress -> ErrorHandler m -> [Listener p m] -> m ()
+listenOutboundPE packing addr handler listeners =
+    uncurry (listenOutboundRaw addr) $ mergeListeners packing listeners handler
 
 -- | Listens for incomings on outbound connection.
-listenOutboundH :: MonadDialog m => NetworkAddress -> Get h -> [ListenerH h m] -> m ()
-listenOutboundH addr headParser listeners =
-    mergeListeners headParser listeners >>= uncurry (listenOutboundRaw addr)
+listenOutboundP :: (NamedPacking p, MonadTransfer m)
+               => p -> NetworkAddress -> [Listener p m] -> m ()
+listenOutboundP packing addr =
+    listenOutboundPE packing addr nopHandler
 
-listenOutbound :: MonadDialog m => NetworkAddress -> [Listener m] -> m ()
-listenOutbound addr listeners = listenOutboundH addr (pure ()) $ convert <$> listeners
-  where
-    convert (Listener f) = ListenerH $ f . snd
 
--- | For given header parser and listeners creates single parser and single handler with
+-- | For given listeners creates single parser-conduit and single handler with
 -- same functionality.
 -- Resulting parser returns @(no, dyn)@, where
 --
--- 1. @no@ is number of first listener, for which succesfully parsed object of required
--- request-type;
+-- 1. @no@ is number of matched listener;
 --
 -- 2. @dyn@ - parsed object, converted to @Dynamic@.
 --
 -- Handler accepts this pair and chooses /listener/ with specified number to apply.
-mergeListeners :: MonadDialog m
-               => Get h
-               -> [ListenerH h m]
-               -> m (Get (Int, Dynamic), (Int, Dynamic) -> ResponseT m ())
-mergeListeners headParser listeners = (, handler) <$> mergedParser
+mergeListeners :: (MonadTransfer m, NamedPacking p)
+               => p
+               -> [Listener p m]
+               -> ErrorHandler m
+               -> ( Conduit ByteString IO (Either T.Text (Listener p m, Dynamic))
+                  , Either T.Text (Listener p m, Dynamic) -> ResponseT m ()
+                  )
+mergeListeners packing listeners onError = (cond, handler)
   where
-    mergedParser :: MonadDialog m => m (Get (Int, Dynamic))
-    mergedParser = dynParsers <&> getAlt . foldMap Alt . map sequence . zip [0..]
+    -- find listener with same messageName and pass it & decoded data
+    cond = forever $ do
+        nameE <- lookMsgName packing =$ CL.peek
+        case nameE of
+            Nothing           -> return ()  -- end of stream
+            Just (Left e)     -> yield $ Left $
+                sformat ("Failed to get message name: "%shown) e
+            Just (Right name) ->
+                case listenersMap ^. at name of
+                    Nothing -> yield $ Left $
+                        sformat ("No listener with name"%shown%"defined") name
+                    Just li -> condLi li
 
-    dynParsers :: MonadDialog m => m [Get Dynamic]
-    dynParsers = T.for listeners $
-        \case ListenerH f -> unpackMsg headParser <&>
-                \parser -> let _ = f <$> parser
-                           in  toDyn <$> parser
-
-    handler (no, dyn) =
-        case listeners !! no of
-            ListenerH f -> f $ fromDyn dyn typeMismatchE
+    -- for given listener, decode data and pass listener & data
+    condLi li@(Listener f) = do
+        objE <- unpackMsg packing =$ CL.head
+        case objE of
+            Nothing          -> yield $ Left $
+                sformat ("Unexpected end of input while parsing message content")
+            Just (Left e)    -> yield $ Left $
+                sformat ("Failed to get message content: "%shown) e
+            Just (Right obj) ->
+                let _ = f obj  -- restrict type
+                in  yield $ Right (li, toDyn obj)
+                
+    handler (Left err)                = onError err
+    handler (Right (Listener f, dyn)) = f $ fromDyn dyn typeMismatchE
 
     typeMismatchE = error $ "mergeListeners: type mismatch. Probably messages of"
-                         ++ "different types can be `unpackMsg`ed successfully"
+                         ++ "different types have same messageName"
 
+    listenersMap = M.fromList [(getListenerName li, li) | li <- listeners]
+
+
+-- ** For MonadDialog
+
+-- | Send a message.
+send :: (Serializable p r, MonadDialog p m)
+     => NetworkAddress -> r -> m ()
+send addr msg = packingType >>= \p -> sendP p addr msg
+
+-- | Sends message to peer node.
+reply :: (Serializable p r, MonadDialog p m, MonadResponse m)
+      => r -> m ()
+reply msg = packingType >>= \p -> replyP p msg
+
+-- | Starts server. Allows to specify error handler.
+listenE :: (NamedPacking p, MonadDialog p m)
+       => Port -> ErrorHandler m -> [Listener p m] -> m ()
+listenE port handler listeners =
+    packingType >>= \p -> listenPE p port handler listeners
+
+-- | Starts server.
+listen :: (NamedPacking p, MonadDialog p m)
+       => Port -> [Listener p m] -> m ()
+listen port = listenE port nopHandler
+
+
+-- | Listens for incomings on outbound connection. Allows to specify error handler.
+listenOutboundE :: (NamedPacking p, MonadDialog p m)
+               => NetworkAddress -> ErrorHandler m -> [Listener p m] -> m ()
+listenOutboundE addr handler listeners =
+    packingType >>= \p -> listenOutboundPE p addr handler listeners
+
+-- | Listens for incomings on outbound connection.
+listenOutbound :: (NamedPacking p, MonadDialog p m)
+               => NetworkAddress -> [Listener p m] -> m ()
+listenOutbound addr = listenOutboundE addr nopHandler
+
+
+nopHandler :: Monad m => T.Text -> m ()
+nopHandler _ = return ()
 
 -- * Listeners
 
 -- | Creates RPC-method.
-data Listener m =
-    forall r . Message r => Listener (r -> ResponseT m ())
+data Listener p m =
+    forall r . NamedSerializable p r => Listener (r -> ResponseT m ())
 
-data ListenerH h m =
-    forall r . (Typeable h, Message r) => ListenerH ((h, r) -> ResponseT m ())
-
-getMethodNameH :: ListenerH h m -> String
-getMethodNameH (ListenerH f) = messageName $ proxyOfArg f
-  where
-    proxyOfArg :: ((a, b) -> c) -> Proxy b
-    proxyOfArg _ = Proxy
-
-getMethodName :: Listener m -> String
-getMethodName (Listener f) = messageName $ proxyOfArg f
+getListenerName :: Listener p m -> ByteString
+getListenerName (Listener f) = messageName $ proxyOfArg f
   where
     proxyOfArg :: (a -> b) -> Proxy a
     proxyOfArg _ = Proxy
 
-proxyOf :: a -> Proxy a
-proxyOf _ = Proxy
 
+type ErrorHandler m = T.Text -> ResponseT m ()
 
--- * Default instance
+-- * Default instance of MonadDialog
 
--- Uses simple packing: magic + header + packed message
-newtype BinaryDialog m a = BinaryDialog
-    { runBinaryDialog :: m a
+newtype Dialog p m a = Dialog
+    { getDialog :: ReaderT p m a
     } deriving (Functor, Applicative, Monad, MonadIO,
                 MonadThrow, MonadCatch, MonadMask,
-                MonadReader r, MonadState s,
+                MonadState s,
                 WithNamedLogger, MonadTimed, MonadTransfer)
 
-type instance ThreadId (BinaryDialog m) = ThreadId m
+runDialog :: p -> Dialog p m a -> m a
+runDialog p = flip runReaderT p . getDialog
 
-instance MonadTransfer m => MonadDialog (BinaryDialog m) where
-    packMsg header msg = return $ do
-        put binaryDialogMagic
-        -- TODO: put some hash of (messageName msg) would be nice here
-        put $ messageName $ proxyOf msg
-        header
-        put msg
+type instance ThreadId (Dialog p m) = ThreadId m
 
-    unpackMsg header = return . withResultType $
-        \resProxy -> do
-            magic <- get
-            when (magic /= binaryDialogMagic) $
-                fail "No magic number at the beginning"
-            mname <- get
-            when (mname /= messageName resProxy) $
-                fail "Message name doesn't match"
-            (,) <$> header <*> get
-      where
-        withResultType :: (Proxy r -> Get (h, r)) -> Get (h, r)
-        withResultType = ($ Proxy)
-
-binaryDialogMagic :: Int
-binaryDialogMagic = 43532423
+instance MonadTransfer m => MonadDialog p (Dialog p m) where
+    packingType = Dialog ask
 
 
 -- * Instances
 
-instance MonadDialog m => MonadDialog (ReaderT r m) where
-    packMsg header msg = lift $ packMsg header msg
+instance MonadDialog p m => MonadDialog p (ReaderT r m) where
+    packingType = lift packingType
 
-    unpackMsg = lift . unpackMsg
+deriving instance MonadDialog p m => MonadDialog p (LoggerNameBox m)
 
-deriving instance MonadDialog m => MonadDialog (LoggerNameBox m)
-
-deriving instance MonadDialog m => MonadDialog (ResponseT m)
+deriving instance MonadDialog p m => MonadDialog p (ResponseT m)

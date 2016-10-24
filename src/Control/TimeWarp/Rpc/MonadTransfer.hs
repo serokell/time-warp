@@ -40,8 +40,8 @@ import           Control.Monad.Catch        (MonadThrow, MonadCatch, MonadMask)
 import           Control.Monad.Reader       (ReaderT (..), MonadReader (..), mapReaderT)
 import           Control.Monad.State        (MonadState)
 import           Control.Monad.Trans        (MonadTrans (..), MonadIO (..))
-import           Data.Binary                (Get, Put)
 import           Data.ByteString            (ByteString)
+import           Data.Conduit               (Producer, Conduit)
 import           Data.Monoid                ((<>))
 import           Data.Text                  (Text)
 import           Data.Text.Buildable        (Buildable (..))
@@ -55,21 +55,23 @@ import           Control.TimeWarp.Timed     (MonadTimed, ThreadId)
 -- | Allows to send/receive raw byte sequences.
 class Monad m => MonadTransfer m where
     -- | Sends raw data.
-    sendRaw :: NetworkAddress  -- ^ Destination address
-            -> Put             -- ^ Data to send
+    sendRaw :: NetworkAddress          -- ^ Destination address
+            -> Producer IO ByteString  -- ^ Data to send
             -> m ()
 
     -- | Starts server with specified handler of incoming byte stream.
-    listenRaw :: Port                    -- ^ Port to bind server
-              -> Get a                   -- ^ Parser for input byte sequence
-              -> (a -> ResponseT m ())   -- ^ Handler for received data
+    listenRaw :: Port                     -- ^ Port to bind server
+              -> Conduit ByteString IO a
+              -- ^ Streaming parser for input byte sequence
+              -> (a -> ResponseT m ())    -- ^ Handler for received data
               -> m ()
 
     -- | Specifies incomings handler on outbound connection. Establishes connection
     -- if is doesn't exists.
     listenOutboundRaw :: NetworkAddress         -- ^ Where connection is opened to
-                      -> Get a                  -- ^ Parser for input byte sequence
-                      -> (a -> ResponseT m ())  -- ^ Handler for received data
+                      -> Conduit ByteString IO a
+                      -- ^ Streaming parser for input byte sequence
+                      -> (a -> ResponseT m ())    -- ^ Handler for received data
                       -> m ()
 
     -- | Closes connection to specified node, if exists.
@@ -81,12 +83,12 @@ class Monad m => MonadTransfer m where
 -- | Provides operations related to /peer/ node. Peer is a node, which this node is
 -- currently communicating with.
 class Monad m => MonadResponse m where
-    replyRaw :: Put -> m ()
+    replyRaw :: Producer IO ByteString -> m ()
 
     closeR :: m ()
 
 data ResponseContext = ResponseContext
-    { respSend  :: Put -> IO ()
+    { respSend  :: Producer IO ByteString -> IO ()
     , respClose :: IO ()
     }
 
