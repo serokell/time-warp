@@ -46,6 +46,7 @@ import           Data.Conduit             (Conduit, Producer)
 import           Data.Monoid              ((<>))
 import           Data.Text                (Text)
 import           Data.Text.Buildable      (Buildable (..))
+import           Data.Word                (Word16)
 
 import           Control.TimeWarp.Logging (LoggerNameBox (..), WithNamedLogger)
 import           Control.TimeWarp.Timed   (MonadTimed, ThreadId)
@@ -117,7 +118,7 @@ mapResponseT how = ResponseT . mapReaderT how . getResponseT
 -- * Related datatypes
 
 -- | Port number.
-type Port = Int
+type Port = Word16
 
 -- | Host address.
 type Host = ByteString

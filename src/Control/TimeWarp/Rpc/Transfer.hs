@@ -6,6 +6,7 @@
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeSynonymInstances  #-}
 {-# LANGUAGE UndecidableInstances  #-}
+{-# LANGUAGE ViewPatterns          #-}
 
 -- |
 -- Module      : Control.TimeWarp.Rpc.Transfer
@@ -121,7 +122,7 @@ listenInbound :: Port
               -> Conduit ByteString IO a
               -> (a -> ResponseT Transfer ())
               -> Transfer ()
-listenInbound port condParser listener =
+listenInbound (fromIntegral -> port) condParser listener =
     liftBaseWith $
     \runInBase -> runTCPServerWithHandle (serverSettingsTCP port "*") $
         \sock _ _ -> void . runInBase $ do
@@ -210,7 +211,7 @@ synchronizer = do
                  action
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
-getOutConnOrOpen addr@(host, port) = do
+getOutConnOrOpen addr@(host, fromIntegral -> port) = do
     modifyManager $ do
         existing <- use $ outputConn . at addr
         if isJust existing
