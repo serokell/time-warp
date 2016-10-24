@@ -44,8 +44,7 @@ import qualified Data.Map                           as M
 import           Control.TimeWarp.Logging           (WithNamedLogger)
 import           Control.TimeWarp.Rpc.MonadDialog   (MonadDialog (..), ResponseT (..),
                                                      ListenerH (..),
-                                                     listenH, replyH, sendH,
-                                                     listenOutboundH)
+                                                     listenH, replyH, sendH)
 import           Control.TimeWarp.Rpc.MonadRpc      (MonadRpc (..), Request (..),
                                                      Method (..))
 import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer, MonadResponse)
@@ -123,7 +122,7 @@ instance RpcConstraint m => MonadRpc (Rpc m) where
             msgSlots . at msgid ?= slot
             return msgid
 
-        listenIncoming = listenOutboundH addr (get :: Get MsgId)
+        listenIncoming = listenH (AtConnTo addr) (get :: Get MsgId)
             [ ListenerH $ \(msgid, resp) -> lift $ do
                 maybeSlot <- modifyManager $ use $ msgSlots . at msgid
                 liftIO . forM_ maybeSlot $
@@ -135,13 +134,8 @@ instance RpcConstraint m => MonadRpc (Rpc m) where
 
         typeMismatchError = error "Type mismatch! Probably msgid duplicate"
 
-    serve port methods =
-        listenH port (get :: Get MsgId) $ methodToListener <$> methods
- 
-    serveOutbound addr methods =
-        listenOutboundH port (get :: Get MsgId) $ methodToListener <$> methods
- 
-methodToListener :: Monad m => Method m -> ListenerH MsgId m
-methodToListener (Method f) = ListenerH $
-    \(msgid, req) -> f req >>= replyH (put msgid)
+    serve port methods = listenH (AtPort port) (get :: Get MsgId) $ convert <$> methods
+      where
+        convert (Method f) = ListenerH $
+            \(msgid, req) -> f req >>= replyH (put msgid)
 

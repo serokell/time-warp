@@ -31,13 +31,11 @@ module Control.TimeWarp.Rpc.MonadDialog
 
        , sendP
        , listenP
-       , listenOutboundP
        , replyP
 
        , MonadDialog (..)
        , send
        , listen
-       , listenOutbound
        , reply
 
        , Listener (..)
@@ -71,7 +69,7 @@ import           Control.TimeWarp.Rpc.Message       (Message (..), NamedPacking 
 import           Control.TimeWarp.Rpc.MonadTransfer (Host, MonadResponse (replyRaw),
                                                      MonadTransfer (..), NetworkAddress,
                                                      Port, ResponseT (..), RpcError (..),
-                                                     localhost, mapResponseT, sendRaw)
+                                                     localhost, mapResponseT, sendRaw, Binding)
 import           Control.TimeWarp.Timed             (MonadTimed, ThreadId)
 
 
@@ -98,16 +96,9 @@ replyP packing msg = replyRaw $ yield msg $= packMsg packing
 
 -- | Starts server.
 listenP :: (NamedPacking p, MonadTransfer m, WithNamedLogger m)
-       => p -> Port -> [Listener p m] -> m ()
+       => p -> Binding -> [Listener p m] -> m ()
 listenP packing port listeners =
     uncurry (listenRaw port) $ mergeListeners packing listeners
-
--- | Listens for incomings on outbound connection.
-listenOutboundP :: (NamedPacking p, MonadTransfer m, WithNamedLogger m)
-               => p -> NetworkAddress -> [Listener p m] -> m ()
-listenOutboundP packing addr listeners =
-    uncurry (listenOutboundRaw addr) $ mergeListeners packing listeners
-
 
 -- | For given listeners creates single parser-conduit and single handler with
 -- same functionality.
@@ -162,15 +153,9 @@ reply msg = packingType >>= \p -> replyP p msg
 
 -- | Starts server.
 listen :: (NamedPacking p, MonadDialog p m, WithNamedLogger m)
-       => Port -> [Listener p m] -> m ()
+       => Binding -> [Listener p m] -> m ()
 listen port listeners =
     packingType >>= \p -> listenP p port listeners
-
--- | Listens for incomings on outbound connection.
-listenOutbound :: (NamedPacking p, MonadDialog p m, WithNamedLogger m)
-               => NetworkAddress -> [Listener p m] -> m ()
-listenOutbound addr listeners =
-    packingType >>= \p -> listenOutboundP p addr listeners
 
 
 -- * Listeners

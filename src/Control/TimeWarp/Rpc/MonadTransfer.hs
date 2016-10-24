@@ -22,6 +22,7 @@ module Control.TimeWarp.Rpc.MonadTransfer
        ( Port
        , Host
        , NetworkAddress
+       , Binding (..)
        , localhost
 
        , MonadTransfer (..)
@@ -35,20 +36,25 @@ module Control.TimeWarp.Rpc.MonadTransfer
        , RpcError (..)
        ) where
 
-import           Control.Exception          (Exception)
-import           Control.Monad.Catch        (MonadThrow, MonadCatch, MonadMask)
-import           Control.Monad.Reader       (ReaderT (..), MonadReader (..), mapReaderT)
-import           Control.Monad.State        (MonadState)
-import           Control.Monad.Trans        (MonadTrans (..), MonadIO (..))
-import           Data.ByteString            (ByteString)
-import           Data.Conduit               (Producer, Conduit)
-import           Data.Monoid                ((<>))
-import           Data.Text                  (Text)
-import           Data.Text.Buildable        (Buildable (..))
+import           Control.Exception        (Exception)
+import           Control.Monad.Catch      (MonadCatch, MonadMask, MonadThrow)
+import           Control.Monad.Reader     (MonadReader (..), ReaderT (..), mapReaderT)
+import           Control.Monad.State      (MonadState)
+import           Control.Monad.Trans      (MonadIO (..), MonadTrans (..))
+import           Data.ByteString          (ByteString)
+import           Data.Conduit             (Conduit, Producer)
+import           Data.Monoid              ((<>))
+import           Data.Text                (Text)
+import           Data.Text.Buildable      (Buildable (..))
 
-import           Control.TimeWarp.Logging   (LoggerNameBox (..), WithNamedLogger)
-import           Control.TimeWarp.Timed     (MonadTimed, ThreadId)
+import           Control.TimeWarp.Logging (LoggerNameBox (..), WithNamedLogger)
+import           Control.TimeWarp.Timed   (MonadTimed, ThreadId)
 
+
+data Binding
+    = AtPort Port              -- ^ Listen at port
+    | AtConnTo NetworkAddress  -- ^ Listen at connection established earlier
+--    | Loopback                 -- ^ Listen at local pseudo-net (might be usefull)
 
 -- * MonadTransfer
 
@@ -59,20 +65,11 @@ class Monad m => MonadTransfer m where
             -> Producer IO ByteString  -- ^ Data to send
             -> m ()
 
-    -- | Starts server with specified handler of incoming byte stream.
-    listenRaw :: Port                     -- ^ Port to bind server
-              -> Conduit ByteString IO a
-              -- ^ Streaming parser for input byte sequence
+    -- | Listens at specified input or output connection.
+    listenRaw :: Binding                  -- ^ Port/address to listen to
+              -> Conduit ByteString IO a  -- ^ Parser for input byte stream
               -> (a -> ResponseT m ())    -- ^ Handler for received data
               -> m ()
-
-    -- | Specifies incomings handler on outbound connection. Establishes connection
-    -- if is doesn't exists.
-    listenOutboundRaw :: NetworkAddress         -- ^ Where connection is opened to
-                      -> Conduit ByteString IO a
-                      -- ^ Streaming parser for input byte sequence
-                      -> (a -> ResponseT m ())    -- ^ Handler for received data
-                      -> m ()
 
     -- | Closes connection to specified node, if exists.
     close :: NetworkAddress -> m ()
@@ -157,12 +154,8 @@ instance Exception RpcError
 instance MonadTransfer m => MonadTransfer (ReaderT r m) where
     sendRaw addr req = lift $ sendRaw addr req
 
-    listenRaw port parser listener =
-        ReaderT $ \r -> listenRaw port parser $
-                        mapResponseT (flip runReaderT r) . listener
-
-    listenOutboundRaw addr parser listener =
-        ReaderT $ \r -> listenOutboundRaw addr parser $
+    listenRaw binding parser listener =
+        ReaderT $ \r -> listenRaw binding parser $
                         mapResponseT (flip runReaderT r) . listener
 
     close = lift . close
