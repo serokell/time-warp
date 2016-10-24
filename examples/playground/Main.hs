@@ -31,12 +31,11 @@ import           GHC.Generics                      (Generic)
 import           Control.TimeWarp.Logging          (Severity (Debug), initLogging,
                                                     logDebug, logError, logInfo,
                                                     logWarning, usingLoggerName)
-import           Control.TimeWarp.Rpc              (Listener (..), Message,
+import           Control.TimeWarp.Rpc              (Binding (..), Listener (..), Message,
                                                     MonadTransfer (..), NamedBinaryP (..),
                                                     NetworkAddress, Port, listen,
-                                                    listenOutbound, localhost, reply,
-                                                    replyRaw, runDialog, runTransfer,
-                                                    send)
+                                                    localhost, reply, replyRaw, runDialog,
+                                                    runTransfer, send)
 import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, after, for,
                                                     fork_, ms, runTimedIO, schedule, sec',
                                                     till, work)
@@ -95,7 +94,7 @@ yohohoScenario = runTimedIO $ do
     -- guy 1
     usingLoggerName "guy.1" . runTransfer . runDialog packing . fork_ $ do
         work (till finish) $
-            listen (guysPort 1)
+            listen (AtPort $ guysPort 1)
                 [ Listener $ \Pong -> ha $
                   do logDebug "Got Pong!"
                      reply $ EpicRequest 14 " men on the dead man's chest"
@@ -109,13 +108,13 @@ yohohoScenario = runTimedIO $ do
     -- guy 2
     usingLoggerName "guy.2" . runTransfer . runDialog packing . fork_ $ do
         work (till finish) $
-            listen (guysPort 2)
+            listen (AtPort $ guysPort 2)
                 [ Listener $ \Ping ->
                   do logDebug "Got Ping!"
                      send (guy 1) Pong
                 ]
         work (till finish) $
-            listenOutbound (guy 1)
+            listen (AtConnTo $ guy 1) $
                 [ Listener $ \EpicRequest{..} -> ha $
                   do logDebug "Got EpicRequest!"
                      wait (for 0.1 sec')
@@ -139,7 +138,7 @@ transferScenario = runTimedIO $ do
     liftIO $ initLogging ["node"] Debug
     usingLoggerName "node.server" $ runTransfer $
         work (for 500 ms) $ ha $
-            listenRaw 1234 (conduitGet decoder) $
+            listenRaw (AtPort 1234) (conduitGet decoder) $
             \req -> do
                 logInfo $ sformat ("Got "%shown) req
                 replyRaw $ yield (put $ sformat "Ok!") =$= conduitPut
@@ -149,7 +148,7 @@ transferScenario = runTimedIO $ do
     usingLoggerName "node.client-1" $ runTransfer $
         schedule (after 200 ms) $ ha $ do
             work (for 500 ms) $ ha $
-                listenOutboundRaw (localhost, 1234) (conduitGet get) logInfo
+                listenRaw (AtConnTo (localhost, 1234)) (conduitGet get) logInfo
             forM_ ([1..5] :: [Int]) $ \i ->
                 sendRaw (localhost, 1234) $ yield i
                                          =$= CL.map Left
@@ -165,7 +164,7 @@ transferScenario = runTimedIO $ do
                                      =$= CL.map encoder
                                      =$= conduitPut
             work (for 500 ms) $ ha $
-                listenOutboundRaw (localhost, 1234) (conduitGet get) logInfo
+                listenRaw (AtConnTo (localhost, 1234)) (conduitGet get) logInfo
 
     wait (for 1000 ms)
   where

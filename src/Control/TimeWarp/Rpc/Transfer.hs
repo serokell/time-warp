@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns          #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE Rank2Types            #-}
@@ -22,43 +21,45 @@ module Control.TimeWarp.Rpc.Transfer
        ) where
 
 import qualified Control.Concurrent                 as C
-import           Control.Concurrent.MVar            (MVar, newMVar, modifyMVar,
-                                                     newEmptyMVar, takeMVar, putMVar)
+import           Control.Concurrent.MVar            (MVar, modifyMVar, newEmptyMVar,
+                                                     newMVar, putMVar, takeMVar)
 import           Control.Concurrent.STM             (atomically)
 import           Control.Concurrent.STM.TBMChan     (TBMChan, newTBMChanIO)
 import           Control.Concurrent.STM.TVar        (TVar, newTVarIO, swapTVar)
-import           Control.Lens                       (makeLenses, (<<.=), at,
-                                                     (?=), use, (<<+=), (.=))
+import           Control.Lens                       (at, makeLenses, use, (.=), (<<+=),
+                                                     (<<.=), (?=))
 import           Control.Monad                      (forM_, void)
 import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Catch                (MonadCatch, MonadMask,
-                                                     MonadThrow (..), handleAll, bracket_)
+                                                     MonadThrow (..), bracket_, handleAll)
 import           Control.Monad.Reader               (ReaderT (..), ask)
-import           Control.Monad.State                (runStateT, StateT (..))
+import           Control.Monad.State                (StateT (..), runStateT)
 import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
-import           Data.Tuple                         (swap)
-import qualified Data.Map                           as M
+import           Data.ByteString                    (ByteString)
 import qualified Data.ByteString                    as BS
-import           Data.Conduit                       (($$), ($=), Source, Producer)
+import           Data.Conduit                       (Conduit, Producer, Source, ($$),
+                                                     ($=))
 import qualified Data.Conduit.List                  as CL
-import           Data.Conduit.Network               (sourceSocket, sinkSocket)
-import           Data.Conduit.TMChan                (sourceTBMChan, sinkTBMChan)
-import           Data.Maybe                         (isJust, fromJust, isNothing)
+import           Data.Conduit.Network               (sinkSocket, sourceSocket)
+import           Data.Conduit.TMChan                (sinkTBMChan, sourceTBMChan)
+import qualified Data.Map                           as M
+import           Data.Maybe                         (fromJust, isJust, isNothing)
 import           Data.Streaming.Network             (getSocketFamilyTCP,
                                                      runTCPServerWithHandle,
                                                      serverSettingsTCP)
+import           Data.Tuple                         (swap)
 import           Formatting                         (sformat, shown, (%))
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
 import           Network.Socket                     as NS
 
-import           Control.TimeWarp.Logging           (WithNamedLogger, LoggerNameBox,
+import           Control.TimeWarp.Logging           (LoggerNameBox, WithNamedLogger,
                                                      logWarning)
-import           Control.TimeWarp.Rpc.MonadTransfer (MonadTransfer (..), NetworkAddress,
-                                                     runResponseT, sendRaw,
-                                                     ResponseContext (..),
-                                                     runResponseT)
-import           Control.TimeWarp.Timed             (MonadTimed, TimedIO, ThreadId, fork_)
+import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer (..),
+                                                     NetworkAddress, Port,
+                                                     ResponseContext (..), ResponseT,
+                                                     runResponseT, runResponseT, sendRaw)
+import           Control.TimeWarp.Timed             (MonadTimed, ThreadId, TimedIO, fork_)
 
 
 -- * Realted datatypes
@@ -116,52 +117,63 @@ modifyManager how = Transfer $
 
 -- * Logic
 
+listenInbound :: Port
+              -> Conduit ByteString IO a
+              -> (a -> ResponseT Transfer ())
+              -> Transfer ()
+listenInbound port condParser listener =
+    liftBaseWith $
+    \runInBase -> runTCPServerWithHandle (serverSettingsTCP port "*") $
+        \sock _ _ -> void . runInBase $ do
+            saveConn sock
+            synchronously <- synchronizer
+            let source = sourceSocket sock
+                responseCtx =
+                    ResponseContext
+                    { respSend  = \src -> synchronously $ src $$ sinkSocket sock
+                    , respClose = NS.close sock
+                    }
+            requestsChan <- startListener $ flip runResponseT responseCtx . listener
+            logOnErr . liftIO $
+                source $$ condParser $= sinkTBMChan requestsChan True
+  where
+    saveConn _ = do
+        let conn =
+                InputConnection
+                { -- _inConnClose = NS.close sock
+                }
+        modifyManager $ do
+            connId <- inputConnCounter <<+= 1
+            inputConn . at connId .= Just conn
+
+listenOutbound :: NetworkAddress
+               -> Conduit ByteString IO a
+               -> (a -> ResponseT Transfer ())
+               -> Transfer ()
+listenOutbound addr condParser listener = do
+    conn <- getOutConnOrOpen addr
+    maybeSource <- liftIO . atomically $ swapTVar (outConnSrc conn) Nothing
+    let responseCtx =
+            ResponseContext
+            { respSend  = outConnSend conn
+            , respClose = outConnClose conn
+            }
+    if isNothing maybeSource
+        then error $ "Already listening at outbound connection to " ++ show addr
+        else do
+            let source = fromJust maybeSource
+            requestsChan <- startListener $ flip runResponseT responseCtx . listener
+            logOnErr . liftIO $
+                source $$ condParser $= sinkTBMChan requestsChan True
+
+
 instance MonadTransfer Transfer where
     sendRaw addr dat = do
         conn <- getOutConnOrOpen addr
         liftIO $ outConnSend conn dat
 
-    listenRaw port condParser listener =
-        liftBaseWith $
-        \runInBase -> runTCPServerWithHandle (serverSettingsTCP port "*") $
-            \sock _ _ -> void . runInBase $ do
-                saveConn sock
-                synchronously <- synchronizer
-                let source = sourceSocket sock
-                    responseCtx =
-                        ResponseContext
-                        { respSend  = \src -> synchronously $ src $$ sinkSocket sock
-                        , respClose = NS.close sock
-                        }
-                requestsChan <- startListener $ flip runResponseT responseCtx . listener
-                logOnErr . liftIO $
-                    source $$ condParser $= sinkTBMChan requestsChan True
-      where
-        saveConn _ = do
-            let conn =
-                    InputConnection
-                    { -- _inConnClose = NS.close sock
-                    }
-            modifyManager $ do
-                connId <- inputConnCounter <<+= 1
-                inputConn . at connId .= Just conn
-
-    listenOutboundRaw addr condParser listener = do
-        conn <- getOutConnOrOpen addr
-        maybeSource <- liftIO . atomically $ swapTVar (outConnSrc conn) Nothing
-        let responseCtx =
-                ResponseContext
-                { respSend  = outConnSend conn
-                , respClose = outConnClose conn
-                }
-        if isNothing maybeSource
-            then error $ "Already listening at outbound connection to " ++ show addr
-            else do
-                let source = fromJust maybeSource
-                requestsChan <- startListener $ flip runResponseT responseCtx . listener
-                logOnErr . liftIO $
-                    source $$ condParser $= sinkTBMChan requestsChan True
-      where
+    listenRaw (AtPort   port) = listenInbound port
+    listenRaw (AtConnTo addr) = listenOutbound addr
 
     close addr = do
         maybeWasConn <- modifyManager $ outputConn . at addr <<.= Nothing
