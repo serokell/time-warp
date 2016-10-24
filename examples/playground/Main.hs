@@ -25,6 +25,7 @@ import           Data.Conduit.Serialization.Binary (conduitGet, conduitPut)
 import           Data.Data                         (Data)
 import           Data.MessagePack                  (MessagePack (..))
 import           Data.Void                         (Void)
+import           Data.Word                         (Word16)
 import           Formatting                        (sformat, shown, string, (%))
 import           GHC.Generics                      (Generic)
 
@@ -76,10 +77,10 @@ instance Message EpicRequest
 
 -- * scenarios
 
-guy :: Int -> NetworkAddress
+guy :: Word16 -> NetworkAddress
 guy = (localhost, ) . guysPort
 
-guysPort :: Int -> Port
+guysPort :: Word16 -> Port
 guysPort = (+10000)
 
 -- Emulates dialog of two guys:
