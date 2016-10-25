@@ -46,17 +46,17 @@ import           Control.Monad                     (forM, mapM_, when)
 import           Control.Monad.Catch               (MonadThrow (..))
 import           Control.Monad.Trans               (MonadIO (..))
 import           Data.Binary                       (Binary (..))
-import           Data.Binary.Get                   (Decoder (..), Get, pushChunk,
-                                                    runGetIncremental, runGet)
+import           Data.Binary.Get                   (Decoder (..), Get, pushChunk, runGet,
+                                                    runGetIncremental)
 import           Data.Binary.Put                   (runPut)
 import           Data.ByteString                   (ByteString)
 import qualified Data.ByteString                   as BS
 import qualified Data.ByteString.Char8             as BC
 import qualified Data.ByteString.Lazy              as BL
-import           Data.Conduit                      (Conduit, Consumer, awaitForever,
-                                                    leftover, yield, (=$=), await)
+import           Data.Conduit                      (Conduit, Consumer, await,
+                                                    awaitForever, leftover, yield, (=$=))
 import qualified Data.Conduit.List                 as CL
-import           Data.Conduit.Serialization.Binary (conduitPut, ParseError (..))
+import           Data.Conduit.Serialization.Binary (ParseError (..), conduitPut)
 import           Data.Data                         (Data, dataTypeName, dataTypeOf)
 import           Data.IORef                        (modifyIORef, newIORef, readIORef)
 import           Data.Proxy                        (Proxy (..), asProxyTypeOf)
@@ -106,13 +106,14 @@ proxyOf _ = Proxy
 intangibleSink :: MonadIO m => Conduit i m o -> Consumer i m (Maybe o)
 intangibleSink cond = do
     taken <- liftIO $ newIORef []
-    am <- notingCond taken =$= cond =$= CL.head
+    am <- notingCond taken =$= ignoreLeftovers =$= cond =$= CL.head
     forM am $ \a -> do
         mapM_ leftover =<< liftIO (readIORef taken)
         return a
   where
     notingCond taken = awaitForever $ \a -> do liftIO $ modifyIORef taken (a:)
                                                yield a
+    ignoreLeftovers = awaitForever yield
 
 -- | Like `conduitGet`, but applicable to be used inside `unpackMsg`.
 conduitGet' :: MonadThrow m => Get b -> Conduit ByteString m b
@@ -121,7 +122,8 @@ conduitGet' g = start
     start = do mx <- await
                case mx of
                   Nothing -> return ()
-                  Just x -> go (runGetIncremental g `pushChunk` x)
+                  Just x -> do
+                               go (runGetIncremental g `pushChunk` x)
     go (Done bs _ v) = do when (not $ BS.null bs) $ leftover bs
                           yield v
                           start
@@ -133,7 +135,7 @@ conduitGet' g = start
 
 -- | Defines a way to serialize object @r@ with given packing type @p@.
 class Packable p r where
-    -- | Way of packing data to raw bytes. At the moment when any value gets passed
+    -- | Way of packing data to raw bytes. At the moment when value gets passed
     -- downstream, all unconsumed input should be `leftover`ed.
     packMsg :: MonadThrow m => p -> Conduit r m ByteString
 
@@ -153,13 +155,18 @@ data BinaryP = BinaryP
 
 instance (Binary h, Binary r, Message r)
        => Packable BinaryP (HeaderNContentData h r) where
+    packMsg p = CL.map packToRaw =$= packMsg p
+      where
+        packToRaw (HeaderNContentData h r) =
+            HeaderNRawData h . RawData . BL.toStrict . runPut $ do
+                put $ messageName $ proxyOf r
+                put r
+
+instance Binary h
+      => Packable BinaryP (HeaderNRawData h) where
     packMsg _ = CL.map doPut =$= conduitPut
       where
-        doPut (HeaderNContentData h r) =
-            do put h
-               put . runPut $
-                 do put $ messageName $ proxyOf r
-                    put r
+        doPut (HeaderNRawData h (RawData r)) = put h >> put r
 
 instance Binary h
       => Unpackable BinaryP (HeaderData h) where
@@ -169,8 +176,7 @@ instance Binary h
       => Unpackable BinaryP (HeaderNRawData h) where
     unpackMsg _ = conduitGet' $ HeaderNRawData <$> get <*> (RawData <$> get)
 
-
--- | TODO: optimize
+-- | TODO: don't read whole content
 instance Binary h
       => Unpackable BinaryP (HeaderNNameData h) where
     unpackMsg p = unpackMsg p =$= CL.map extract
