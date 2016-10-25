@@ -11,10 +11,12 @@ module Main
     , yohohoScenario
 --    , rpcScenario
     , transferScenario
+    , proxyScenario
 --    , runEmulation
 --    , runReal
     ) where
 
+import           Control.Concurrent.MVar           (newEmptyMVar, putMVar, takeMVar)
 import           Control.Monad                     (forM_, replicateM_, when)
 import           Control.Monad.Catch               (handleAll)
 import           Control.Monad.Trans               (liftIO)
@@ -33,13 +35,13 @@ import           GHC.Generics                      (Generic)
 import           Control.TimeWarp.Logging          (Severity (Debug), initLogging,
                                                     logDebug, logError, logInfo,
                                                     logWarning, usingLoggerName)
-import           Control.TimeWarp.Rpc              (Binding (..),
-                                                    Listener (..), Message,
-                                                    MonadTransfer (..),
-                                                    NetworkAddress, Port,
-                                                    listen, localhost, reply, replyRaw,
-                                                    runDialog, runTransfer, send,
-                                                    BinaryP (..))
+import           Control.TimeWarp.Rpc              (BinaryP (..), Binding (..),
+                                                    Listener (..), ListenerH (..),
+                                                    Message, MonadTransfer (..),
+                                                    NetworkAddress, Port, listen, listenH,
+                                                    listenR, localhost, reply, replyRaw,
+                                                    runDialog, runTransfer, send, sendH,
+                                                    sendR)
 import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, after, for,
                                                     fork_, ms, runTimedIO, schedule, sec',
                                                     till, virtualTime, work)
@@ -216,3 +218,55 @@ rpcScenario = runTimedIO $ do
     finish = 5
 
 -}
+
+-- * Blind proxy scenario, illustrates work with headers and raw data.
+proxyScenario :: IO ()
+proxyScenario = runTimedIO $ do
+    liftIO $ initLogging ["server", "proxy"] Debug
+
+    lock <- liftIO newEmptyMVar
+    let sync act = liftIO (putMVar lock ()) >> act >> liftIO (takeMVar lock)
+
+    -- server
+
+    usingLoggerName "server" . runTransfer . runDialog packing . fork_ $ do
+        work (till finish) $
+            listenH (AtPort $ 5678)
+                [ ListenerH $ \(h, EpicRequest{..}) -> sync . logInfo $
+                    sformat ("Got request!: "%shown%" "%shown%"; h = "%shown)
+                    num msg (int h)
+                ]
+
+    -- proxy
+    usingLoggerName "proxy" . runTransfer . runDialog packing . fork_ $ do
+        work (till finish) $
+            listenR (AtPort 1234)
+                [ ListenerH $ \(h, EpicRequest _ _) -> sync . logInfo $
+                    sformat ("Proxy! h = "%shown) h
+                ]
+                $ \(h, raw) -> do
+                    when ((int h) < 5) $ do
+                        sendR (localhost, 5678) (int h) raw
+                        sync $ logInfo $ sformat ("Resend "%shown) h
+                    return $ even h
+
+
+    wait (for 100 ms)
+
+    -- client
+    usingLoggerName "client" . runTransfer . runDialog packing . fork_ . ha $ do
+        forM_ [1..10] $
+            \i -> sendH (localhost, 1234) (int i) $ EpicRequest 34 "lol"
+
+    wait (till 10 ms finish)  -- kinda lol notation
+  where
+    finish :: Second
+    finish = 1
+
+    packing :: BinaryP
+    packing = BinaryP
+
+    int :: Int -> Int
+    int = id
+
+    ha = handleAll $ logWarning . sformat ("Exception: "%shown)
