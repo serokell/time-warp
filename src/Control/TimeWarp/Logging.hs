@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
 {-# LANGUAGE ViewPatterns          #-}
@@ -24,7 +25,8 @@
 module Control.TimeWarp.Logging
        ( Severity (..)
        , initLogging
-       , initLoggerByName
+       , initLoggingDefault
+       , initLogger
 
        , LoggerName (..)
 
@@ -42,6 +44,8 @@ module Control.TimeWarp.Logging
        , logMessage
        ) where
 
+import           Control.Lens                (Wrapped (..), iso)
+import           Control.Monad               (forM_)
 import           Control.Monad.Base          (MonadBase)
 import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow)
 import           Control.Monad.Except        (ExceptT (..), runExceptT)
@@ -50,10 +54,9 @@ import           Control.Monad.State         (MonadState (get), StateT, evalStat
 import           Control.Monad.Trans         (MonadIO (liftIO), MonadTrans, lift)
 import           Control.Monad.Trans.Cont    (ContT, mapContT)
 import           Control.Monad.Trans.Control (MonadBaseControl (..))
-import           Control.Lens                (Wrapped (..), iso)
 
-import qualified Data.Semigroup              as Semigroup
 import           Data.Semigroup              (Semigroup)
+import qualified Data.Semigroup              as Semigroup
 import           Data.String                 (IsString)
 import qualified Data.Text                   as T
 import           Data.Typeable               (Typeable)
@@ -103,24 +106,37 @@ convertSeverity Info    = INFO
 convertSeverity Warning = WARNING
 convertSeverity Error   = ERROR
 
--- | Initiates specified loggers, and sets severity of root logger's handler to
--- `Debug`
-initLogging :: [LoggerName] -> Severity -> IO ()
-initLogging predefinedLoggers sev = do
+-- | This function does some initialization of global logging system, namely:
+--
+-- 1. It removes loggers from the root logger.
+-- 2. It sets given Severity to root logger, so that it will be used by
+-- children loggers by default.
+-- 3. It initializes predefined loggers using given severity (if any). All
+-- loggers must be initialized before they can be used.
+-- It can be done later using `initLogger` function.
+initLogging :: [(LoggerName, Maybe Severity)] -> Severity -> IO ()
+initLogging predefinedLoggers defaultSeverity = do
     updateGlobalLogger rootLoggerName removeHandler
-    updateGlobalLogger rootLoggerName $ setLevel DEBUG
-    mapM_ (initLoggerByName sev) predefinedLoggers
+    updateGlobalLogger rootLoggerName $
+        setLevel (convertSeverity defaultSeverity)
+    mapM_ (uncurry initLogger) predefinedLoggers
 
--- | Turns logger with specified name on.
+-- | Like initLogging, but default severity is used for all given loggers.
+initLoggingDefault :: [LoggerName] -> Severity -> IO ()
+initLoggingDefault names = initLogging (map (, Nothing) names)
+
+-- | Enabled logger with given name and optionally set a severity for it.
 -- All messages are printed to /stdout/, moreover messages with at least
 -- `Error` severity are printed to /stderr/.
-initLoggerByName :: Severity -> LoggerName -> IO ()
-initLoggerByName (convertSeverity -> s) LoggerName{..} = do
+initLogger :: LoggerName -> Maybe Severity -> IO ()
+initLogger (LoggerName loggerName) (fmap convertSeverity -> s) = do
+    -- we set DEBUG here, because logger itself has a severity
     stdoutHandler <-
-        (flip setFormatter) stdoutFormatter <$> streamHandler stdout s
+        flip setFormatter stdoutFormatter <$> streamHandler stdout DEBUG
     stderrHandler <-
-        (flip setFormatter) stderrFormatter <$> streamHandler stderr ERROR
+        flip setFormatter stderrFormatter <$> streamHandler stderr ERROR
     updateGlobalLogger loggerName $ setHandlers [stdoutHandler, stderrHandler]
+    forM_ s $ updateGlobalLogger loggerName . setLevel
   where
     stderrFormatter = simpleLogFormatter
         ("[$time] " ++ colorizer ERROR "[$loggername:$prio]: " ++ "$msg")
