@@ -88,17 +88,17 @@ newtype LoggerName = LoggerName
     { loggerName :: String
     } deriving (Show, IsString)
 
--- | Defined such that @n1@ is parent for @(n1 <> n2)@
--- (see <http://hackage.haskell.org/package/hslogger-1.2.10/docs/System-Log-Logger.html hslogger description>).
 instance Monoid LoggerName where
     mempty = ""
     mappend = (Semigroup.<>)
 
+-- | Note that @(n1 <> n2)@ is not a parent of @n1@, because we
+-- decided not to use hierarchical structure of hslogger intensively.
 instance Semigroup LoggerName where
     LoggerName base <> LoggerName suffix
         | null base   = LoggerName suffix
         | null suffix = LoggerName base
-        | otherwise   = LoggerName $ base ++ "." ++ suffix
+        | otherwise   = LoggerName $ base ++ "-" ++ suffix
 
 convertSeverity :: Severity -> Priority
 convertSeverity Debug   = DEBUG
