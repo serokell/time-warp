@@ -130,7 +130,7 @@ instance MonadTransfer Transfer where
                 let source = sourceSocket sock
                     responseCtx =
                         ResponseContext
-                        { respSend  = \prod -> synchronously $ prod $$ sinkSocket sock
+                        { respSend  = \src -> synchronously $ src $$ sinkSocket sock
                         , respClose = NS.close sock
                         }
                 requestsChan <- startListener $ flip runResponseT responseCtx . listener
@@ -211,7 +211,7 @@ getOutConnOrOpen addr@(host, port) = do
                 synchronously <- lift synchronizer
                 let conn =
                        OutputConnection
-                       { outConnSend  = \prod -> synchronously $ prod $$ sinkSocket sock
+                       { outConnSend  = \src -> synchronously $ src $$ sinkSocket sock
                        , outConnSrc   = source
                        , outConnClose = NS.close sock
                        }
