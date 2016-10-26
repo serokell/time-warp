@@ -32,7 +32,7 @@ import           Control.Lens                       (makeLenses, (<<.=), at,
 import           Control.Monad                      (forM_, void)
 import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Catch                (MonadCatch, MonadMask,
-                                                     MonadThrow (..), handleAll, bracket)
+                                                     MonadThrow (..), handleAll, bracket_)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (runStateT, StateT (..))
 import           Control.Monad.Trans                (MonadIO (..), lift)
@@ -193,9 +193,9 @@ synchronizer :: MonadIO m => m (IO () -> IO ())
 synchronizer = do
     lock <- liftIO newEmptyMVar
     return $ \action ->
-        bracket (putMVar lock ())
-                (const $ takeMVar lock)
-                (const action)
+        bracket_ (putMVar lock ())
+                 (takeMVar lock)
+                 action
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
 getOutConnOrOpen addr@(host, port) = do
