@@ -15,7 +15,7 @@ module Main
 --    , runReal
     ) where
 
-import           Control.Monad                     (forever, when)
+import           Control.Monad                     (forM_, replicateM_, when)
 import           Control.Monad.Catch               (handleAll)
 import           Control.Monad.Trans               (liftIO)
 import           Data.Binary                       (Binary, Get, Put, get, put)
@@ -33,8 +33,8 @@ import           Control.TimeWarp.Logging          (Severity (Debug), initLoggin
                                                     logWarning, usingLoggerName)
 import           Control.TimeWarp.Rpc              (Listener (..), Message,
                                                     MonadTransfer (..), NamedBinaryP (..),
-                                                    NetworkAddress, Port, listenE,
-                                                    listenOutboundE, localhost, reply,
+                                                    NetworkAddress, Port, listen,
+                                                    listenOutbound, localhost, reply,
                                                     replyRaw, runDialog, runTransfer,
                                                     send)
 import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, after, for,
@@ -95,31 +95,34 @@ yohohoScenario = runTimedIO $ do
     -- guy 1
     usingLoggerName "guy.1" . runTransfer . runDialog packing . fork_ $ do
         work (till finish) $
-            listenE (guysPort 1) logError
+            listen (guysPort 1)
                 [ Listener $ \Pong -> ha $
                   do logDebug "Got Pong!"
                      reply $ EpicRequest 14 " men on the dead man's chest"
                 ]
         -- guy 1 initiates dialog
         wait (for 100 ms)
-        send (guy 2) Ping
+        replicateM_ 3 $ do
+            send (guy 2) Ping
+            logInfo "Sent"
 
     -- guy 2
     usingLoggerName "guy.2" . runTransfer . runDialog packing . fork_ $ do
         work (till finish) $
-            listenE (guysPort 2) logError
+            listen (guysPort 2)
                 [ Listener $ \Ping ->
                   do logDebug "Got Ping!"
                      send (guy 1) Pong
                 ]
         work (till finish) $
-            listenOutboundE (guy 1) logError
+            listenOutbound (guy 1)
                 [ Listener $ \EpicRequest{..} -> ha $
                   do logDebug "Got EpicRequest!"
                      wait (for 0.1 sec')
                      logInfo $ sformat (shown%string) (num + 1) msg
                 ]
     wait (till finish)
+    wait (for 100 ms)
   where
     finish :: Second
     finish = 1
@@ -136,7 +139,7 @@ transferScenario = runTimedIO $ do
     liftIO $ initLogging ["node"] Debug
     usingLoggerName "node.server" $ runTransfer $
         work (for 500 ms) $ ha $
-            listenRaw 1234 (forever $ conduitGet decoder) $
+            listenRaw 1234 (conduitGet decoder) $
             \req -> do
                 logInfo $ sformat ("Got "%shown) req
                 replyRaw $ yield (put $ sformat "Ok!") =$= conduitPut
@@ -146,11 +149,12 @@ transferScenario = runTimedIO $ do
     usingLoggerName "node.client-1" $ runTransfer $
         schedule (after 200 ms) $ ha $ do
             work (for 500 ms) $ ha $
-                listenOutboundRaw (localhost, 1234) (forever $ conduitGet get) logInfo
-            sendRaw (localhost, 1234) $  CL.sourceList ([1..5] :: [Int])
-                                     =$= CL.map Left
-                                     =$= CL.map encoder
-                                     =$= conduitPut
+                listenOutboundRaw (localhost, 1234) (conduitGet get) logInfo
+            forM_ ([1..5] :: [Int]) $ \i ->
+                sendRaw (localhost, 1234) $ yield i
+                                         =$= CL.map Left
+                                         =$= CL.map encoder
+                                         =$= conduitPut
 --                                     =$= awaitForever (\m -> yield "trash" >> yield m)
 
     usingLoggerName "node.client-2" $ runTransfer $
@@ -161,7 +165,7 @@ transferScenario = runTimedIO $ do
                                      =$= CL.map encoder
                                      =$= conduitPut
             work (for 500 ms) $ ha $
-                listenOutboundRaw (localhost, 1234) (forever $ conduitGet get) logInfo
+                listenOutboundRaw (localhost, 1234) (conduitGet get) logInfo
 
     wait (for 1000 ms)
   where

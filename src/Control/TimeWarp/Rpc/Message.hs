@@ -2,6 +2,7 @@
 {-# LANGUAGE DefaultSignatures     #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE Rank2Types            #-}
 {-# LANGUAGE TypeFamilies          #-}
 
 -- |
@@ -19,39 +20,34 @@ module Control.TimeWarp.Rpc.Message
        , Serializable (..)
        , NamedPacking (..)
        , NamedSerializable
-       , BinaryP (..)
+--       , BinaryP (..)
        , NamedBinaryP (..)
-       , NamedDefP (..)
-       , Magic32P (..)
+--       , NamedDefP (..)
+--       , Magic32P (..)
        , proxyOf
        ) where
 
-import           Control.Applicative               ((<|>), many)
-import           Control.Monad                     (forever)
 import           Control.Monad.Catch               (MonadThrow)
-import           Data.Binary                       (Binary (..), encode)
-import           Data.Binary.Get                   (Decoder (..), Get, pushChunk,
-                                                    runGetIncremental, lookAhead)
+import           Data.Binary                       (Binary (..))
+import           Data.Binary.Get                   (Get, lookAhead)
 import           Data.ByteString                   (ByteString)
-import qualified Data.ByteString                   as BS
 import qualified Data.ByteString.Char8             as BC
-import qualified Data.ByteString.Lazy              as BL
-import           Data.Conduit                      (Conduit, yield, awaitForever,
-                                                    leftover, (=$=), await, (=$), ($$))
-import           Data.Conduit.List                 as CL
-import           Data.Conduit.Serialization.Binary (sinkGet, sourcePut,
+import           Data.Conduit                      (Conduit, Consumer, (=$=))
+import qualified Data.Conduit.List                 as CL
+import           Data.Conduit.Serialization.Binary (conduitGet, sinkGet,
                                                     conduitPut)
 import           Data.Data                         (Data, dataTypeName, dataTypeOf)
 import           Data.Proxy                        (Proxy (..), asProxyTypeOf)
-import qualified Data.Text                         as T
 import           Data.Typeable                     (Typeable)
-import           Data.Word                         (Word8, Word32)
+
+
+type MessageName = ByteString
 
 -- | Defines type which has it's uniqie name.
 class Message m where
     -- | Uniquely identifies this type
-    messageName :: Proxy m -> ByteString
-    default messageName :: Data m => Proxy m -> ByteString
+    messageName :: Proxy m -> MessageName
+    default messageName :: Data m => Proxy m -> MessageName
     messageName proxy =
         BC.pack . dataTypeName . dataTypeOf $ undefined `asProxyTypeOf` proxy
 
@@ -61,41 +57,21 @@ class Message m where
 proxyOf :: a -> Proxy a
 proxyOf _ = Proxy
 
--- | Copy-paste of `conduitGet`, but which returns `Either`
-conduitGetSafe :: Monad m => Get b -> Conduit ByteString m (Either T.Text b)
-conduitGetSafe g = start
-  where
-    start = do mx <- await
-               case mx of
-                  Nothing -> return ()
-                  Just x -> go (runGetIncremental g `pushChunk` x)
-    go (Done bs _ v) = do yield $ Right v
-                          if BS.null bs
-                            then start
-                            else go (runGetIncremental g `pushChunk` bs)
-    go (Fail _ _ e)  = yield $ Left $ T.pack e
-    go (Partial n)   = await >>= (go . n)
-
 
 -- * Typeclasses
 
 -- | Defines a way to serialize object @r@ with given packing type @p@.
--- TODO: eliminate MonadThrow
 class Typeable r => Serializable p r where
     -- | Way of packing data to raw bytes.
-    -- Note, that each bytestring at output should correspond to exactly
-    -- single message of input.
     packMsg :: MonadThrow m => p -> Conduit r m ByteString
 
     -- | Way of unpacking raw bytes to data.
-    -- If parse error occured, @Left errorMessage@ should be yielded, and
-    -- then parsing should continue from some point ahead.
-    unpackMsg :: MonadThrow m => p -> Conduit ByteString m (Either T.Text r)
+    unpackMsg :: MonadThrow m => p -> Conduit ByteString m r
 
 -- | Defines a way to extract a message name from serialized data.
 class NamedPacking p where
     -- | Peeks name of incoming message, without consuming any input.
-    lookMsgName :: MonadThrow m => p -> Conduit ByteString m (Either T.Text ByteString)
+    lookMsgName :: MonadThrow m => p -> Consumer ByteString m MessageName
 
 type NamedSerializable p r = (Serializable p r, NamedPacking p, Message r)
 
@@ -109,31 +85,23 @@ type NamedSerializable p r = (Serializable p r, NamedPacking p, Message r)
 data NamedBinaryP = NamedBinaryP
 
 instance (Binary r, Typeable r, Message r) => Serializable NamedBinaryP r where
-    packMsg _ = let putSingle m = put (messageName $ proxyOf m, m)
-                in  CL.map putSingle =$= conduitPut
-
-    unpackMsg _ = conduitGetSafe (bsFirst <$> get) =$= CL.map (fmap snd)
+    packMsg _ = CL.map doPut =$= conduitPut
       where
-        bsFirst :: (ByteString, r) -> (ByteString, r)
-        bsFirst = id
+        doPut m = do put $ messageName $ proxyOf m
+                     put m
 
+    unpackMsg _ = conduitGet $ (get :: Get MessageName) *> get
 
 instance NamedPacking NamedBinaryP where
-    lookMsgName _ = conduitGetSafe (lookAhead get :: Get (ByteString, Any)) =$= CL.map (fmap fst)
+    lookMsgName _ = sinkGet $ lookAhead get
 
-
--- | Can be anything in serialized form.
-data Any = Any
-
-instance Binary Any where
-    get = Any <$ many (get :: Get Word8)
-    put _ = return ()
 
 -- ** Lego
 -- Allows to combine different packing primitive modifiers, like adding magic constant or
 -- hash.
--- TODO: doesn't work yet
+-- Experimental.
 
+{-
 -- | Packs instances of `Binary`.
 data BinaryP = BinaryP
 
@@ -208,7 +176,7 @@ instance NamedPacking p => NamedPacking (Magic32P p) where
             Just m  -> if m == magic
                           then lookMsgName p >> leftover (BL.toStrict $ encode w)
                           else yield $ Left "Magic constant doesn't match"
-
+-}
 
 -- * Misc
 
