@@ -7,7 +7,6 @@
 {-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
-{-# LANGUAGE ViewPatterns          #-}
 
 -- |
 -- Module      : Control.TimeWarp.Logging
@@ -25,8 +24,8 @@
 module Control.TimeWarp.Logging
        ( Severity (..)
        , initLogging
-       , initLoggingDefault
-       , initLogger
+       , initLoggingWith
+       , setSeverity
 
        , LoggerName (..)
 
@@ -45,7 +44,6 @@ module Control.TimeWarp.Logging
        ) where
 
 import           Control.Lens                (Wrapped (..), iso)
-import           Control.Monad               (forM_)
 import           Control.Monad.Base          (MonadBase)
 import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow)
 import           Control.Monad.Except        (ExceptT (..), runExceptT)
@@ -71,8 +69,8 @@ import           System.Log.Formatter        (simpleLogFormatter)
 import           System.Log.Handler          (setFormatter)
 import           System.Log.Handler.Simple   (streamHandler)
 import           System.Log.Logger           (Priority (DEBUG, ERROR, INFO, WARNING),
-                                              logM, removeHandler, rootLoggerName,
-                                              setHandlers, setLevel, updateGlobalLogger)
+                                              logM, rootLoggerName, setHandlers, setLevel,
+                                              updateGlobalLogger)
 
 -- | This type is intended to be used as command line option
 -- which specifies which messages to print.
@@ -92,13 +90,13 @@ instance Monoid LoggerName where
     mempty = ""
     mappend = (Semigroup.<>)
 
--- | Note that @(n1 <> n2)@ is not a parent of @n1@, because we
--- decided not to use hierarchical structure of hslogger intensively.
+-- | Defined such that @n1@ is parent for @(n1 <> n2)@
+-- (see <http://hackage.haskell.org/package/hslogger-1.2.10/docs/System-Log-Logger.html hslogger description>).
 instance Semigroup LoggerName where
     LoggerName base <> LoggerName suffix
         | null base   = LoggerName suffix
         | null suffix = LoggerName base
-        | otherwise   = LoggerName $ base ++ "-" ++ suffix
+        | otherwise   = LoggerName $ base ++ "." ++ suffix
 
 convertSeverity :: Severity -> Priority
 convertSeverity Debug   = DEBUG
@@ -106,42 +104,47 @@ convertSeverity Info    = INFO
 convertSeverity Warning = WARNING
 convertSeverity Error   = ERROR
 
--- | This function does some initialization of global logging system, namely:
+-- | This function initializes global logging system. At high level, it sets
+-- severity which will be used by all loggers by default, sets default
+-- formatters and sets custom severity for given loggers (if any).
 --
--- 1. It removes loggers from the root logger.
--- 2. It sets given Severity to root logger, so that it will be used by
--- children loggers by default.
--- 3. It initializes predefined loggers using given severity (if any). All
--- loggers must be initialized before they can be used.
--- It can be done later using `initLogger` function.
-initLogging :: [(LoggerName, Maybe Severity)] -> Severity -> IO ()
-initLogging predefinedLoggers defaultSeverity = do
-    updateGlobalLogger rootLoggerName removeHandler
-    updateGlobalLogger rootLoggerName $
-        setLevel (convertSeverity defaultSeverity)
-    mapM_ (uncurry initLogger) predefinedLoggers
-
--- | Like initLogging, but default severity is used for all given loggers.
-initLoggingDefault :: [LoggerName] -> Severity -> IO ()
-initLoggingDefault names = initLogging (map (, Nothing) names)
-
--- | Enabled logger with given name and optionally set a severity for it.
--- All messages are printed to /stdout/, moreover messages with at least
--- `Error` severity are printed to /stderr/.
-initLogger :: LoggerName -> Maybe Severity -> IO ()
-initLogger (LoggerName loggerName) (fmap convertSeverity -> s) = do
-    -- we set DEBUG here, because logger itself has a severity
+-- On a lower level it does the following:
+-- 1. Removes default handler from root logger, sets two handlers such that:
+-- 1.1. All messages are printed to /stdout/.
+-- 1.2. Moreover messages with at least `Error` severity are
+-- printed to /stderr/.
+-- 2. Sets given Severity to root logger, so that it will be used by
+-- descendant loggers by default.
+-- 3. Applies `setSeverity` to given loggers. It can be done later using
+-- `setSeverity` directly.
+initLoggingWith :: MonadIO m => [(LoggerName, Severity)] -> Severity -> m ()
+initLoggingWith predefinedLoggers defaultSeverity = liftIO $ do
+    -- We set DEBUG here, to allow all messages by stdout handler.
+    -- They will be filtered by loggers.
     stdoutHandler <-
         flip setFormatter stdoutFormatter <$> streamHandler stdout DEBUG
     stderrHandler <-
         flip setFormatter stderrFormatter <$> streamHandler stderr ERROR
-    updateGlobalLogger loggerName $ setHandlers [stdoutHandler, stderrHandler]
-    forM_ s $ updateGlobalLogger loggerName . setLevel
+    updateGlobalLogger rootLoggerName $
+        setHandlers [stderrHandler, stdoutHandler]
+    updateGlobalLogger rootLoggerName $
+        setLevel (convertSeverity defaultSeverity)
+    mapM_ (uncurry setSeverity) predefinedLoggers
   where
-    stderrFormatter = simpleLogFormatter
-        ("[$time] " ++ colorizer ERROR "[$loggername:$prio]: " ++ "$msg")
+    stderrFormatter =
+        simpleLogFormatter
+            ("[$time] " ++ colorizer ERROR "[$loggername:$prio]: " ++ "$msg")
     stdoutFormatter h r@(pr, _) n =
         simpleLogFormatter (colorizer pr "[$loggername:$prio] " ++ "$msg") h r n
+
+-- | Version of initLoggingWith without any predefined loggers.
+initLogging :: MonadIO m => Severity -> m ()
+initLogging = initLoggingWith []
+
+-- | Set severity for given logger. By default parent's severity is used.
+setSeverity :: MonadIO m => LoggerName -> Severity -> m ()
+setSeverity (LoggerName name) =
+    liftIO . updateGlobalLogger name . setLevel . convertSeverity
 
 -- | Defines pre- and post-printed characters for printing colorized text.
 table :: Priority -> (String, String)

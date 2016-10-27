@@ -32,7 +32,7 @@ import           Data.Word                         (Word16)
 import           Formatting                        (sformat, shown, string, (%))
 import           GHC.Generics                      (Generic)
 
-import           Control.TimeWarp.Logging          (Severity (Debug), initLoggingDefault,
+import           Control.TimeWarp.Logging          (Severity (Debug), initLogging,
                                                     logDebug, logError, logInfo,
                                                     logWarning, usingLoggerName)
 import           Control.TimeWarp.Rpc              (BinaryP (..), Binding (..),
@@ -95,7 +95,7 @@ guysPort = (+10000)
 -- 2: <prints result>
 yohohoScenario :: IO ()
 yohohoScenario = runTimedIO $ do
-    liftIO $ initLoggingDefault ["guy"] Debug
+    initLogging Debug
 
     -- guy 1
     usingLoggerName "guy.1" . runTransfer . runDialog packing . fork_ $ do
@@ -144,7 +144,7 @@ yohohoScenario = runTimedIO $ do
 -- | Example of `Transfer` usage
 transferScenario :: IO ()
 transferScenario = runTimedIO $ do
-    liftIO $ initLoggingDefault ["node"] Debug
+    initLogging  Debug
     usingLoggerName "node.server" $ runTransfer $
         work (for 500 ms) $
             let listener req = do
@@ -220,7 +220,7 @@ rpcScenario = runTimedIO $ do
 -- * Blind proxy scenario, illustrates work with headers and raw data.
 proxyScenario :: IO ()
 proxyScenario = runTimedIO $ do
-    liftIO $ initLoggingDefault ["server", "proxy"] Debug
+    liftIO $ initLogging Debug
 
     lock <- liftIO newEmptyMVar
     let sync act = liftIO (putMVar lock ()) >> act >> liftIO (takeMVar lock)
