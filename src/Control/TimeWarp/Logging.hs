@@ -26,6 +26,7 @@ module Control.TimeWarp.Logging
        , initLogging
        , initLoggingWith
        , setSeverity
+       , setSeverityMaybe
 
        , LoggerName (..)
 
@@ -69,8 +70,8 @@ import           System.Log.Formatter        (simpleLogFormatter)
 import           System.Log.Handler          (setFormatter)
 import           System.Log.Handler.Simple   (streamHandler)
 import           System.Log.Logger           (Priority (DEBUG, ERROR, INFO, WARNING),
-                                              logM, rootLoggerName, setHandlers, setLevel,
-                                              updateGlobalLogger)
+                                              clearLevel, logM, rootLoggerName,
+                                              setHandlers, setLevel, updateGlobalLogger)
 
 -- | This type is intended to be used as command line option
 -- which specifies which messages to print.
@@ -145,6 +146,14 @@ initLogging = initLoggingWith []
 setSeverity :: MonadIO m => LoggerName -> Severity -> m ()
 setSeverity (LoggerName name) =
     liftIO . updateGlobalLogger name . setLevel . convertSeverity
+
+-- | Set or clear severity.
+setSeverityMaybe
+    :: MonadIO m
+    => LoggerName -> Maybe Severity -> m ()
+setSeverityMaybe (LoggerName name) Nothing =
+    liftIO $ updateGlobalLogger name $ clearLevel
+setSeverityMaybe n (Just x) = setSeverity n x
 
 -- | Defines pre- and post-printed characters for printing colorized text.
 table :: Priority -> (String, String)
