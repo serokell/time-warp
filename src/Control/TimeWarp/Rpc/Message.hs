@@ -1,9 +1,11 @@
 {-# LANGUAGE ConstraintKinds       #-}
 {-# LANGUAGE DefaultSignatures     #-}
+{-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE Rank2Types            #-}
 {-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE UndecidableInstances  #-}
 
 -- |
 -- Module      : Control.TimeWarp.Rpc.Message
@@ -17,26 +19,39 @@
 
 module Control.TimeWarp.Rpc.Message
        ( Message (..)
-       , Serializable (..)
-       , NamedPacking (..)
-       , NamedSerializable
---       , BinaryP (..)
+
+       , Packable (..)
+       , Unpackable (..)
+
+       , BinaryP (..)
        , NamedBinaryP (..)
---       , NamedDefP (..)
---       , Magic32P (..)
+       , HeaderP (..)
+
+       , ContentData (..)
+       , NameData (..)
+       , NameNContentData (..)
+       , RawData (..)
+       , HeaderData (..)
+       , HeaderNRawData (..)
+
+       , intangibleSink
        , proxyOf
        ) where
 
+import           Control.Monad                     (forM, mapM_)
 import           Control.Monad.Catch               (MonadThrow)
-import           Data.Binary                       (Binary (..))
-import           Data.Binary.Get                   (Get, lookAhead)
+import           Control.Monad.Trans               (lift)
+import           Data.Binary                       (Binary (..), encode)
 import           Data.ByteString                   (ByteString)
 import qualified Data.ByteString.Char8             as BC
-import           Data.Conduit                      (Conduit, Consumer, (=$=))
+import qualified Data.ByteString.Lazy              as BL
+import           Data.Conduit                      (Conduit, Consumer, awaitForever,
+                                                    yield, (=$=), leftover)
 import qualified Data.Conduit.List                 as CL
-import           Data.Conduit.Serialization.Binary (conduitGet, sinkGet,
-                                                    conduitPut)
+import           Data.Conduit.Serialization.Binary (conduitGet, conduitPut)
 import           Data.Data                         (Data, dataTypeName, dataTypeOf)
+import           Data.IORef                        (newIORef, readIORef,
+                                                    modifyIORef)
 import           Data.Proxy                        (Proxy (..), asProxyTypeOf)
 import           Data.Typeable                     (Typeable)
 
@@ -44,7 +59,7 @@ import           Data.Typeable                     (Typeable)
 type MessageName = ByteString
 
 -- | Defines type which has it's uniqie name.
-class Message m where
+class Typeable m => Message m where
     -- | Uniquely identifies this type
     messageName :: Proxy m -> MessageName
     default messageName :: Data m => Proxy m -> MessageName
@@ -52,131 +67,146 @@ class Message m where
         BC.pack . dataTypeName . dataTypeOf $ undefined `asProxyTypeOf` proxy
 
 
+-- * Parts of message.
+data ContentData r = ContentData r
+
+-- | Designates data given from incoming message, but not deserialized to any specified
+-- object.
+data RawData = RawData ByteString
+
+data NameData = NameData MessageName
+
+data HeaderData h = HeaderData h
+
+data HeaderNContentData h r = HeaderNContentData h r
+
+data HeaderNRawData h = HeaderNRawData h ByteString
+
+data NameNContentData r = NameNContentData MessageName r
+
+
 -- * Util
 
 proxyOf :: a -> Proxy a
 proxyOf _ = Proxy
 
+-- | From given conduit constructs consumer of single value,
+-- which doesn't affect source above.
+intangibleSink :: Conduit i IO o -> Consumer i IO (Maybe o)
+intangibleSink cond = do
+    taken <- lift $ newIORef []
+    am <- notingCond taken =$= cond =$= CL.head
+    forM am $ \a -> do
+        mapM_ leftover =<< lift (readIORef taken)
+        return a
+  where
+    notingCond taken = awaitForever $ \a -> do lift $ modifyIORef taken (a:)
+                                               yield a
 
 -- * Typeclasses
 
 -- | Defines a way to serialize object @r@ with given packing type @p@.
-class Typeable r => Serializable p r where
+class Packable p r where
     -- | Way of packing data to raw bytes.
     packMsg :: MonadThrow m => p -> Conduit r m ByteString
 
+class Unpackable p r where
     -- | Way of unpacking raw bytes to data.
     unpackMsg :: MonadThrow m => p -> Conduit ByteString m r
-
--- | Defines a way to extract a message name from serialized data.
-class NamedPacking p where
-    -- | Peeks name of incoming message, without consuming any input.
-    lookMsgName :: MonadThrow m => p -> Consumer ByteString m MessageName
-
-type NamedSerializable p r = (Serializable p r, NamedPacking p, Message r)
 
 
 -- * Instances
 
 -- ** Basic
 
--- | Defines pretty simple way to encode `Binary` instances: we just pack
--- @(methodName m, m)@ by means of `Binary`.
-data NamedBinaryP = NamedBinaryP
-
-instance (Binary r, Typeable r, Message r) => Serializable NamedBinaryP r where
-    packMsg _ = CL.map doPut =$= conduitPut
-      where
-        doPut m = do put $ messageName $ proxyOf m
-                     put m
-
-    unpackMsg _ = conduitGet $ (get :: Get MessageName) *> get
-
-instance NamedPacking NamedBinaryP where
-    lookMsgName _ = sinkGet $ lookAhead get
-
-
--- ** Lego
--- Allows to combine different packing primitive modifiers, like adding magic constant or
--- hash.
--- Experimental.
-
-{-
--- | Packs instances of `Binary`.
+-- | Defines way to encode `Binary` instances.
+-- "P" here denotes to "packing".
 data BinaryP = BinaryP
 
-instance (Binary r, Typeable r) => Serializable BinaryP r where
-    packMsg _ = CL.map put =$= conduitPut
-    unpackMsg _ = conduitGetSafe get
+instance Binary r => Packable BinaryP (ContentData r) where
+    packMsg _ = CL.map (\(ContentData d) -> put d) =$= conduitPut
+
+instance Binary r => Unpackable BinaryP (ContentData r) where
+    unpackMsg _ = conduitGet $ ContentData <$> get
 
 
--- | Takes instance of `Message`, packed in any way, and adds `methodName` into packing.
-data NamedDefP p = NamedDefP p
+-- | Defines pretty simple way to encode `Binary` instances: we just pack
+-- @(methodName m, m)@ by means of `Binary`.
+-- "N" here denotes to "named", "P" to "packing".
+data NamedBinaryP = NamedBinaryP
 
-instance (Serializable p r, Message r) => Serializable (NamedDefP p) r where
-    packMsg (NamedDefP p) =
-        awaitForever $
-        \m -> do
-            sourcePut $ put (messageName $ proxyOf m)
-            Just encoded <- yield m =$ packMsg p $$ CL.head
-            sourcePut $ put encoded
+instance (Binary r, Message r)
+      => Packable NamedBinaryP (ContentData r) where
+    packMsg _ = CL.map doPut =$= conduitPut
+      where
+        doPut (ContentData r) = do put $ messageName $ proxyOf r
+                                   put r
 
-    unpackMsg (NamedDefP p) = forever $ do
-        mname <- sinkGet $ Just <$> (get :: Get ByteString)
-                       <|> pure Nothing
-        case mname of
-            Nothing -> yield $ Left "Failed to get message name"
-            Just _  -> do
-                msgM <- unpackMsg p =$ CL.head
-                case msgM of
-                    Nothing          -> yield $ Left "Unexpected end of input"
-                    Just (Right msg) -> yield $ Right msg
-                    Just err         -> yield err
+instance Unpackable NamedBinaryP NameData where
+    unpackMsg _ = conduitGet $ NameData <$> get
 
-instance NamedPacking (NamedDefP a) where
-    lookMsgName _ = forever $ do
-        nameM <- sinkGet . lookAhead $ Just <$> (get :: Get ByteString)
-                                   <|> pure Nothing
-        case nameM of
-            Nothing   -> yield $ Left "Failed to get message name"
-            Just name -> yield $ Right name
+instance Binary r
+      => Unpackable NamedBinaryP (NameNContentData r) where
+    unpackMsg _ = conduitGet $ NameNContentData <$> get <*> get
 
--- | Adds constant prefix to packed message. Helps to separate messages, and
--- find next intact message in case of stream gets dirty.
-data Magic32P a = Magic32P Word32 a
+instance Unpackable p (NameNContentData r)
+      => Unpackable p (ContentData r) where
+    unpackMsg p = unpackMsg p =$= CL.map (\(NameNContentData _ d) -> ContentData d)
 
-instance Serializable p r => Serializable (Magic32P p) r where
-    packMsg (Magic32P magic p) =
-        awaitForever $
-        \m -> do
-            sourcePut $ put magic
-            yield m =$= packMsg p
+-- | Defines way to encode `Binary` instances together with message header.
+data HeaderP ph pr = HeaderP ph pr
 
-    unpackMsg (Magic32P magic p) = forever $ do
-        w <- sinkGet $ Just <$> get
-                   <|> pure Nothing
-        case w of
-            Nothing -> return ()  -- input ended
-            Just m  ->
-                if m /= magic
-                    then yield $ Left "Magic constant doesn't match"
-                    else do
-                        msgM <- unpackMsg p =$ CL.head
-                        case msgM of
-                            Nothing          -> yield $ Left "Unexpected end of input"
-                            Just (Right msg) -> yield $ Right msg
-                            Just err         -> yield err
+instance (Packable ph h, Packable pr r) =>
+          Packable (HeaderP ph pr) (HeaderNContentData h r) where
+    packMsg (HeaderP ph pr) =
+        awaitForever $ \(HeaderNContentData h r) ->
+        do yield h =$= packMsg ph
+           yield r =$= packMsg pr
 
-instance NamedPacking p => NamedPacking (Magic32P p) where
-    lookMsgName (Magic32P magic p) = forever $ do
-        w <- sinkGet $ Just <$> get
-                   <|> pure Nothing
-        case w of
-            Nothing -> return ()  -- input ended
-            Just m  -> if m == magic
-                          then lookMsgName p >> leftover (BL.toStrict $ encode w)
-                          else yield $ Left "Magic constant doesn't match"
--}
+instance (Unpackable ph h, Unpackable pr r) =>
+          Unpackable (HeaderP ph pr) (HeaderNContentData h r) where
+    unpackMsg (HeaderP ph pr) = do
+        hm <- unpackMsg ph =$= CL.head
+        rm <- unpackMsg pr =$= CL.head
+        case (hm, rm) of
+            (Just h, Just r) -> yield (HeaderNContentData h r)
+            _                -> return ()
+
+instance Unpackable ph h =>
+         Unpackable (HeaderP ph pr) (HeaderData h) where
+    unpackMsg (HeaderP ph _) = do
+        hm <- unpackMsg ph =$= CL.head
+        case hm of
+            Nothing -> return ()
+            Just h  -> yield $ HeaderData h
+
+
+-- | Allows to take message as raw data by writing it's length at the beginning.
+-- @n@ is packing type which supports `Int` packing.
+data RawP p = RawP p
+
+data RawContentData r = RawContentData r
+
+-- | Instances here are implemented via Binary in hope, that `instance Binary ByteString`
+-- does exactly what we want.
+instance Packable (RawP p) RawData where
+    packMsg _ = CL.map $ \(RawData raw) -> BL.toStrict $ encode raw
+
+instance Packable p r => Packable (RawP p) (RawContentData r) where
+    packMsg pr@(RawP p) = CL.map (\(RawContentData d) -> d)
+                      =$= packMsg p
+                      =$= CL.map RawData
+                      =$= packMsg pr
+
+instance Unpackable (RawP p) RawData where
+    unpackMsg _ = conduitGet $ RawData <$> get
+
+instance Unpackable p r => Unpackable (RawP p) (RawContentData r) where
+    unpackMsg pr@(RawP p) = unpackMsg pr
+                        =$= CL.map (\(RawData raw) -> raw)
+                        =$= unpackMsg p
+                        =$= CL.map RawContentData
+
 
 -- * Misc
 
