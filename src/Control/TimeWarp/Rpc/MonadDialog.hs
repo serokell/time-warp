@@ -51,6 +51,7 @@ module Control.TimeWarp.Rpc.MonadDialog
        ) where
 
 import           Control.Lens                       (at, (^.))
+import           Control.Monad                      (forM_)
 import           Control.Monad.Catch                (MonadCatch, MonadMask, MonadThrow)
 import           Control.Monad.Reader               (MonadReader (ask), ReaderT (..))
 import           Control.Monad.State                (MonadState)
@@ -64,12 +65,15 @@ import           Data.Proxy                         (Proxy (..))
 import           Formatting                         (sformat, shown, (%))
 
 import           Control.TimeWarp.Logging           (LoggerNameBox (..), WithNamedLogger)
-import           Control.TimeWarp.Rpc.Message       (Message (..), NamedPacking (..),
-                                                     NamedSerializable, Serializable (..))
-import           Control.TimeWarp.Rpc.MonadTransfer (Host, MonadResponse (replyRaw),
+import           Control.TimeWarp.Rpc.Message       (ContentData (..), Message (..),
+                                                     NameData (..), NameNContentData (..),
+                                                     Packable (..), Unpackable (..),
+                                                     intangibleSink)
+import           Control.TimeWarp.Rpc.MonadTransfer (Binding, Host,
+                                                     MonadResponse (replyRaw),
                                                      MonadTransfer (..), NetworkAddress,
                                                      Port, ResponseT (..), RpcError (..),
-                                                     localhost, mapResponseT, sendRaw, Binding)
+                                                     localhost, mapResponseT, sendRaw)
 import           Control.TimeWarp.Timed             (MonadTimed, ThreadId)
 
 
@@ -85,17 +89,17 @@ class MonadTransfer m => MonadDialog p m | m -> p where
 -- ** Packing type manually defined
 
 -- | Send a message.
-sendP :: (Serializable p r, MonadTransfer m)
+sendP :: (Packable p (ContentData r), MonadTransfer m)
       => p -> NetworkAddress -> r -> m ()
-sendP packing addr msg = sendRaw addr $ yield msg $= packMsg packing
+sendP packing addr msg = sendRaw addr $ yield (ContentData msg) $= packMsg packing
 
 -- | Sends message to peer node.
-replyP :: (Serializable p r, MonadResponse m)
+replyP :: (Packable p (ContentData r), MonadResponse m)
        => p -> r -> m ()
-replyP packing msg = replyRaw $ yield msg $= packMsg packing
+replyP packing msg = replyRaw $ yield (ContentData msg) $= packMsg packing
 
 -- | Starts server.
-listenP :: (NamedPacking p, MonadTransfer m, WithNamedLogger m)
+listenP :: (Unpackable p NameData, MonadTransfer m, WithNamedLogger m)
        => p -> Binding -> [Listener p m] -> m ()
 listenP packing port listeners =
     uncurry (listenRaw port) $ mergeListeners packing listeners
@@ -109,7 +113,7 @@ listenP packing port listeners =
 -- 2. @dyn@ - parsed object, converted to @Dynamic@.
 --
 -- Handler accepts this pair and chooses /listener/ with specified number to apply.
-mergeListeners :: (MonadTransfer m, NamedPacking p, WithNamedLogger m)
+mergeListeners :: (Unpackable p NameData, MonadTransfer m, WithNamedLogger m)
                => p
                -> [Listener p m]
                -> ( Conduit ByteString IO (Listener p m, Dynamic)
@@ -118,16 +122,18 @@ mergeListeners :: (MonadTransfer m, NamedPacking p, WithNamedLogger m)
 mergeListeners packing listeners = (cond, handler)
   where
     cond = do
-        name <- lookMsgName packing
-        case listenersMap ^. at name of
-            Nothing ->
-                error $ show $ sformat ("No listener with name "%shown%" defined") name
-            Just li -> do res <- condLi li =$ CL.head
-                          case res of
-                              Nothing -> return ()  -- end of stream
-                              Just a  -> yield a >> cond
+        nameM <- intangibleSink $ unpackMsg packing
+        forM_ nameM $
+            \(NameData name) ->
+                case listenersMap ^. at name of
+                    Nothing -> error $ show $
+                        sformat ("No listener with name "%shown%" defined") name
+                    Just li -> do resM <- condLi li =$ CL.head
+                                  forM_ resM $
+                                      \res -> yield res >> cond
 
     condLi li@(Listener f) = unpackMsg packing
+                         =$= CL.map (\(NameNContentData _ r) -> r)
                          =$= CL.iterM (\obj -> let _ = f obj in return ())
                          =$= CL.map   ((li, ) . toDyn)
 
@@ -142,17 +148,17 @@ mergeListeners packing listeners = (cond, handler)
 -- ** For MonadDialog
 
 -- | Send a message.
-send :: (Serializable p r, MonadDialog p m)
+send :: (Packable p (ContentData r), MonadDialog p m)
      => NetworkAddress -> r -> m ()
 send addr msg = packingType >>= \p -> sendP p addr msg
 
 -- | Sends message to peer node.
-reply :: (Serializable p r, MonadDialog p m, MonadResponse m)
+reply :: (Packable p (ContentData r), MonadDialog p m, MonadResponse m)
       => r -> m ()
 reply msg = packingType >>= \p -> replyP p msg
 
 -- | Starts server.
-listen :: (NamedPacking p, MonadDialog p m, WithNamedLogger m)
+listen :: (Unpackable p NameData, MonadDialog p m, WithNamedLogger m)
        => Binding -> [Listener p m] -> m ()
 listen port listeners =
     packingType >>= \p -> listenP p port listeners
@@ -162,7 +168,8 @@ listen port listeners =
 
 -- | Creates RPC-method.
 data Listener p m =
-    forall r . NamedSerializable p r => Listener (r -> ResponseT m ())
+    forall r . (Unpackable p (NameNContentData r), Message r)
+             => Listener (r -> ResponseT m ())
 
 getListenerName :: Listener p m -> ByteString
 getListenerName (Listener f) = messageName $ proxyOfArg f

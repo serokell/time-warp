@@ -55,7 +55,7 @@ import           Formatting                         (sformat, shown, (%))
 import           Network.Socket                     as NS
 
 import           Control.TimeWarp.Logging           (LoggerNameBox, WithNamedLogger,
-                                                     logWarning)
+                                                     logWarning, logInfo)
 import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer (..),
                                                      NetworkAddress, Port,
                                                      ResponseContext (..), ResponseT,
@@ -137,6 +137,7 @@ listenInbound (fromIntegral -> port) condParser listener =
             requestsChan <- startListener $ flip runResponseT responseCtx . listener
             logOnErr . liftIO $
                 source $$ condParser $= sinkTBMChan requestsChan True
+            logInfo "Input connection closed"
   where
     saveConn _ = do
         let conn =

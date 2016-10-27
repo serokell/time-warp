@@ -24,6 +24,7 @@ import qualified Data.Conduit.List                 as CL
 import           Data.Conduit.Serialization.Binary (conduitGet, conduitPut)
 import           Data.Data                         (Data)
 import           Data.MessagePack                  (MessagePack (..))
+import           Data.Time.Units                   (convertUnit)
 import           Data.Void                         (Void)
 import           Data.Word                         (Word16)
 import           Formatting                        (sformat, shown, string, (%))
@@ -39,7 +40,7 @@ import           Control.TimeWarp.Rpc              (Binding (..), Listener (..),
                                                     runTransfer, send)
 import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, after, for,
                                                     fork_, ms, runTimedIO, schedule, sec',
-                                                    till, work)
+                                                    till, virtualTime, work)
 
 main :: IO ()
 main = return ()  -- use ghci
@@ -94,9 +95,9 @@ yohohoScenario = runTimedIO $ do
 
     -- guy 1
     usingLoggerName "guy.1" . runTransfer . runDialog packing . fork_ $ do
-        work (till finish) $
+        work (till finish) $ ha $
             listen (AtPort $ guysPort 1)
-                [ Listener $ \Pong -> ha $
+                [ Listener $ \Pong ->
                   do logDebug "Got Pong!"
                      reply $ EpicRequest 14 " men on the dead man's chest"
                 ]
@@ -108,15 +109,15 @@ yohohoScenario = runTimedIO $ do
 
     -- guy 2
     usingLoggerName "guy.2" . runTransfer . runDialog packing . fork_ $ do
-        work (till finish) $
+        work (till finish) $ ha $
             listen (AtPort $ guysPort 2)
                 [ Listener $ \Ping ->
                   do logDebug "Got Ping!"
                      send (guy 1) Pong
                 ]
-        work (till finish) $
+        work (till finish) $ ha $
             listen (AtConnTo $ guy 1) $
-                [ Listener $ \EpicRequest{..} -> ha $
+                [ Listener $ \EpicRequest{..} ->
                   do logDebug "Got EpicRequest!"
                      wait (for 0.1 sec')
                      logInfo $ sformat (shown%string) (num + 1) msg
@@ -127,7 +128,10 @@ yohohoScenario = runTimedIO $ do
     finish :: Second
     finish = 1
 
-    ha = handleAll $ logError . sformat shown
+    ha = handleAll $ \e -> do
+        t <- virtualTime
+        when (t < convertUnit finish) $
+            logError $ sformat shown e
 
     packing :: NamedBinaryP
     packing = NamedBinaryP
