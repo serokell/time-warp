@@ -113,7 +113,7 @@ yohohoScenario = runTimedIO $ do
             listen (AtPort $ guysPort 2)
                 [ Listener $ \Ping ->
                   do logDebug "Got Ping!"
-                     send (guy 1) Pong
+                     -- send (guy 1) Pong
                 ]
         work (till finish) $ ha $
             listen (AtConnTo $ guy 1) $
@@ -143,17 +143,18 @@ transferScenario = runTimedIO $ do
     liftIO $ initLogging ["node"] Debug
     usingLoggerName "node.server" $ runTransfer $
         work (for 500 ms) $ ha $
-            listenRaw (AtPort 1234) (conduitGet decoder) $
-            \req -> do
-                logInfo $ sformat ("Got "%shown) req
-                replyRaw $ yield (put $ sformat "Ok!") =$= conduitPut
+            let listener req = do
+                    logInfo $ sformat ("Got "%shown) req
+                    replyRaw $ yield (put $ sformat "Ok!") =$= conduitPut
+            in  listenRaw (AtPort 1234) $ conduitGet decoder =$= CL.mapM_ listener
 
     wait (for 100 ms)
 
     usingLoggerName "node.client-1" $ runTransfer $
         schedule (after 200 ms) $ ha $ do
             work (for 500 ms) $ ha $
-                listenRaw (AtConnTo (localhost, 1234)) (conduitGet get) logInfo
+                listenRaw (AtConnTo (localhost, 1234)) $
+                    conduitGet get =$= CL.mapM_ logInfo
             forM_ ([1..5] :: [Int]) $ \i ->
                 sendRaw (localhost, 1234) $ yield i
                                          =$= CL.map Left
@@ -169,7 +170,8 @@ transferScenario = runTimedIO $ do
                                      =$= CL.map encoder
                                      =$= conduitPut
             work (for 500 ms) $ ha $
-                listenRaw (AtConnTo (localhost, 1234)) (conduitGet get) logInfo
+                listenRaw (AtConnTo (localhost, 1234)) $
+                    conduitGet get =$= CL.mapM_ logInfo
 
     wait (for 1000 ms)
   where
