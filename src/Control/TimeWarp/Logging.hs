@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
 {-# LANGUAGE ViewPatterns          #-}
 
@@ -41,29 +42,31 @@ module Control.TimeWarp.Logging
        , logMessage
        ) where
 
-import           Control.Monad.Catch       (MonadCatch, MonadMask, MonadThrow)
-import           Control.Monad.Except      (ExceptT (..), runExceptT)
-import           Control.Monad.Reader      (MonadReader (..), ReaderT, runReaderT)
-import           Control.Monad.State       (MonadState (get), StateT, evalStateT)
-import           Control.Monad.Trans       (MonadIO (liftIO), MonadTrans, lift)
-import           Control.Monad.Trans.Cont  (ContT, mapContT)
+import           Control.Monad.Base          (MonadBase)
+import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow)
+import           Control.Monad.Except        (ExceptT (..), runExceptT)
+import           Control.Monad.Reader        (MonadReader (..), ReaderT, runReaderT)
+import           Control.Monad.State         (MonadState (get), StateT, evalStateT)
+import           Control.Monad.Trans         (MonadIO (liftIO), MonadTrans, lift)
+import           Control.Monad.Trans.Cont    (ContT, mapContT)
+import           Control.Monad.Trans.Control (MonadBaseControl (..))
 
-import           Data.String               (IsString)
-import qualified Data.Text                 as T
-import           Data.Typeable             (Typeable)
-import           GHC.Generics              (Generic)
+import           Data.String                 (IsString)
+import qualified Data.Text                   as T
+import           Data.Typeable               (Typeable)
+import           GHC.Generics                (Generic)
 
-import           System.Console.ANSI       (Color (Blue, Green, Red, Yellow),
-                                            ColorIntensity (Vivid),
-                                            ConsoleLayer (Foreground),
-                                            SGR (Reset, SetColor), setSGRCode)
-import           System.IO                 (stderr, stdout)
-import           System.Log.Formatter      (simpleLogFormatter)
-import           System.Log.Handler        (setFormatter)
-import           System.Log.Handler.Simple (streamHandler)
-import           System.Log.Logger         (Priority (DEBUG, ERROR, INFO, WARNING), logM,
-                                            removeHandler, rootLoggerName, setHandlers,
-                                            setLevel, updateGlobalLogger)
+import           System.Console.ANSI         (Color (Blue, Green, Red, Yellow),
+                                              ColorIntensity (Vivid),
+                                              ConsoleLayer (Foreground),
+                                              SGR (Reset, SetColor), setSGRCode)
+import           System.IO                   (stderr, stdout)
+import           System.Log.Formatter        (simpleLogFormatter)
+import           System.Log.Handler          (setFormatter)
+import           System.Log.Handler.Simple   (streamHandler)
+import           System.Log.Logger           (Priority (DEBUG, ERROR, INFO, WARNING),
+                                              logM, removeHandler, rootLoggerName,
+                                              setHandlers, setLevel, updateGlobalLogger)
 
 -- | This type is intended to be used as command line option
 -- which specifies which messages to print.
@@ -179,9 +182,8 @@ instance (Monad m, WithNamedLogger m) =>
 -- | Default implementation of `WithNamedLogger`.
 newtype LoggerNameBox m a = LoggerNameBox
     { loggerNameBoxEntry :: ReaderT LoggerName m a
-    } deriving (Functor, Applicative, Monad, MonadIO, MonadTrans,
+    } deriving (Functor, Applicative, Monad, MonadIO, MonadTrans, MonadBase b,
                 MonadThrow, MonadCatch, MonadMask, MonadState s)
-
 
 instance MonadReader r m => MonadReader r (LoggerNameBox m) where
     ask = lift ask
@@ -197,6 +199,12 @@ instance Monad m =>
     getLoggerName = LoggerNameBox ask
 
     modifyLoggerName how = LoggerNameBox . local how . loggerNameBoxEntry
+
+instance MonadBaseControl b m => MonadBaseControl b (LoggerNameBox m) where
+    type StM (LoggerNameBox m) a = StM (ReaderT LoggerName m) a
+    liftBaseWith io =
+        LoggerNameBox $ liftBaseWith $ \runInBase -> io $ runInBase . loggerNameBoxEntry
+    restoreM = LoggerNameBox . restoreM
 
 -- | Shortcut for `logMessage` to use according severity.
 logDebug, logInfo, logWarning, logError
