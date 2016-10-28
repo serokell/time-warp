@@ -64,6 +64,7 @@ data Binding
     = AtPort Port              -- ^ Listen at port
     | AtConnTo NetworkAddress  -- ^ Listen at connection established earlier
 --    | Loopback                 -- ^ Listen at local pseudo-net (might be usefull)
+    deriving (Eq, Ord, Show)
 
 -- * MonadTransfer
 
