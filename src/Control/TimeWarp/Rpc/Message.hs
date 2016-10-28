@@ -38,20 +38,22 @@ module Control.TimeWarp.Rpc.Message
        , proxyOf
        ) where
 
-import           Control.Monad                     (forM, mapM_)
-import           Control.Monad.Catch               (MonadThrow)
+import           Control.Monad                     (forM, mapM_, when)
+import           Control.Monad.Catch               (MonadThrow (..))
 import           Control.Monad.Trans               (MonadIO (..))
 import           Data.Binary                       (Binary (..), encode)
+import           Data.Binary.Get                   (Decoder (..), Get, pushChunk,
+                                                    runGetIncremental)
 import           Data.ByteString                   (ByteString)
+import qualified Data.ByteString                   as BS
 import qualified Data.ByteString.Char8             as BC
 import qualified Data.ByteString.Lazy              as BL
 import           Data.Conduit                      (Conduit, Consumer, awaitForever,
-                                                    yield, (=$=), leftover)
+                                                    leftover, yield, (=$=), await)
 import qualified Data.Conduit.List                 as CL
-import           Data.Conduit.Serialization.Binary (conduitGet, conduitPut)
+import           Data.Conduit.Serialization.Binary (conduitPut, ParseError (..))
 import           Data.Data                         (Data, dataTypeName, dataTypeOf)
-import           Data.IORef                        (newIORef, readIORef,
-                                                    modifyIORef)
+import           Data.IORef                        (modifyIORef, newIORef, readIORef)
 import           Data.Proxy                        (Proxy (..), asProxyTypeOf)
 import           Data.Typeable                     (Typeable)
 
@@ -103,11 +105,27 @@ intangibleSink cond = do
     notingCond taken = awaitForever $ \a -> do liftIO $ modifyIORef taken (a:)
                                                yield a
 
+-- | Like `conduitGet`, but applicable to be used inside `unpackMsg`.
+conduitGet' :: MonadThrow m => Get b -> Conduit ByteString m b
+conduitGet' g = start
+  where
+    start = do mx <- await
+               case mx of
+                  Nothing -> return ()
+                  Just x -> go (runGetIncremental g `pushChunk` x)
+    go (Done bs _ v) = do when (not $ BS.null bs) $ leftover bs
+                          yield v
+                          start
+    go (Fail u o e)  = throwM (ParseError u o e)
+    go (Partial n)   = await >>= (go . n)
+
+
 -- * Typeclasses
 
 -- | Defines a way to serialize object @r@ with given packing type @p@.
 class Packable p r where
-    -- | Way of packing data to raw bytes.
+    -- | Way of packing data to raw bytes. At the moment when any value gets passed
+    -- downstream, all unconsumed input should be `leftover`ed.
     packMsg :: MonadThrow m => p -> Conduit r m ByteString
 
 class Unpackable p r where
@@ -127,7 +145,7 @@ instance Binary r => Packable BinaryP (ContentData r) where
     packMsg _ = CL.map (\(ContentData d) -> put d) =$= conduitPut
 
 instance Binary r => Unpackable BinaryP (ContentData r) where
-    unpackMsg _ = conduitGet $ ContentData <$> get
+    unpackMsg _ = conduitGet' $ ContentData <$> get
 
 
 -- | Defines pretty simple way to encode `Binary` instances: we just pack
@@ -143,11 +161,11 @@ instance (Binary r, Message r)
                                    put r
 
 instance Unpackable NamedBinaryP NameData where
-    unpackMsg _ = conduitGet $ NameData <$> get
+    unpackMsg _ = conduitGet' $ NameData <$> get
 
 instance Binary r
       => Unpackable NamedBinaryP (NameNContentData r) where
-    unpackMsg _ = conduitGet $ NameNContentData <$> get <*> get
+    unpackMsg _ = conduitGet' $ NameNContentData <$> get <*> get
 
 instance Unpackable p (NameNContentData r)
       => Unpackable p (ContentData r) where
@@ -199,7 +217,7 @@ instance Packable p r => Packable (RawP p) (RawContentData r) where
                       =$= packMsg pr
 
 instance Unpackable (RawP p) RawData where
-    unpackMsg _ = conduitGet $ RawData <$> get
+    unpackMsg _ = conduitGet' $ RawData <$> get
 
 instance Unpackable p r => Unpackable (RawP p) (RawContentData r) where
     unpackMsg pr@(RawP p) = unpackMsg pr
