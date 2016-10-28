@@ -103,7 +103,7 @@ yohohoScenario = runTimedIO $ do
                 ]
         -- guy 1 initiates dialog
         wait (for 100 ms)
-        replicateM_ 3 $ do
+        replicateM_ 10 $ do
             send (guy 2) Ping
             logInfo "Sent"
 
@@ -113,7 +113,7 @@ yohohoScenario = runTimedIO $ do
             listen (AtPort $ guysPort 2)
                 [ Listener $ \Ping ->
                   do logDebug "Got Ping!"
-                     -- send (guy 1) Pong
+                     send (guy 1) Pong
                 ]
         work (till finish) $ ha $
             listen (AtConnTo $ guy 1) $
