@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE Rank2Types            #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE TypeFamilies          #-}
@@ -25,7 +26,6 @@ import qualified Control.Concurrent                 as C
 import           Control.Concurrent.MVar            (MVar, modifyMVar, newEmptyMVar,
                                                      newMVar, putMVar, takeMVar)
 import           Control.Concurrent.STM             (atomically)
-import           Control.Concurrent.STM.TBMChan     (TBMChan, newTBMChanIO)
 import           Control.Concurrent.STM.TVar        (TVar, newTVarIO, swapTVar)
 import           Control.Lens                       (at, makeLenses, use, (.=), (<<+=),
                                                      (<<.=), (?=))
@@ -33,17 +33,15 @@ import           Control.Monad                      (forM_, void)
 import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Catch                (MonadCatch, MonadMask,
                                                      MonadThrow (..), bracket_, handleAll)
+import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (StateT (..), runStateT)
 import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
 import           Data.ByteString                    (ByteString)
 import qualified Data.ByteString                    as BS
-import           Data.Conduit                       (Conduit, Producer, Source, ($$),
-                                                     ($=))
-import qualified Data.Conduit.List                  as CL
+import           Data.Conduit                       (Producer, Sink, Source, ($$))
 import           Data.Conduit.Network               (sinkSocket, sourceSocket)
-import           Data.Conduit.TMChan                (sinkTBMChan, sourceTBMChan)
 import qualified Data.Map                           as M
 import           Data.Maybe                         (fromJust, isJust, isNothing)
 import           Data.Streaming.Network             (getSocketFamilyTCP,
@@ -55,12 +53,12 @@ import           Formatting                         (sformat, shown, (%))
 import           Network.Socket                     as NS
 
 import           Control.TimeWarp.Logging           (LoggerNameBox, WithNamedLogger,
-                                                     logWarning, logInfo)
+                                                     logInfo, logWarning)
 import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer (..),
                                                      NetworkAddress, Port,
                                                      ResponseContext (..), ResponseT,
                                                      runResponseT, runResponseT, sendRaw)
-import           Control.TimeWarp.Timed             (MonadTimed, ThreadId, TimedIO, fork_)
+import           Control.TimeWarp.Timed             (MonadTimed, ThreadId, TimedIO)
 
 
 -- * Realted datatypes
@@ -68,7 +66,8 @@ import           Control.TimeWarp.Timed             (MonadTimed, ThreadId, Timed
 -- ** Connections
 
 data OutputConnection = OutputConnection
-    { outConnSend  :: Producer IO BS.ByteString -> IO ()
+    { outConnSend  :: forall m . (MonadIO m, MonadMask m)
+                   => Producer m BS.ByteString -> m ()
       -- | When someone starts listening, it should swap content with `Nothing`
     , outConnSrc   :: TVar (Maybe (Source IO BS.ByteString))
     , outConnClose :: IO ()
@@ -119,24 +118,22 @@ modifyManager how = Transfer $
 -- * Logic
 
 listenInbound :: Port
-              -> Conduit ByteString IO a
-              -> (a -> ResponseT Transfer ())
+              -> Sink ByteString (ResponseT Transfer) ()
               -> Transfer ()
-listenInbound (fromIntegral -> port) condParser listener =
+listenInbound (fromIntegral -> port) sink =
     liftBaseWith $
     \runInBase -> runTCPServerWithHandle (serverSettingsTCP port "*") $
         \sock _ _ -> void . runInBase $ do
             saveConn sock
-            synchronously <- synchronizer
+            lock <- liftIO newEmptyMVar
             let source = sourceSocket sock
                 responseCtx =
                     ResponseContext
-                    { respSend  = \src -> synchronously $ src $$ sinkSocket sock
+                    { respSend  = \src -> synchronously lock $ src $$ sinkSocket sock
                     , respClose = NS.close sock
                     }
-            requestsChan <- startListener $ flip runResponseT responseCtx . listener
-            logOnErr . liftIO $
-                source $$ condParser $= sinkTBMChan requestsChan True
+            logOnErr $ flip runResponseT responseCtx $
+                hoist liftIO source $$ sink
             logInfo "Input connection closed"
   where
     saveConn _ = do
@@ -149,10 +146,9 @@ listenInbound (fromIntegral -> port) condParser listener =
             inputConn . at connId .= Just conn
 
 listenOutbound :: NetworkAddress
-               -> Conduit ByteString IO a
-               -> (a -> ResponseT Transfer ())
+               -> Sink ByteString (ResponseT Transfer) ()
                -> Transfer ()
-listenOutbound addr condParser listener = do
+listenOutbound addr sink = do
     conn <- getOutConnOrOpen addr
     maybeSource <- liftIO . atomically $ swapTVar (outConnSrc conn) Nothing
     let responseCtx =
@@ -164,9 +160,8 @@ listenOutbound addr condParser listener = do
         then error $ "Already listening at outbound connection to " ++ show addr
         else do
             let source = fromJust maybeSource
-            requestsChan <- startListener $ flip runResponseT responseCtx . listener
-            logOnErr . liftIO $
-                source $$ condParser $= sinkTBMChan requestsChan True
+            logOnErr $ flip runResponseT responseCtx $
+                hoist liftIO source $$ sink
 
 
 instance MonadTransfer Transfer where
@@ -185,30 +180,10 @@ logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
 logOnErr = handleAll $
     logWarning . sformat ("Server error: "%shown)
 
-startListener :: (a -> Transfer ()) -> Transfer (TBMChan a)
-startListener handler = do
-    chan <- liftIO $ newTBMChanIO 1000
-    fork_ $ sourceTBMChan chan $$ CL.mapM_ (fork_ . notifyOnError . handler)
-    return chan
-  where
-    notifyOnError = handleAll $
-        logWarning . sformat ("Uncaught exception in server handler: "%shown)
-
-{-
-splitToChans :: MonadIO m => TBMChan a -> TBMChan b -> Sink (Either a b) m ()
-splitToChans ca cb =
-    awaitForever $ \m ->
-        case m of
-            Left a  -> yield a $$ sinkTBMChan ca False
-            Right b -> yield b $$ sinkTBMChan cb False
--}
-
-synchronizer :: MonadIO m => m (IO () -> IO ())
-synchronizer = do
-    lock <- liftIO newEmptyMVar
-    return $ \action ->
-        bracket_ (putMVar lock ())
-                 (takeMVar lock)
+synchronously :: (MonadIO m, MonadMask m) => MVar () -> m () -> m ()
+synchronously lock action =
+        bracket_ (liftIO $ putMVar lock ())
+                 (liftIO $ takeMVar lock)
                  action
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
@@ -220,12 +195,13 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) = do
                 return $ fromJust existing
             else do
                 -- TODO: use ResourceT
-                (sock, _)     <- lift $ getSocketFamilyTCP host port NS.AF_UNSPEC
-                source        <- lift . newTVarIO $ Just (sourceSocket sock)
-                synchronously <- lift synchronizer
+                (sock, _) <- lift $ getSocketFamilyTCP host port NS.AF_UNSPEC
+                source    <- lift . newTVarIO $ Just (sourceSocket sock)
+                lock      <- lift newEmptyMVar
                 let conn =
                        OutputConnection
-                       { outConnSend  = \src -> synchronously $ src $$ sinkSocket sock
+                       { outConnSend  = \src -> synchronously lock $
+                                src $$ hoist liftIO (sinkSocket sock)
                        , outConnSrc   = source
                        , outConnClose = NS.close sock
                        }

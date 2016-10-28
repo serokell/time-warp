@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes       #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
@@ -33,6 +34,8 @@ module Control.TimeWarp.Rpc.MonadTransfer
        , runResponseT
        , mapResponseT
 
+       , hoistRespCond
+
        , RpcError (..)
        ) where
 
@@ -41,8 +44,10 @@ import           Control.Monad.Catch      (MonadCatch, MonadMask, MonadThrow)
 import           Control.Monad.Reader     (MonadReader (..), ReaderT (..), mapReaderT)
 import           Control.Monad.State      (MonadState)
 import           Control.Monad.Trans      (MonadIO (..), MonadTrans (..))
+import           Control.Monad.Trans.Control (MonadTransControl (..))
+import           Control.Monad.Morph      (hoist)
 import           Data.ByteString          (ByteString)
-import           Data.Conduit             (Conduit, Producer)
+import           Data.Conduit             (Producer, Sink, ConduitM)
 import           Data.Monoid              ((<>))
 import           Data.Text                (Text)
 import           Data.Text.Buildable      (Buildable (..))
@@ -62,14 +67,14 @@ data Binding
 -- | Allows to send/receive raw byte sequences.
 class Monad m => MonadTransfer m where
     -- | Sends raw data.
+    -- TODO: NetworkAddress -> Consumer ByteString m ()
     sendRaw :: NetworkAddress          -- ^ Destination address
             -> Producer IO ByteString  -- ^ Data to send
             -> m ()
 
     -- | Listens at specified input or output connection.
-    listenRaw :: Binding                  -- ^ Port/address to listen to
-              -> Conduit ByteString IO a  -- ^ Parser for input byte stream
-              -> (a -> ResponseT m ())    -- ^ Handler for received data
+    listenRaw :: Binding                           -- ^ Port/address to listen to
+              -> Sink ByteString (ResponseT m) ()  -- ^ Parser for input byte stream
               -> m ()
 
     -- | Closes connection to specified node, if exists.
@@ -86,7 +91,8 @@ class Monad m => MonadResponse m where
     closeR :: m ()
 
 data ResponseContext = ResponseContext
-    { respSend  :: Producer IO ByteString -> IO ()
+    { respSend  :: forall m . (MonadIO m, MonadMask m)
+                => Producer m ByteString -> m ()
     , respClose :: IO ()
     }
 
@@ -95,7 +101,7 @@ newtype ResponseT m a = ResponseT
     } deriving (Functor, Applicative, Monad, MonadIO, MonadTrans,
                 MonadThrow, MonadCatch, MonadMask,
                 MonadState s,
-                WithNamedLogger, MonadTimed, MonadTransfer)
+                WithNamedLogger, MonadTimed)
 
 runResponseT :: ResponseT m a -> ResponseContext -> m a
 runResponseT = runReaderT . getResponseT
@@ -106,6 +112,12 @@ instance MonadReader r m => MonadReader r (ResponseT m) where
     ask = lift ask
     reader f = lift $ reader f
     local = mapResponseT . local
+
+instance MonadTransfer m => MonadTransfer (ResponseT m) where
+    sendRaw addr src = lift $ sendRaw addr src
+    listenRaw binding sink =
+        ResponseT $ listenRaw binding $ hoistRespCond getResponseT sink
+    close addr = lift $ close addr
 
 instance (MonadTransfer m, MonadIO m) => MonadResponse (ResponseT m) where
     replyRaw dat = ResponseT $ ask >>= \ctx -> liftIO $ respSend ctx dat
@@ -152,13 +164,20 @@ instance Exception RpcError
 
 -- * Instances
 
+hoistRespCond :: Monad m
+              => (forall a . m a -> n a)
+              -> ConduitM i o (ResponseT m) r
+              -> ConduitM i o (ResponseT n) r
+hoistRespCond how = hoist $ mapResponseT how
+
 instance MonadTransfer m => MonadTransfer (ReaderT r m) where
     sendRaw addr req = lift $ sendRaw addr req
-
-    listenRaw binding parser listener =
-        ReaderT $ \r -> listenRaw binding parser $
-                        mapResponseT (flip runReaderT r) . listener
-
+    listenRaw binding sink =
+        liftWith $ \run -> listenRaw binding $ hoistRespCond run sink
     close = lift . close
 
-deriving instance MonadTransfer m => MonadTransfer (LoggerNameBox m)
+instance MonadTransfer m => MonadTransfer (LoggerNameBox m) where
+    sendRaw addr req = lift $ sendRaw addr req
+    listenRaw binding sink = 
+        LoggerNameBox $ listenRaw binding $ hoistRespCond loggerNameBoxEntry sink
+    close = lift . close

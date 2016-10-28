@@ -40,7 +40,7 @@ module Control.TimeWarp.Rpc.Message
 
 import           Control.Monad                     (forM, mapM_)
 import           Control.Monad.Catch               (MonadThrow)
-import           Control.Monad.Trans               (lift)
+import           Control.Monad.Trans               (MonadIO (..))
 import           Data.Binary                       (Binary (..), encode)
 import           Data.ByteString                   (ByteString)
 import qualified Data.ByteString.Char8             as BC
@@ -92,15 +92,15 @@ proxyOf _ = Proxy
 
 -- | From given conduit constructs consumer of single value,
 -- which doesn't affect source above.
-intangibleSink :: Conduit i IO o -> Consumer i IO (Maybe o)
+intangibleSink :: MonadIO m => Conduit i m o -> Consumer i m (Maybe o)
 intangibleSink cond = do
-    taken <- lift $ newIORef []
+    taken <- liftIO $ newIORef []
     am <- notingCond taken =$= cond =$= CL.head
     forM am $ \a -> do
-        mapM_ leftover =<< lift (readIORef taken)
+        mapM_ leftover =<< liftIO (readIORef taken)
         return a
   where
-    notingCond taken = awaitForever $ \a -> do lift $ modifyIORef taken (a:)
+    notingCond taken = awaitForever $ \a -> do liftIO $ modifyIORef taken (a:)
                                                yield a
 
 -- * Typeclasses

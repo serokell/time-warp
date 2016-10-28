@@ -50,6 +50,7 @@ library
                      , MonadRandom
                      , monad-loops
                      , monad-control
+                     , mmorph >= 1.0
                      , data-msgpack >= 0.0.4
                      , network >= 2.6
                      , pqueue
