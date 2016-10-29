@@ -33,11 +33,13 @@ import           GHC.Generics                      (Generic)
 import           Control.TimeWarp.Logging          (Severity (Debug), initLogging,
                                                     logDebug, logError, logInfo,
                                                     logWarning, usingLoggerName)
-import           Control.TimeWarp.Rpc              (Binding (..), Listener (..), Message,
-                                                    MonadTransfer (..), NamedBinaryP (..),
-                                                    NetworkAddress, Port, listen,
-                                                    localhost, reply, replyRaw, runDialog,
-                                                    runTransfer, send)
+import           Control.TimeWarp.Rpc              (Binding (..),
+                                                    Listener (..), Message,
+                                                    MonadTransfer (..),
+                                                    NetworkAddress, Port,
+                                                    listen, localhost, reply, replyRaw,
+                                                    runDialog, runTransfer, send,
+                                                    BinaryP (..))
 import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, after, for,
                                                     fork_, ms, runTimedIO, schedule, sec',
                                                     till, virtualTime, work)
@@ -103,7 +105,7 @@ yohohoScenario = runTimedIO $ do
                 ]
         -- guy 1 initiates dialog
         wait (for 100 ms)
-        replicateM_ 10 $ do
+        replicateM_ 5 $ do
             send (guy 2) Ping
             logInfo "Sent"
 
@@ -133,8 +135,8 @@ yohohoScenario = runTimedIO $ do
         when (t < convertUnit finish) $
             logError $ sformat shown e
 
-    packing :: NamedBinaryP
-    packing = NamedBinaryP
+    packing :: BinaryP
+    packing = BinaryP
 
 
 -- | Example of `Transfer` usage
