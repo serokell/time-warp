@@ -237,8 +237,10 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
                 sformat ("No listener with name "%stext%" defined") name
             Just (Right (ListenerH f)) -> do
                 msgM <- unpackMsg packing =$= CL.head
-                forM_ msgM $
-                    \(HeaderNContentData h r) ->
+                case msgM of
+                    Nothing -> lift . commLog . logWarning $
+                        sformat ("Unexpected end of incoming message")
+                    Just (HeaderNContentData h r) ->
                         let _ = [h, header]  -- constraint on h type
                         in  do lift . invokeListenerSafe $ f (header, r)
                                loop
