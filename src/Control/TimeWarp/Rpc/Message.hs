@@ -51,7 +51,6 @@ import           Data.Binary.Get                   (Decoder (..), Get, pushChunk
 import           Data.Binary.Put                   (runPut)
 import           Data.ByteString                   (ByteString)
 import qualified Data.ByteString                   as BS
-import qualified Data.ByteString.Char8             as BC
 import qualified Data.ByteString.Lazy              as BL
 import           Data.Conduit                      (Conduit, Consumer, await,
                                                     awaitForever, leftover, yield, (=$=))
@@ -60,10 +59,11 @@ import           Data.Conduit.Serialization.Binary (ParseError (..), conduitPut)
 import           Data.Data                         (Data, dataTypeName, dataTypeOf)
 import           Data.IORef                        (modifyIORef, newIORef, readIORef)
 import           Data.Proxy                        (Proxy (..), asProxyTypeOf)
+import qualified Data.Text                         as T
 import           Data.Typeable                     (Typeable)
 
 
-type MessageName = ByteString
+type MessageName = T.Text
 
 -- | Defines type which has it's uniqie name.
 class Typeable m => Message m where
@@ -71,7 +71,7 @@ class Typeable m => Message m where
     messageName :: Proxy m -> MessageName
     default messageName :: Data m => Proxy m -> MessageName
     messageName proxy =
-        BC.pack . dataTypeName . dataTypeOf $ undefined `asProxyTypeOf` proxy
+         T.pack . dataTypeName . dataTypeOf $ undefined `asProxyTypeOf` proxy
 
 
 -- * Parts of message.

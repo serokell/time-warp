@@ -25,6 +25,8 @@ module Control.TimeWarp.Rpc.MonadTransfer
        , NetworkAddress
        , Binding (..)
        , localhost
+       , commLoggerName
+       , commLog
 
        , MonadTransfer (..)
 
@@ -39,22 +41,23 @@ module Control.TimeWarp.Rpc.MonadTransfer
        , RpcError (..)
        ) where
 
-import           Control.Exception        (Exception)
-import           Control.Monad.Catch      (MonadCatch, MonadMask, MonadThrow)
-import           Control.Monad.Reader     (MonadReader (..), ReaderT (..), mapReaderT)
-import           Control.Monad.State      (MonadState)
-import           Control.Monad.Trans      (MonadIO (..), MonadTrans (..))
+import           Control.Exception           (Exception)
+import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow)
+import           Control.Monad.Morph         (hoist)
+import           Control.Monad.Reader        (MonadReader (..), ReaderT (..), mapReaderT)
+import           Control.Monad.State         (MonadState)
+import           Control.Monad.Trans         (MonadIO (..), MonadTrans (..))
 import           Control.Monad.Trans.Control (MonadTransControl (..))
-import           Control.Monad.Morph      (hoist)
-import           Data.ByteString          (ByteString)
-import           Data.Conduit             (Producer, Sink, ConduitM)
-import           Data.Monoid              ((<>))
-import           Data.Text                (Text)
-import           Data.Text.Buildable      (Buildable (..))
-import           Data.Word                (Word16)
+import           Data.ByteString             (ByteString)
+import           Data.Conduit                (ConduitM, Producer, Sink)
+import           Data.Monoid                 ((<>))
+import           Data.Text                   (Text)
+import           Data.Text.Buildable         (Buildable (..))
+import           Data.Word                   (Word16)
 
-import           Control.TimeWarp.Logging (LoggerNameBox (..), WithNamedLogger)
-import           Control.TimeWarp.Timed   (MonadTimed, ThreadId)
+import           Control.TimeWarp.Logging    (LoggerName, LoggerNameBox (..),
+                                              WithNamedLogger, modifyLoggerName)
+import           Control.TimeWarp.Timed      (MonadTimed, ThreadId)
 
 
 data Binding
@@ -141,6 +144,13 @@ localhost = "127.0.0.1"
 -- | Full node address.
 type NetworkAddress = (Host, Port)
 
+-- | Name of logger responsible for communication events.
+commLoggerName :: LoggerName
+commLoggerName = "comm"
+
+commLog :: WithNamedLogger m => m a -> m a
+commLog = modifyLoggerName (<> commLoggerName)
+
 
 -- * Exceptions
 
@@ -178,7 +188,7 @@ instance MonadTransfer m => MonadTransfer (ReaderT r m) where
 
 instance MonadTransfer m => MonadTransfer (LoggerNameBox m) where
     sendRaw addr req = lift $ sendRaw addr req
-    listenRaw binding sink = 
+    listenRaw binding sink =
         LoggerNameBox $ listenRaw binding $ hoistRespCond loggerNameBoxEntry sink
     close = lift . close
 
