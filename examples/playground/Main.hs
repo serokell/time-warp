@@ -146,7 +146,7 @@ transferScenario :: IO ()
 transferScenario = runTimedIO $ do
     liftIO $ initLogging ["node"] Debug
     usingLoggerName "node.server" $ runTransfer $
-        work (for 500 ms) $ ha $
+        work (for 500 ms) $
             let listener req = do
                     logInfo $ sformat ("Got "%shown) req
                     replyRaw $ yield (put $ sformat "Ok!") =$= conduitPut
@@ -155,8 +155,8 @@ transferScenario = runTimedIO $ do
     wait (for 100 ms)
 
     usingLoggerName "node.client-1" $ runTransfer $
-        schedule (after 200 ms) $ ha $ do
-            work (for 500 ms) $ ha $
+        schedule (after 200 ms) $ do
+            work (for 500 ms) $
                 listenRaw (AtConnTo (localhost, 1234)) $
                     conduitGet get =$= CL.mapM_ logInfo
             forM_ ([1..5] :: [Int]) $ \i ->
@@ -167,20 +167,18 @@ transferScenario = runTimedIO $ do
 --                                     =$= awaitForever (\m -> yield "trash" >> yield m)
 
     usingLoggerName "node.client-2" $ runTransfer $
-        schedule (after 200 ms) $ ha $ do
+        schedule (after 200 ms) $ do
             sendRaw (localhost, 1234) $  CL.sourceList ([1..5] :: [Int])
                                      =$= CL.map (, -1)
                                      =$= CL.map Right
                                      =$= CL.map encoder
                                      =$= conduitPut
-            work (for 500 ms) $ ha $
+            work (for 500 ms) $ do
                 listenRaw (AtConnTo (localhost, 1234)) $
                     conduitGet get =$= CL.mapM_ logInfo
 
     wait (for 1000 ms)
   where
-    ha = handleAll $ logWarning . sformat ("Exception: "%shown)
-
     decoder :: Get (Either Int (Int, Int))
     decoder = do
         magic <- get
