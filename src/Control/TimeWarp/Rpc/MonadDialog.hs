@@ -64,7 +64,8 @@ module Control.TimeWarp.Rpc.MonadDialog
 
 import           Control.Lens                       (at, (^.))
 import           Control.Monad                      (forM, forM_)
-import           Control.Monad.Catch                (MonadCatch, MonadMask, MonadThrow)
+import           Control.Monad.Catch                (MonadCatch, MonadMask, MonadThrow,
+                                                     handleAll)
 import           Control.Monad.Reader               (MonadReader (ask), ReaderT (..))
 import           Control.Monad.State                (MonadState)
 import           Control.Monad.Trans                (MonadIO, MonadTrans (..))
@@ -73,10 +74,10 @@ import           Data.Conduit                       (Consumer, yield, (=$=))
 import           Data.Conduit.List                  as CL
 import           Data.Map                           as M
 import           Data.Proxy                         (Proxy (..))
-import           Formatting                         (sformat, shown, (%))
+import           Formatting                         (sformat, (%), stext, shown)
 
 import           Control.TimeWarp.Logging           (LoggerNameBox (..), WithNamedLogger,
-                                                     logWarning)
+                                                     logWarning, logDebug, logError)
 import           Control.TimeWarp.Rpc.Message       (Empty (..), HeaderNContentData (..),
                                                      HeaderNNameData (..),
                                                      HeaderNRawData (..), Message (..),
@@ -87,7 +88,7 @@ import           Control.TimeWarp.Rpc.MonadTransfer (Binding, Host,
                                                      MonadResponse (replyRaw),
                                                      MonadTransfer (..), NetworkAddress,
                                                      Port, ResponseT (..), RpcError (..),
-                                                     hoistRespCond, localhost)
+                                                     hoistRespCond, localhost, commLog)
 import           Control.TimeWarp.Timed             (MonadTimed, ThreadId)
 
 
@@ -185,7 +186,7 @@ replyRP packing h raw = replyRaw $ yield (HeaderNRawData h raw) =$= packMsg pack
 type MonadListener m =
     ( MonadTransfer m
     , MonadIO m
-    , MonadThrow m
+    , MonadCatch m
     , WithNamedLogger m
     )
 
@@ -215,7 +216,9 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
         hrM <- intangibleSink $ unpackMsg packing
         forM_ hrM $
             \(HeaderNRawData h raw) -> do
-                cont <- lift $ rawListener (h, raw)
+                lift . commLog . logDebug $
+                    sformat ("Received message, applying raw listener")
+                cont <- lift . invokeRawListenerSafe $ rawListener (h, raw)
                 if cont
                     then processContent h
                     else do -- this is expected to work as fast as indexing
@@ -228,18 +231,26 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
     processContent header = do
         nameM <- selector header
         case nameM of
-            Nothing          -> return ()
-            Just (Left name) -> lift . logWarning $
-                 sformat ("No listener with name "%shown%" defined") name
+            Nothing          -> lift . commLog . logWarning $
+                sformat ("Unexpected end of incoming message")
+            Just (Left name) -> lift . commLog . logWarning $
+                sformat ("No listener with name "%stext%" defined") name
             Just (Right (ListenerH f)) -> do
                 msgM <- unpackMsg packing =$= CL.head
                 forM_ msgM $
                     \(HeaderNContentData h r) ->
                         let _ = [h, header]  -- constraint on h type
-                        in  lift (f (header, r)) >> loop
+                        in  do lift . invokeListenerSafe $ f (header, r)
+                               loop
 
     selector header = chooseListener packing header getListenerNameH listeners
 
+    invokeRawListenerSafe = handleAll $ \e -> do
+        commLog . logError $ sformat ("Uncaught error in raw listener: "%shown) e
+        return False
+
+    invokeListenerSafe = handleAll $
+        commLog . logError . sformat ("Uncaught error in listener: "%shown)
 
 chooseListener :: (MonadListener m, Unpackable p (HeaderNNameData h))
                => p -> h -> (l m -> MessageName) -> [l m]
@@ -249,8 +260,10 @@ chooseListener packing h getName listeners = do
     forM nameM $
         \(HeaderNNameData h0 name) ->
             let _ = [h, h0]  -- constraint h0 type
-            in  return . maybe (Left name) Right $
-                    listenersMap ^. at name
+            in  do  lift . commLog . logDebug $
+                        sformat ("Got message: "%stext) name
+                    return . maybe (Left name) Right $
+                        listenersMap ^. at name
   where
     listenersMap = M.fromList [(getName li, li) | li <- listeners]
 

@@ -107,7 +107,7 @@ yohohoScenario = runTimedIO $ do
                 ]
         -- guy 1 initiates dialog
         wait (for 100 ms)
-        replicateM_ 5 $ do
+        replicateM_ 1 $ do
             send (guy 2) Ping
             logInfo "Sent"
 

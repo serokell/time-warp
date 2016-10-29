@@ -57,7 +57,8 @@ import           Control.TimeWarp.Logging           (LoggerNameBox, WithNamedLog
 import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer (..),
                                                      NetworkAddress, Port,
                                                      ResponseContext (..), ResponseT,
-                                                     runResponseT, runResponseT, sendRaw)
+                                                     runResponseT, runResponseT, sendRaw,
+                                                     commLog)
 import           Control.TimeWarp.Timed             (MonadTimed, ThreadId, TimedIO)
 
 
@@ -134,7 +135,7 @@ listenInbound (fromIntegral -> port) sink =
                     }
             logOnErr $ flip runResponseT responseCtx $
                 hoist liftIO source $$ sink
-            logInfo "Input connection closed"
+            commLog $ logInfo "Input connection closed"
   where
     saveConn _ = do
         let conn =
@@ -178,7 +179,7 @@ instance MonadTransfer Transfer where
 
 logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
 logOnErr = handleAll $
-    logWarning . sformat ("Server error: "%shown)
+    commLog . logWarning . sformat ("Server error: "%shown)
 
 synchronously :: (MonadIO m, MonadMask m) => MVar () -> m () -> m ()
 synchronously lock action =
