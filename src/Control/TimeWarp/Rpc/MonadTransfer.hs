@@ -181,3 +181,7 @@ instance MonadTransfer m => MonadTransfer (LoggerNameBox m) where
     listenRaw binding sink = 
         LoggerNameBox $ listenRaw binding $ hoistRespCond loggerNameBoxEntry sink
     close = lift . close
+
+instance MonadResponse m => MonadResponse (ReaderT r m) where
+    replyRaw x = lift $ replyRaw x
+    closeR = lift closeR
