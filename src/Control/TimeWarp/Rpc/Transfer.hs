@@ -31,7 +31,7 @@ import           Control.Lens                       (at, makeLenses, use, (.=), 
                                                      (<<.=), (?=))
 import           Control.Monad                      (forM_, void)
 import           Control.Monad.Base                 (MonadBase)
-import           Control.Monad.Catch                (MonadCatch, MonadMask,
+import           Control.Monad.Catch                (MonadCatch, MonadMask, throwM,
                                                      MonadThrow (..), bracket_, handleAll)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
@@ -178,8 +178,9 @@ instance MonadTransfer Transfer where
         liftIO $ forM_ maybeWasConn outConnClose
 
 logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
-logOnErr = handleAll $
-    commLog . logWarning . sformat ("Server error: "%shown)
+logOnErr = handleAll $ \e -> do
+    commLog . logWarning $ sformat ("Server error: "%shown) e
+    throwM e
 
 synchronously :: (MonadIO m, MonadMask m) => MVar () -> m () -> m ()
 synchronously lock action =
