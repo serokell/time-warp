@@ -18,32 +18,37 @@
 -- This module defines `Message` type, which binds a name to request.
 
 module Control.TimeWarp.Rpc.Message
-       ( Message (..)
+       ( MessageName
+       , Message (..)
 
        , Packable (..)
        , Unpackable (..)
 
        , BinaryP (..)
-       , NamedBinaryP (..)
-       , HeaderP (..)
 
        , ContentData (..)
        , NameData (..)
        , NameNContentData (..)
        , RawData (..)
        , HeaderData (..)
+       , HeaderNNameData (..)
        , HeaderNRawData (..)
+       , HeaderNContentData (..)
+       , HeaderNNameNContentData (..)
 
        , intangibleSink
        , proxyOf
+
+       , Empty (..)
        ) where
 
 import           Control.Monad                     (forM, mapM_, when)
 import           Control.Monad.Catch               (MonadThrow (..))
 import           Control.Monad.Trans               (MonadIO (..))
-import           Data.Binary                       (Binary (..), encode)
+import           Data.Binary                       (Binary (..))
 import           Data.Binary.Get                   (Decoder (..), Get, pushChunk,
-                                                    runGetIncremental)
+                                                    runGetIncremental, runGet)
+import           Data.Binary.Put                   (runPut)
 import           Data.ByteString                   (ByteString)
 import qualified Data.ByteString                   as BS
 import qualified Data.ByteString.Char8             as BC
@@ -82,9 +87,13 @@ data HeaderData h = HeaderData h
 
 data HeaderNContentData h r = HeaderNContentData h r
 
-data HeaderNRawData h = HeaderNRawData h ByteString
+data HeaderNRawData h = HeaderNRawData h RawData
+
+data HeaderNNameData h = HeaderNNameData h MessageName
 
 data NameNContentData r = NameNContentData MessageName r
+
+data HeaderNNameNContentData h r = HeaderNNameNContentData h MessageName r
 
 
 -- * Util
@@ -137,93 +146,59 @@ class Unpackable p r where
 
 -- ** Basic
 
--- | Defines way to encode `Binary` instances.
+-- | Defines way to encode `Binary` instances into message of format
+-- (header, [[name], content]), where [x] = (length of x, x).
 -- "P" here denotes to "packing".
 data BinaryP = BinaryP
 
-instance Binary r => Packable BinaryP (ContentData r) where
-    packMsg _ = CL.map (\(ContentData d) -> put d) =$= conduitPut
-
-instance Binary r => Unpackable BinaryP (ContentData r) where
-    unpackMsg _ = conduitGet' $ ContentData <$> get
-
-
--- | Defines pretty simple way to encode `Binary` instances: we just pack
--- @(methodName m, m)@ by means of `Binary`.
--- "N" here denotes to "named", "P" to "packing".
-data NamedBinaryP = NamedBinaryP
-
-instance (Binary r, Message r)
-      => Packable NamedBinaryP (ContentData r) where
+instance (Binary h, Binary r, Message r)
+       => Packable BinaryP (HeaderNContentData h r) where
     packMsg _ = CL.map doPut =$= conduitPut
       where
-        doPut (ContentData r) = do put $ messageName $ proxyOf r
-                                   put r
+        doPut (HeaderNContentData h r) =
+            do put h
+               put . runPut $
+                 do put $ messageName $ proxyOf r
+                    put r
 
-instance Unpackable NamedBinaryP NameData where
-    unpackMsg _ = conduitGet' $ NameData <$> get
+instance Binary h
+      => Unpackable BinaryP (HeaderData h) where
+    unpackMsg _ = conduitGet' $ HeaderData <$> get
 
-instance Binary r
-      => Unpackable NamedBinaryP (NameNContentData r) where
-    unpackMsg _ = conduitGet' $ NameNContentData <$> get <*> get
-
-instance Unpackable p (NameNContentData r)
-      => Unpackable p (ContentData r) where
-    unpackMsg p = unpackMsg p =$= CL.map (\(NameNContentData _ d) -> ContentData d)
-
--- | Defines way to encode `Binary` instances together with message header.
-data HeaderP ph pr = HeaderP ph pr
-
-instance (Packable ph h, Packable pr r) =>
-          Packable (HeaderP ph pr) (HeaderNContentData h r) where
-    packMsg (HeaderP ph pr) =
-        awaitForever $ \(HeaderNContentData h r) ->
-        do yield h =$= packMsg ph
-           yield r =$= packMsg pr
-
-instance (Unpackable ph h, Unpackable pr r) =>
-          Unpackable (HeaderP ph pr) (HeaderNContentData h r) where
-    unpackMsg (HeaderP ph pr) = do
-        hm <- unpackMsg ph =$= CL.head
-        rm <- unpackMsg pr =$= CL.head
-        case (hm, rm) of
-            (Just h, Just r) -> yield (HeaderNContentData h r)
-            _                -> return ()
-
-instance Unpackable ph h =>
-         Unpackable (HeaderP ph pr) (HeaderData h) where
-    unpackMsg (HeaderP ph _) = do
-        hm <- unpackMsg ph =$= CL.head
-        case hm of
-            Nothing -> return ()
-            Just h  -> yield $ HeaderData h
+instance Binary h
+      => Unpackable BinaryP (HeaderNRawData h) where
+    unpackMsg _ = conduitGet' $ HeaderNRawData <$> get <*> (RawData <$> get)
 
 
--- | Allows to take message as raw data by writing it's length at the beginning.
--- @n@ is packing type which supports `Int` packing.
-data RawP p = RawP p
+-- | TODO: optimize
+instance Binary h
+      => Unpackable BinaryP (HeaderNNameData h) where
+    unpackMsg p = unpackMsg p =$= CL.map extract
+      where
+        extract (HeaderNRawData h (RawData raw)) =
+            runGet (HeaderNNameData h <$> get) $ BL.fromStrict raw
 
-data RawContentData r = RawContentData r
+instance (Binary h, Binary r)
+       => Unpackable BinaryP (HeaderNNameNContentData h r) where
+    unpackMsg p = unpackMsg p =$= CL.map extract
+      where
+        extract (HeaderNRawData h (RawData raw)) =
+            runGet (HeaderNNameNContentData h <$> get <*> get) $ BL.fromStrict raw
 
--- | Instances here are implemented via Binary in hope, that `instance Binary ByteString`
--- does exactly what we want.
-instance Packable (RawP p) RawData where
-    packMsg _ = CL.map $ \(RawData raw) -> BL.toStrict $ encode raw
+instance (Binary h, Binary r)
+       => Unpackable BinaryP (HeaderNContentData h r) where
+    unpackMsg p = unpackMsg p =$= CL.map extract
+      where
+        extract (HeaderNNameNContentData h _ r) = HeaderNContentData h r
 
-instance Packable p r => Packable (RawP p) (RawContentData r) where
-    packMsg pr@(RawP p) = CL.map (\(RawContentData d) -> d)
-                      =$= packMsg p
-                      =$= CL.map RawData
-                      =$= packMsg pr
 
-instance Unpackable (RawP p) RawData where
-    unpackMsg _ = conduitGet' $ RawData <$> get
+-- * Empty object
 
-instance Unpackable p r => Unpackable (RawP p) (RawContentData r) where
-    unpackMsg pr@(RawP p) = unpackMsg pr
-                        =$= CL.map (\(RawData raw) -> raw)
-                        =$= unpackMsg p
-                        =$= CL.map RawContentData
+data Empty = Empty
+
+instance Binary Empty where
+    get = return Empty
+    put _ = return ()
 
 
 -- * Misc
