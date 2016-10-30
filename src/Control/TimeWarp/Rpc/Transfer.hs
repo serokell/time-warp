@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE Rank2Types            #-}
@@ -49,7 +50,7 @@ import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (StateT (..), runStateT)
 import           Control.Monad.Trans                (MonadIO (..), lift)
-import           Control.Monad.Trans.Control        (MonadBaseControl (..))
+import           Control.Monad.Trans.Control        (MonadBaseControl (..), control)
 import           Data.ByteString                    (ByteString)
 import qualified Data.ByteString                    as BS
 import           Data.Conduit                       (Sink, Source, awaitForever, ($$),
@@ -150,8 +151,11 @@ type instance ThreadId Transfer = C.ThreadId
 
 -- | Run with specified settings
 runTransferS :: Settings -> Transfer a -> LoggerNameBox TimedIO a
-runTransferS s t = do m <- liftIO (newMVar $ initManager)
-                      flip runReaderT m $ flip runReaderT s $ getTransfer t
+runTransferS s t = do
+    m <- liftIO (newMVar $ initManager)
+    withSockets $ flip runReaderT m $ flip runReaderT s $ getTransfer t
+  where
+    withSockets act = control $ \runIO -> NS.withSocketsDo $ runIO act
 
 runTransfer :: Transfer a -> LoggerNameBox TimedIO a
 runTransfer = runTransferS transferSettings
