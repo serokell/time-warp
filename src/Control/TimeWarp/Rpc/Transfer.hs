@@ -43,7 +43,8 @@ import           Control.Monad                      (forM_, forever, replicateM_
 import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Catch                (MonadCatch, MonadMask,
                                                      MonadThrow (..), bracket, bracket_,
-                                                     catchAll, handleAll, throwM)
+                                                     catchAll, handleAll, onException,
+                                                     throwM)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (StateT (..), runStateT)
@@ -74,8 +75,8 @@ import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer
                                                      commLog, runResponseT, runResponseT,
                                                      sendRaw)
 import           Control.TimeWarp.Timed             (Microsecond, MonadTimed, ThreadId,
-                                                     TimedIO, for, fork, interval,
-                                                     killThread, wait, sec, fork_)
+                                                     TimedIO, for, fork, fork_, interval,
+                                                     killThread, sec, wait)
 import           Serokell.Util.Exceptions           (TextException (..))
 
 
@@ -87,7 +88,7 @@ data OutputConnection = OutputConnection
     { outConnSend  :: forall m . (MonadIO m, MonadMask m)
                    => Source m BS.ByteString -> m ()
       -- ^ Keeps function to send to socket
-    , outConnRec   :: forall m . (MonadIO m, MonadThrow m)
+    , outConnRec   :: forall m . (MonadIO m, MonadCatch m)
                    => Sink BS.ByteString (ResponseT m) () -> m ()
       -- ^ Keeps listener sink, if free
     , outConnClose :: IO ()
@@ -206,7 +207,7 @@ listenOutbound :: NetworkAddress
                -> Transfer ()
 listenOutbound addr sink = do
     conn <- getOutConnOrOpen addr
-    outConnRec conn sink
+    logOnErr $ outConnRec conn sink
 
 logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
 logOnErr = handleAll $ \e -> do
@@ -244,8 +245,9 @@ getOutConnOrOpen address = do
                                     sformat ("Already listening at outbound "%
                                              "connection to "%shown) addr
                                 -- ^ Or maybe retry?
-                                flip runResponseT (mkResponseCtx conn) $
-                                    sourceTBMChan inChan $$ sink
+                                flip onException (liftIO $ outConnClose conn) $
+                                     flip runResponseT (mkResponseCtx conn) $
+                                     sourceTBMChan inChan $$ sink
                            , outConnClose = do atomically . TBM.closeTBMChan $ inChan
                                                atomically . TBM.closeTBMChan $ outChan
                            }
