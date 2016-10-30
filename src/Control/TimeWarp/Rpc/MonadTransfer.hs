@@ -49,7 +49,7 @@ import           Control.Monad.State         (MonadState)
 import           Control.Monad.Trans         (MonadIO (..), MonadTrans (..))
 import           Control.Monad.Trans.Control (MonadTransControl (..))
 import           Data.ByteString             (ByteString)
-import           Data.Conduit                (ConduitM, Producer, Sink)
+import           Data.Conduit                (ConduitM, Producer, Sink, Source)
 import           Data.Monoid                 ((<>))
 import           Data.Text                   (Text)
 import           Data.Text.Buildable         (Buildable (..))
@@ -73,7 +73,7 @@ class Monad m => MonadTransfer m where
     -- | Sends raw data.
     -- TODO: NetworkAddress -> Consumer ByteString m ()
     sendRaw :: NetworkAddress          -- ^ Destination address
-            -> Producer IO ByteString  -- ^ Data to send
+            -> Source IO ByteString    -- ^ Data to send
             -> m ()
 
     -- | Listens at specified input or output connection.
@@ -96,7 +96,7 @@ class Monad m => MonadResponse m where
 
 data ResponseContext = ResponseContext
     { respSend  :: forall m . (MonadIO m, MonadMask m)
-                => Producer m ByteString -> m ()
+                => Source m ByteString -> m ()
     , respClose :: IO ()
     }
 

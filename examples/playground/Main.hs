@@ -12,6 +12,7 @@ module Main
 --    , rpcScenario
     , transferScenario
     , proxyScenario
+    , slowpokeScenario
 --    , runEmulation
 --    , runReal
     ) where
@@ -34,17 +35,19 @@ import           GHC.Generics                      (Generic)
 
 import           Control.TimeWarp.Logging          (Severity (Debug), initLogging,
                                                     logDebug, logError, logInfo,
-                                                    logWarning, usingLoggerName)
+                                                    usingLoggerName)
 import           Control.TimeWarp.Rpc              (BinaryP (..), Binding (..),
                                                     Listener (..), ListenerH (..),
                                                     Message, MonadTransfer (..),
                                                     NetworkAddress, Port, listen, listenH,
                                                     listenR, localhost, reply, replyRaw,
-                                                    runDialog, runTransfer, send, sendH,
-                                                    sendR)
+                                                    runDialog, runTransfer, runTransferS,
+                                                    send, sendH, sendR, transferSettings,
+                                                    _reconnectPolicy)
 import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, after, for,
-                                                    fork_, ms, runTimedIO, schedule, sec',
-                                                    till, virtualTime, work)
+                                                    fork_, interval, ms, runTimedIO,
+                                                    schedule, sec, sec', till,
+                                                    virtualTime, work)
 
 main :: IO ()
 main = return ()  -- use ghci
@@ -88,7 +91,7 @@ guy = (localhost, ) . guysPort
 guysPort :: Word16 -> Port
 guysPort = (+10000)
 
--- Emulates dialog of two guys:
+-- Emulates dialog of two guys, maybe several times, in parallel:
 -- 1: Ping
 -- 2: Pong
 -- 1: EpicRequest ...
@@ -107,7 +110,7 @@ yohohoScenario = runTimedIO $ do
                 ]
         -- guy 1 initiates dialog
         wait (for 100 ms)
-        replicateM_ 1 $ do
+        replicateM_ 2 $ do
             send (guy 2) Ping
             logInfo "Sent"
 
@@ -251,7 +254,7 @@ proxyScenario = runTimedIO $ do
     wait (for 100 ms)
 
     -- client
-    usingLoggerName "client" . runTransfer . runDialog packing . fork_ . ha $ do
+    usingLoggerName "client" . runTransfer . runDialog packing . fork_  $ do
         forM_ [1..10] $
             \i -> sendH (localhost, 1234) (int i) $ EpicRequest 34 "lol"
 
@@ -266,4 +269,33 @@ proxyScenario = runTimedIO $ do
     int :: Int -> Int
     int = id
 
-    ha = handleAll $ logWarning . sformat ("Exception: "%shown)
+
+-- | Slowpoke server scenario
+slowpokeScenario :: IO ()
+slowpokeScenario = runTimedIO $ do
+    initLogging Debug
+
+    -- guy 1
+    usingLoggerName "server" . runTransfer . runDialog packing . fork_ $ do
+        wait (for 3 sec)
+        work (till finish) $
+            listen (AtPort 1234)
+                [ Listener $ \Ping -> logDebug "Got Ping!"
+                ]
+
+    usingLoggerName "client" . runTransferS settings . runDialog packing . fork_ $ do
+        wait (for 100 ms)
+        replicateM_ 3 $ send (localhost, 1234) Ping
+
+    wait (till finish)
+  where
+    finish :: Second
+    finish = 5
+
+    packing :: BinaryP
+    packing = BinaryP
+
+    settings = transferSettings
+        { _reconnectPolicy = return (Just $ interval 1 sec)
+        }
+
