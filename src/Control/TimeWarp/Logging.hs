@@ -54,6 +54,7 @@ import           Control.Monad.Trans         (MonadIO (liftIO), MonadTrans, lift
 import           Control.Monad.Trans.Cont    (ContT, mapContT)
 import           Control.Monad.Trans.Control (MonadBaseControl (..))
 
+import           Data.Default                (Default (def))
 import           Data.Semigroup              (Semigroup)
 import qualified Data.Semigroup              as Semigroup
 import           Data.String                 (IsString)
@@ -105,6 +106,16 @@ convertSeverity Info    = INFO
 convertSeverity Warning = WARNING
 convertSeverity Error   = ERROR
 
+-- | Options determining formatting of messages.
+data LoggingFormat = LoggingFormat
+    { -- | Show time for non-error messages.
+      -- Note that error messages always have timestamp.
+      lfShowTime :: !Bool
+    } deriving (Show)
+
+instance Default LoggingFormat where
+    def = LoggingFormat {lfShowTime = True}
+
 -- | This function initializes global logging system. At high level, it sets
 -- severity which will be used by all loggers by default, sets default
 -- formatters and sets custom severity for given loggers (if any).
@@ -118,8 +129,10 @@ convertSeverity Error   = ERROR
 -- descendant loggers by default.
 -- 3. Applies `setSeverity` to given loggers. It can be done later using
 -- `setSeverity` directly.
-initLoggingWith :: MonadIO m => [(LoggerName, Severity)] -> Severity -> m ()
-initLoggingWith predefinedLoggers defaultSeverity = liftIO $ do
+initLoggingWith
+    :: MonadIO m
+    => LoggingFormat -> Severity -> m ()
+initLoggingWith LoggingFormat {..} defaultSeverity = liftIO $ do
     -- We set DEBUG here, to allow all messages by stdout handler.
     -- They will be filtered by loggers.
     stdoutHandler <-
@@ -130,17 +143,19 @@ initLoggingWith predefinedLoggers defaultSeverity = liftIO $ do
         setHandlers [stderrHandler, stdoutHandler]
     updateGlobalLogger rootLoggerName $
         setLevel (convertSeverity defaultSeverity)
-    mapM_ (uncurry setSeverity) predefinedLoggers
   where
     stderrFormatter =
         simpleLogFormatter
-            ("[$time] " ++ colorizer ERROR "[$loggername:$prio]: " ++ "$msg")
-    stdoutFormatter h r@(pr, _) n =
-        simpleLogFormatter (colorizer pr "[$loggername:$prio] " ++ "$msg") h r n
+            (timeFmt ++ colorizer ERROR "[$loggername:$prio]: " ++ "$msg")
+    timeFmt = "[$time] "
+    timeFmtStdout = if lfShowTime then timeFmt else ""
+    stdoutFmt pr = mconcat
+        [timeFmtStdout, colorizer pr "[$loggername:$prio] ", "$msg"]
+    stdoutFormatter h r@(pr, _) = simpleLogFormatter (stdoutFmt pr) h r
 
 -- | Version of initLoggingWith without any predefined loggers.
 initLogging :: MonadIO m => Severity -> m ()
-initLogging = initLoggingWith []
+initLogging = initLoggingWith def
 
 -- | Set severity for given logger. By default parent's severity is used.
 setSeverity :: MonadIO m => LoggerName -> Severity -> m ()
