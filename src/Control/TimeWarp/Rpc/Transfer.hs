@@ -246,7 +246,8 @@ getOutConnOrOpen address = do
                                 -- ^ Or maybe retry?
                                 flip runResponseT (mkResponseCtx conn) $
                                     sourceTBMChan inChan $$ sink
-                           , outConnClose = atomically $ TBM.closeTBMChan outChan
+                           , outConnClose = do atomically . TBM.closeTBMChan $ inChan
+                                               atomically . TBM.closeTBMChan $ outChan
                            }
                     outputConn . at addr ?= conn
                     return (conn, Just (inChan, outChan))
