@@ -30,7 +30,7 @@ import           Test.Control.TimeWarp.Common ()
 
 spec :: Spec
 spec =
-    before (initLogging ["dunno"] Error) $
+    before (initLogging Error) $
     describe "WorkMode" $ do
         describe "error" $ do
             prop "should abort the execution"
