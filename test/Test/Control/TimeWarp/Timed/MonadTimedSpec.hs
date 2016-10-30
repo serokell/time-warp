@@ -141,7 +141,7 @@ runTimedTProp test = ioProperty $ execStateT (runTimedT test) True
 -- TimedIO tests
 
 timeoutProp
-    :: (MonadTimed m, MonadIO m, MonadCatch m)
+    :: (MonadTimed m, MonadCatch m)
     => NonNegative Microsecond
     -> NonNegative Microsecond
     -> PropertyM m ()
