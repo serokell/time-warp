@@ -51,7 +51,7 @@ library
                      , monad-loops
                      , monad-control
                      , mmorph >= 1.0
-                     , data-msgpack >= 0.0.4
+                     , data-msgpack >= 0.0.8
                      , network >= 2.6
                      , pqueue
                      , QuickCheck >= 2.8.1
@@ -74,8 +74,7 @@ library
                      , transformers-base
   hs-source-dirs:      src
   default-language:    Haskell2010
-  ghc-options:         -threaded -Wall -O2
-                       -fno-warn-orphans -fprint-potential-instances
+  ghc-options:         -Wall -O2 -fno-warn-orphans -fprint-potential-instances
   default-extensions:  RecordWildCards
                      , OverloadedStrings
                      , DeriveDataTypeable
@@ -96,7 +95,7 @@ test-suite time-warp-test
                      , exceptions >= 0.8.2.1
                      , hspec >= 2.1.10
                      , lens >= 4.13
-                     , data-msgpack >= 0.0.4
+                     , data-msgpack >= 0.0.8
                      , mtl
                      , QuickCheck >= 2.8.1
                      , serokell-core
@@ -128,7 +127,7 @@ executable playground
                      , hspec >= 2.1.10
                      , lens >= 4.13
                      , MonadRandom
-                     , data-msgpack >= 0.0.4
+                     , data-msgpack >= 0.0.8
                      , mtl
                      , QuickCheck >= 2.8.1
                      , serokell-core
