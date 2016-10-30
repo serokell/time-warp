@@ -20,19 +20,30 @@
 module Control.TimeWarp.Rpc.Transfer
        ( Transfer (..)
        , runTransfer
+       , runTransferS
+
+       , Settings (..)
+       , transferSettings
+       , queueSize
+       , reconnectPolicy
        ) where
 
 import qualified Control.Concurrent                 as C
 import           Control.Concurrent.MVar            (MVar, modifyMVar, newEmptyMVar,
                                                      newMVar, putMVar, takeMVar)
 import           Control.Concurrent.STM             (atomically)
-import           Control.Concurrent.STM.TVar        (TVar, newTVarIO, swapTVar)
+import qualified Control.Concurrent.STM.TBMChan     as TBM
+import           Control.Concurrent.STM.TChan       as TC
+import           Control.Concurrent.STM.TVar        as TV
+import           Control.Lens                       (view)
 import           Control.Lens                       (at, makeLenses, use, (.=), (<<+=),
                                                      (<<.=), (?=))
-import           Control.Monad                      (forM_, void)
+import           Control.Monad                      (forM_, forever, replicateM_, void,
+                                                     when)
 import           Control.Monad.Base                 (MonadBase)
-import           Control.Monad.Catch                (MonadCatch, MonadMask, throwM,
-                                                     MonadThrow (..), bracket_, handleAll)
+import           Control.Monad.Catch                (MonadCatch, MonadMask,
+                                                     MonadThrow (..), bracket, bracket_,
+                                                     catchAll, handleAll, throwM)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (StateT (..), runStateT)
@@ -40,10 +51,13 @@ import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
 import           Data.ByteString                    (ByteString)
 import qualified Data.ByteString                    as BS
-import           Data.Conduit                       (Producer, Sink, Source, ($$))
+import           Data.Conduit                       (Sink, Source, awaitForever, ($$),
+                                                     (=$=))
+import           Data.Conduit.Binary                (sinkLbs, sourceLbs)
 import           Data.Conduit.Network               (sinkSocket, sourceSocket)
+import           Data.Conduit.TMChan                (sinkTBMChan, sourceTBMChan)
 import qualified Data.Map                           as M
-import           Data.Maybe                         (fromJust, isJust, isNothing)
+import           Data.Maybe                         (fromJust, isJust)
 import           Data.Streaming.Network             (getSocketFamilyTCP,
                                                      runTCPServerWithHandle,
                                                      serverSettingsTCP)
@@ -53,25 +67,32 @@ import           Formatting                         (sformat, shown, (%))
 import           Network.Socket                     as NS
 
 import           Control.TimeWarp.Logging           (LoggerNameBox, WithNamedLogger,
-                                                     logInfo, logWarning)
+                                                     logDebug, logInfo, logWarning)
 import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer (..),
                                                      NetworkAddress, Port,
                                                      ResponseContext (..), ResponseT,
-                                                     runResponseT, runResponseT, sendRaw,
-                                                     commLog)
-import           Control.TimeWarp.Timed             (MonadTimed, ThreadId, TimedIO)
+                                                     commLog, runResponseT, runResponseT,
+                                                     sendRaw)
+import           Control.TimeWarp.Timed             (Microsecond, MonadTimed, ThreadId,
+                                                     TimedIO, for, fork, interval,
+                                                     killThread, wait, sec, fork_)
+import           Serokell.Util.Exceptions           (TextException (..))
 
 
--- * Realted datatypes
+-- * Related datatypes
 
 -- ** Connections
 
 data OutputConnection = OutputConnection
     { outConnSend  :: forall m . (MonadIO m, MonadMask m)
-                   => Producer m BS.ByteString -> m ()
-      -- | When someone starts listening, it should swap content with `Nothing`
-    , outConnSrc   :: TVar (Maybe (Source IO BS.ByteString))
+                   => Source m BS.ByteString -> m ()
+      -- ^ Keeps function to send to socket
+    , outConnRec   :: forall m . (MonadIO m, MonadThrow m)
+                   => Sink BS.ByteString (ResponseT m) () -> m ()
+      -- ^ Keeps listener sink, if free
     , outConnClose :: IO ()
+      -- ^ Closes socket as soon as all messages send, prevent any further manupulations
+      -- with message queues.
     }
 
 data InputConnection = InputConnection
@@ -80,6 +101,24 @@ data InputConnection = InputConnection
 $(makeLenses ''InputConnection)
 
 type InConnId = Int
+
+
+-- ** Settings
+
+data Settings = Settings
+    { _queueSize       :: Int
+    , _reconnectPolicy :: forall m . (WithNamedLogger m, MonadIO m)
+                       => m (Maybe Microsecond)
+    }
+$(makeLenses ''Settings)
+
+-- | Default settings, you can use it like @transferSettings { _queueSize = 1 }@
+transferSettings :: Settings
+transferSettings = Settings
+    { _queueSize = 100
+    , _reconnectPolicy = return (Just $ interval 3 sec)
+    }
+
 
 -- ** Manager
 
@@ -102,17 +141,22 @@ initManager =
 -- * Transfer
 
 newtype Transfer a = Transfer
-    { getTransfer :: ReaderT (MVar Manager) (LoggerNameBox TimedIO) a
+    { getTransfer :: ReaderT Settings (ReaderT (MVar Manager) (LoggerNameBox TimedIO)) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadBase IO,
                 MonadThrow, MonadCatch, MonadMask, MonadTimed, WithNamedLogger)
 
 type instance ThreadId Transfer = C.ThreadId
 
+-- | Run with specified settings
+runTransferS :: Settings -> Transfer a -> LoggerNameBox TimedIO a
+runTransferS s t = do m <- liftIO (newMVar $ initManager)
+                      flip runReaderT m $ flip runReaderT s $ getTransfer t
+
 runTransfer :: Transfer a -> LoggerNameBox TimedIO a
-runTransfer t = liftIO (newMVar initManager) >>= runReaderT (getTransfer t)
+runTransfer = runTransferS transferSettings
 
 modifyManager :: StateT Manager IO a -> Transfer a
-modifyManager how = Transfer $
+modifyManager how = Transfer . lift $
     ask >>= liftIO . flip modifyMVar (fmap swap . runStateT how)
 
 
@@ -131,6 +175,7 @@ listenInbound (fromIntegral -> port) sink =
                 responseCtx =
                     ResponseContext
                     { respSend  = \src -> synchronously lock $ src $$ sinkSocket sock
+                                          -- ^ TODO: eliminate
                     , respClose = NS.close sock
                     }
             logOnErr $ flip runResponseT responseCtx $
@@ -146,29 +191,129 @@ listenInbound (fromIntegral -> port) sink =
             connId <- inputConnCounter <<+= 1
             inputConn . at connId .= Just conn
 
+synchronously :: (MonadIO m, MonadMask m) => MVar () -> m () -> m ()
+synchronously lock action =
+        bracket_ (liftIO $ putMVar lock ())
+                 (liftIO $ takeMVar lock)
+                 action
+
+-- | Listens for incoming bytes on outbound connection.
+-- Listening would occur until sink gets closed. Killing this thread won't help here.
+-- Attempt to listen on socket which is already being listened causes exception.
+-- Subscribtions could be implemented at layer above, where we operate with messages.
 listenOutbound :: NetworkAddress
                -> Sink ByteString (ResponseT Transfer) ()
                -> Transfer ()
 listenOutbound addr sink = do
     conn <- getOutConnOrOpen addr
-    maybeSource <- liftIO . atomically $ swapTVar (outConnSrc conn) Nothing
-    let responseCtx =
-            ResponseContext
-            { respSend  = outConnSend conn
+    outConnRec conn sink
+
+logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
+logOnErr = handleAll $ \e -> do
+    commLog . logWarning $ sformat ("Server error: "%shown) e
+    throwM e
+
+
+getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
+getOutConnOrOpen address = do
+    -- TODO: care about async exceptions
+    (conn, chansM) <- ensureConnExist address
+    forM_ chansM $ fork_ . startWorker address conn
+    return conn
+  where
+    ensureConnExist addr = do
+        settings <- Transfer ask
+        modifyManager $ do
+            existing <- use $ outputConn . at addr
+            if isJust existing
+                then
+                    return $ (fromJust existing, Nothing)
+                else do
+                    inBusy  <- liftIO $ TV.newTVarIO False
+                    inChan  <- liftIO $ TBM.newTBMChanIO (_queueSize settings)
+                    outChan <- liftIO $ TBM.newTBMChanIO (_queueSize settings)
+                    let conn =
+                           OutputConnection
+                           { outConnSend  = \src -> do
+                                lbs <- src $$ sinkLbs
+                                liftIO . atomically . TBM.writeTBMChan outChan $ lbs
+                                -- TODO: overflow?
+                           , outConnRec   = \sink -> do
+                                busy <- liftIO . atomically $ TV.swapTVar inBusy True
+                                when busy $ throwM $ TextException $
+                                    sformat ("Already listening at outbound "%
+                                             "connection to "%shown) addr
+                                -- ^ Or maybe retry?
+                                flip runResponseT (mkResponseCtx conn) $
+                                    sourceTBMChan inChan $$ sink
+                           , outConnClose = atomically $ TBM.closeTBMChan outChan
+                           }
+                    outputConn . at addr ?= conn
+                    return (conn, Just (inChan, outChan))
+
+    startWorker addr@(host, fromIntegral -> port) conn (inChan, outChan) =
+        forever . withDelayOnFail addr $ do
+             bracket (liftIO $ fst <$> getSocketFamilyTCP host port NS.AF_UNSPEC)
+                     (liftIO . NS.close) $
+                     \sock -> do
+                        -- TODO: rewrite to async when MonadTimed supports it
+                        -- create channel to notify about error
+                        eventChan  <- liftIO TC.newTChanIO
+                        -- create working threads
+                        stid <- fork $ reportExecution eventChan $
+                            foreverSend sock outChan
+                        rtid <- fork $ reportExecution eventChan $
+                            foreverRec sock (mkResponseCtx conn) inChan
+                        -- wait for error messages
+                        let onError e = do
+                                killThread stid
+                                killThread rtid
+                                throwM e
+                        replicateM_ 2 $ do
+                            event <- liftIO . atomically $ TC.readTChan eventChan
+                            either onError return event
+                        -- survived
+                        commLog . logDebug $
+                            sformat ("Socket to "%shown%" happily closed") addr
+
+    withDelayOnFail addr = handleAll $ \e -> do
+        commLog . logWarning $
+            sformat ("Error while working with socket to "%shown%": "%shown) addr e
+        reconnect <- Transfer $ view reconnectPolicy
+        maybeReconnect <- reconnect
+        case maybeReconnect of
+            Nothing -> do
+                commLog . logWarning $
+                    sformat ("Reconnection policy = don't reconnect "%shown%
+                             ", closing connection") addr
+                throwM e
+            Just delay -> do
+                commLog . logWarning $
+                    sformat ("Reconnect in "%shown) delay
+                wait (for delay)
+
+    foreverSend sock outChan = do
+        sourceTBMChan outChan =$= awaitForever sourceLbs $$ sinkSocket sock
+
+    foreverRec sock respCtx inChan =
+        forever $
+            flip runResponseT respCtx $
+                hoist liftIO (sourceSocket sock) $$ sinkTBMChan inChan True
+
+    mkResponseCtx conn =
+        ResponseContext
+            { respSend = outConnSend conn
             , respClose = outConnClose conn
             }
-    if isNothing maybeSource
-        then error $ "Already listening at outbound connection to " ++ show addr
-        else do
-            let source = fromJust maybeSource
-            logOnErr $ flip runResponseT responseCtx $
-                hoist liftIO source $$ sink
 
+    reportExecution eventChan action = do
+        catchAll action $ liftIO . atomically . TC.writeTChan eventChan . Left
+        liftIO . atomically . TC.writeTChan eventChan $ Right ()
 
 instance MonadTransfer Transfer where
-    sendRaw addr dat = do
+    sendRaw addr src = do
         conn <- getOutConnOrOpen addr
-        liftIO $ outConnSend conn dat
+        liftIO $ outConnSend conn src
 
     listenRaw (AtPort   port) = listenInbound port
     listenRaw (AtConnTo addr) = listenOutbound addr
@@ -176,39 +321,6 @@ instance MonadTransfer Transfer where
     close addr = do
         maybeWasConn <- modifyManager $ outputConn . at addr <<.= Nothing
         liftIO $ forM_ maybeWasConn outConnClose
-
-logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
-logOnErr = handleAll $ \e -> do
-    commLog . logWarning $ sformat ("Server error: "%shown) e
-    throwM e
-
-synchronously :: (MonadIO m, MonadMask m) => MVar () -> m () -> m ()
-synchronously lock action =
-        bracket_ (liftIO $ putMVar lock ())
-                 (liftIO $ takeMVar lock)
-                 action
-
-getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
-getOutConnOrOpen addr@(host, fromIntegral -> port) = do
-    modifyManager $ do
-        existing <- use $ outputConn . at addr
-        if isJust existing
-            then
-                return $ fromJust existing
-            else do
-                -- TODO: use ResourceT
-                (sock, _) <- lift $ getSocketFamilyTCP host port NS.AF_UNSPEC
-                source    <- lift . newTVarIO $ Just (sourceSocket sock)
-                lock      <- lift newEmptyMVar
-                let conn =
-                       OutputConnection
-                       { outConnSend  = \src -> synchronously lock $
-                                src $$ hoist liftIO (sinkSocket sock)
-                       , outConnSrc   = source
-                       , outConnClose = NS.close sock
-                       }
-                outputConn . at addr ?= conn
-                return conn
 
 
 -- * Instances
