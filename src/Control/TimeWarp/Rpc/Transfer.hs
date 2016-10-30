@@ -31,20 +31,20 @@ module Control.TimeWarp.Rpc.Transfer
 import qualified Control.Concurrent                 as C
 import           Control.Concurrent.MVar            (MVar, modifyMVar, newEmptyMVar,
                                                      newMVar, putMVar, takeMVar)
-import           Control.Concurrent.STM             (atomically)
+import           Control.Concurrent.STM             (atomically, check)
 import qualified Control.Concurrent.STM.TBMChan     as TBM
 import           Control.Concurrent.STM.TChan       as TC
 import           Control.Concurrent.STM.TVar        as TV
 import           Control.Lens                       (view)
 import           Control.Lens                       (at, makeLenses, use, (.=), (<<+=),
-                                                     (<<.=), (?=))
+                                                     (?=))
 import           Control.Monad                      (forM_, forever, replicateM_, void,
                                                      when)
 import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Catch                (MonadCatch, MonadMask,
                                                      MonadThrow (..), bracket, bracket_,
-                                                     catchAll, handleAll, onException,
-                                                     throwM)
+                                                     catchAll, finally, handleAll,
+                                                     onException, throwM)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (StateT (..), runStateT)
@@ -219,7 +219,9 @@ getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
 getOutConnOrOpen address = do
     -- TODO: care about async exceptions
     (conn, chansM) <- ensureConnExist address
-    forM_ chansM $ fork_ . startWorker address conn
+    forM_ chansM $
+        \chans -> fork_ $ do
+            startWorker address conn chans `finally` releaseConn address
     return conn
   where
     ensureConnExist addr = do
@@ -230,9 +232,10 @@ getOutConnOrOpen address = do
                 then
                     return $ (fromJust existing, Nothing)
                 else do
-                    inBusy  <- liftIO $ TV.newTVarIO False
-                    inChan  <- liftIO $ TBM.newTBMChanIO (_queueSize settings)
-                    outChan <- liftIO $ TBM.newTBMChanIO (_queueSize settings)
+                    inBusy   <- liftIO $ TV.newTVarIO False
+                    inChan   <- liftIO $ TBM.newTBMChanIO (_queueSize settings)
+                    outChan  <- liftIO $ TBM.newTBMChanIO (_queueSize settings)
+                    isClosed <- liftIO $ TV.newTVarIO False
                     let conn =
                            OutputConnection
                            { outConnSend  = \src -> do
@@ -248,52 +251,60 @@ getOutConnOrOpen address = do
                                 flip onException (liftIO $ outConnClose conn) $
                                      flip runResponseT (mkResponseCtx conn) $
                                      sourceTBMChan inChan $$ sink
-                           , outConnClose = do atomically . TBM.closeTBMChan $ inChan
-                                               atomically . TBM.closeTBMChan $ outChan
+                           , outConnClose = atomically $ writeTVar isClosed True
                            }
                     outputConn . at addr ?= conn
-                    return (conn, Just (inChan, outChan))
+                    return (conn, Just (inChan, outChan, isClosed))
 
-    startWorker addr@(host, fromIntegral -> port) conn (inChan, outChan) =
-        forever . withDelayOnFail addr $ do
+    startWorker addr@(host, fromIntegral -> port) conn (inChan, outChan, isClosed) =
+        withRecovery addr isClosed $ do
              bracket (liftIO $ fst <$> getSocketFamilyTCP host port NS.AF_UNSPEC)
                      (liftIO . NS.close) $
                      \sock -> do
                         -- TODO: rewrite to async when MonadTimed supports it
                         -- create channel to notify about error
                         eventChan  <- liftIO TC.newTChanIO
-                        -- create working threads
+                        -- create worker threads
                         stid <- fork $ reportExecution eventChan $
                             foreverSend sock outChan
                         rtid <- fork $ reportExecution eventChan $
                             foreverRec sock (mkResponseCtx conn) inChan
+                        -- check whether @isClosed@ keeps @True@
+                        ctid <- fork $ do
+                            liftIO . atomically $ check =<< TV.readTVar isClosed
+                            replicateM_ 2 . liftIO . atomically $
+                                TC.writeTChan eventChan $ Right ()
+                            killThread stid
+                            killThread rtid
                         -- wait for error messages
                         let onError e = do
                                 killThread stid
                                 killThread rtid
+                                killThread ctid
                                 throwM e
                         replicateM_ 2 $ do
                             event <- liftIO . atomically $ TC.readTChan eventChan
                             either onError return event
-                        -- survived
-                        commLog . logDebug $
-                            sformat ("Socket to "%shown%" happily closed") addr
+                        -- at this point channels are closed
 
-    withDelayOnFail addr = handleAll $ \e -> do
-        commLog . logWarning $
-            sformat ("Error while working with socket to "%shown%": "%shown) addr e
-        reconnect <- Transfer $ view reconnectPolicy
-        maybeReconnect <- reconnect
-        case maybeReconnect of
-            Nothing -> do
-                commLog . logWarning $
-                    sformat ("Reconnection policy = don't reconnect "%shown%
-                             ", closing connection") addr
-                throwM e
-            Just delay -> do
-                commLog . logWarning $
-                    sformat ("Reconnect in "%shown) delay
-                wait (for delay)
+    withRecovery addr isClosed action = catchAll action $ \e -> do
+        closed <- liftIO . atomically $ readTVar isClosed
+        when (not closed) $ do
+            commLog . logWarning $
+                sformat ("Error while working with socket to "%shown%": "%shown) addr e
+            reconnect <- Transfer $ view reconnectPolicy
+            maybeReconnect <- reconnect
+            case maybeReconnect of
+                Nothing -> do
+                    commLog . logWarning $
+                        sformat ("Reconnection policy = don't reconnect "%shown%
+                                 ", closing connection") addr
+                    throwM e
+                Just delay -> do
+                    commLog . logWarning $
+                        sformat ("Reconnect in "%shown) delay
+                    wait (for delay)
+                    action
 
     foreverSend sock outChan = do
         sourceTBMChan outChan =$= awaitForever sourceLbs $$ sinkSocket sock
@@ -302,6 +313,12 @@ getOutConnOrOpen address = do
         forever $
             flip runResponseT respCtx $
                 hoist liftIO (sourceSocket sock) $$ sinkTBMChan inChan True
+
+    releaseConn addr = do
+        modifyManager $ outputConn . at addr .= Nothing
+        commLog . logDebug $
+            sformat ("Socket to "%shown%" happily closed") addr
+
 
     mkResponseCtx conn =
         ResponseContext
@@ -322,8 +339,8 @@ instance MonadTransfer Transfer where
     listenRaw (AtConnTo addr) = listenOutbound addr
 
     close addr = do
-        maybeWasConn <- modifyManager $ outputConn . at addr <<.= Nothing
-        liftIO $ forM_ maybeWasConn outConnClose
+        maybeConn <- modifyManager . use $ outputConn . at addr
+        liftIO $ forM_ maybeConn outConnClose
 
 
 -- * Instances
