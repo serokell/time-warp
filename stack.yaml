@@ -8,10 +8,6 @@ packages:
     git: https://github.com/serokell/serokell-core.git
     commit: 41ec01b73d9d69936fa896217a822165d2b63397
   extra-dep: true
-- location:
-    git: https://github.com/TokTok/hs-msgpack.git
-    commit: d4abb4a320250047f512f2b3860fa051f9b530ac
-  extra-dep: true
 
 nix:
     enable: false
@@ -24,6 +20,7 @@ extra-deps:
 - aeson-extra-0.4.0.0
 - recursion-schemes-5
 - pqueue-1.3.1.1
+- data-msgpack-0.0.8
 
 # Override default flag values for local packages and extra-deps
 flags: {}
