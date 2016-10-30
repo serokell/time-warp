@@ -145,12 +145,12 @@ initLoggingWith LoggingFormat {..} defaultSeverity = liftIO $ do
         setLevel (convertSeverity defaultSeverity)
   where
     stderrFormatter =
-        simpleLogFormatter
-            (timeFmt ++ colorizer ERROR "[$loggername:$prio]: " ++ "$msg")
+        simpleLogFormatter $
+        mconcat [colorizer ERROR "[$loggername:$prio] ", timeFmt, "$msg"]
     timeFmt = "[$time] "
     timeFmtStdout = if lfShowTime then timeFmt else ""
     stdoutFmt pr = mconcat
-        [timeFmtStdout, colorizer pr "[$loggername:$prio] ", "$msg"]
+        [colorizer pr "[$loggername:$prio] ", timeFmtStdout, "$msg"]
     stdoutFormatter h r@(pr, _) = simpleLogFormatter (stdoutFmt pr) h r
 
 -- | Version of initLoggingWith without any predefined loggers.
