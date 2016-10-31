@@ -62,7 +62,7 @@ import qualified Data.Text                   as T
 import           Data.Typeable               (Typeable)
 import           GHC.Generics                (Generic)
 
-import           System.Console.ANSI         (Color (Blue, Green, Red, Yellow),
+import           System.Console.ANSI         (Color (Blue, Green, Magenta, Red, Yellow),
                                               ColorIntensity (Vivid),
                                               ConsoleLayer (Foreground),
                                               SGR (Reset, SetColor), setSGRCode)
@@ -70,7 +70,7 @@ import           System.IO                   (stderr, stdout)
 import           System.Log.Formatter        (simpleLogFormatter)
 import           System.Log.Handler          (setFormatter)
 import           System.Log.Handler.Simple   (streamHandler)
-import           System.Log.Logger           (Priority (DEBUG, ERROR, INFO, WARNING),
+import           System.Log.Logger           (Priority (DEBUG, ERROR, INFO, NOTICE, WARNING),
                                               clearLevel, logM, rootLoggerName,
                                               setHandlers, setLevel, updateGlobalLogger)
 
@@ -79,6 +79,7 @@ import           System.Log.Logger           (Priority (DEBUG, ERROR, INFO, WARN
 data Severity
     = Debug
     | Info
+    | Notice
     | Warning
     | Error
     deriving (Generic, Typeable, Show, Read, Eq)
@@ -103,6 +104,7 @@ instance Semigroup LoggerName where
 convertSeverity :: Severity -> Priority
 convertSeverity Debug   = DEBUG
 convertSeverity Info    = INFO
+convertSeverity Notice  = NOTICE
 convertSeverity Warning = WARNING
 convertSeverity Error   = ERROR
 
@@ -173,10 +175,11 @@ setSeverityMaybe n (Just x) = setSeverity n x
 -- | Defines pre- and post-printed characters for printing colorized text.
 table :: Priority -> (String, String)
 table priority = case priority of
-    ERROR   -> (setColor Red   , reset)
-    DEBUG   -> (setColor Green , reset)
-    WARNING -> (setColor Yellow, reset)
-    INFO    -> (setColor Blue  , reset)
+    ERROR   -> (setColor Red     , reset)
+    DEBUG   -> (setColor Green   , reset)
+    NOTICE  -> (setColor Magenta , reset)
+    WARNING -> (setColor Yellow  , reset)
+    INFO    -> (setColor Blue    , reset)
     _       -> ("", "")
   where
     setColor color = setSGRCode [SetColor Foreground Vivid color]
