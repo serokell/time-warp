@@ -42,7 +42,7 @@ import           Control.Lens                       (at, makeLenses, use, (.=), 
 import           Control.Monad                      (forM_, forever, replicateM_, void,
                                                      when)
 import           Control.Monad.Base                 (MonadBase)
-import           Control.Monad.Catch                (MonadCatch, MonadMask,
+import           Control.Monad.Catch                (Exception, MonadCatch, MonadMask,
                                                      MonadThrow (..), bracket, bracket_,
                                                      catchAll, finally, handleAll,
                                                      onException, throwM)
