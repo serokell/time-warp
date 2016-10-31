@@ -85,7 +85,7 @@ import           Control.TimeWarp.Rpc.Message       (Empty (..), HeaderNContentD
                                                      RawData (..), Unpackable (..),
                                                      intangibleSink)
 import           Control.TimeWarp.Rpc.MonadTransfer (Binding, Host,
-                                                     MonadResponse (replyRaw),
+                                                     MonadResponse (replyRaw, peerAddr),
                                                      MonadTransfer (..), NetworkAddress,
                                                      Port, ResponseT (..), RpcError (..),
                                                      hoistRespCond, localhost, commLog)
@@ -216,8 +216,10 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
         hrM <- intangibleSink $ unpackMsg packing
         forM_ hrM $
             \(HeaderNRawData h raw) -> do
+                peer <- lift peerAddr
                 lift . commLog . logDebug $
-                    sformat ("Received message, applying raw listener")
+                    sformat ("Received message from "%stext%", applying raw listener")
+                        peer
                 cont <- lift . invokeRawListenerSafe $ rawListener (h, raw)
                 if cont
                     then processContent h
