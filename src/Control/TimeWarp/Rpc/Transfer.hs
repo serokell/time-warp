@@ -1,4 +1,3 @@
-{-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE Rank2Types            #-}
@@ -20,6 +19,7 @@
 
 module Control.TimeWarp.Rpc.Transfer
        ( Transfer (..)
+       , TransferException (..)
        , runTransfer
        , runTransferS
 
@@ -50,7 +50,8 @@ import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (StateT (..), runStateT)
 import           Control.Monad.Trans                (MonadIO (..), lift)
-import           Control.Monad.Trans.Control        (MonadBaseControl (..), control)
+import           Control.Monad.Trans.Control        (MonadBaseControl (..))
+import           Data.Buildable                     (Buildable(build))
 import           Data.ByteString                    (ByteString)
 import qualified Data.ByteString                    as BS
 import           Data.Conduit                       (Sink, Source, awaitForever, ($$),
@@ -64,7 +65,7 @@ import           Data.Streaming.Network             (getSocketFamilyTCP,
                                                      runTCPServerWithHandle,
                                                      serverSettingsTCP)
 import           Data.Tuple                         (swap)
-import           Formatting                         (sformat, shown, (%))
+import           Formatting                         (sformat, bprint,shown, (%))
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
 import           Network.Socket                     as NS
 
@@ -78,8 +79,14 @@ import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer
 import           Control.TimeWarp.Timed             (Microsecond, MonadTimed, ThreadId,
                                                      TimedIO, for, fork, fork_, interval,
                                                      killThread, sec, wait)
-import           Serokell.Util.Exceptions           (TextException (..))
 
+data TransferException = AlreadyListeningOutbound NetworkAddress
+  deriving (Show, Typeable)
+
+instance Exception TransferException
+
+instance Buildable TransferException where
+  build (AlreadyListeningOutbound addr) = bprint ("Already listening at outbound connection to "%shown) addr
 
 -- * Related datatypes
 
@@ -151,11 +158,8 @@ type instance ThreadId Transfer = C.ThreadId
 
 -- | Run with specified settings
 runTransferS :: Settings -> Transfer a -> LoggerNameBox TimedIO a
-runTransferS s t = do
-    m <- liftIO (newMVar $ initManager)
-    withSockets $ flip runReaderT m $ flip runReaderT s $ getTransfer t
-  where
-    withSockets act = control $ \runIO -> NS.withSocketsDo $ runIO act
+runTransferS s t = do m <- liftIO (newMVar $ initManager)
+                      flip runReaderT m $ flip runReaderT s $ getTransfer t
 
 runTransfer :: Transfer a -> LoggerNameBox TimedIO a
 runTransfer = runTransferS transferSettings
@@ -215,7 +219,7 @@ listenOutbound addr sink = do
 
 logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
 logOnErr = handleAll $ \e -> do
-    commLog . logWarning $ sformat ("Server error: "%shown) e
+    commLog . logDebug $ sformat ("Server error: "%shown) e
     throwM e
 
 
@@ -248,9 +252,7 @@ getOutConnOrOpen address = do
                                 -- TODO: overflow?
                            , outConnRec   = \sink -> do
                                 busy <- liftIO . atomically $ TV.swapTVar inBusy True
-                                when busy $ throwM $ TextException $
-                                    sformat ("Already listening at outbound "%
-                                             "connection to "%shown) addr
+                                when busy $ throwM $ AlreadyListeningOutbound addr
                                 -- ^ Or maybe retry?
                                 flip onException (liftIO $ outConnClose conn) $
                                      flip runResponseT (mkResponseCtx conn) $
