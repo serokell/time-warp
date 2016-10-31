@@ -40,6 +40,7 @@ module Control.TimeWarp.Logging
        , logDebug
        , logError
        , logInfo
+       , logNotice
        , logWarning
        , logMessage
        ) where
@@ -269,6 +270,7 @@ logDebug, logInfo, logWarning, logError
     => T.Text -> m ()
 logDebug   = logMessage Debug
 logInfo    = logMessage Info
+logNotice  = logMessage Notice
 logWarning = logMessage Warning
 logError   = logMessage Error
 
