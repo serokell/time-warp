@@ -265,7 +265,7 @@ instance Monad m =>
     modifyLoggerName how = LoggerNameBox . local how . loggerNameBoxEntry
 
 -- | Shortcut for `logMessage` to use according severity.
-logDebug, logInfo, logWarning, logError
+logDebug, logInfo, logNotice, logWarning, logError
     :: (WithNamedLogger m, MonadIO m)
     => T.Text -> m ()
 logDebug   = logMessage Debug
