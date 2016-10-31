@@ -178,12 +178,12 @@ modifyManager how = Transfer . lift $
 
 buildSockAddr :: NS.SockAddr -> Text
 buildSockAddr (NS.SockAddrInet port host) =
-    let buildHost = mconcat . intersperse ":"
+    let buildHost = mconcat . intersperse "."
                   . map build . (^.. each) . NS.hostAddressToTuple
     in  sformat (builder%":"%int) (buildHost host) port
 
 buildSockAddr (NS.SockAddrInet6 port _ host _) =
-    let buildHost6 = mconcat . intersperse ":"
+    let buildHost6 = mconcat . intersperse "."
                    . map build . (^.. each) . NS.hostAddress6ToTuple
     in  sformat (builder%":"%int) (buildHost6 host) port
 
