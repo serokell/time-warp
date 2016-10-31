@@ -36,9 +36,8 @@ import           Control.Concurrent.STM             (atomically, check)
 import qualified Control.Concurrent.STM.TBMChan     as TBM
 import           Control.Concurrent.STM.TChan       as TC
 import           Control.Concurrent.STM.TVar        as TV
-import           Control.Lens                       (view)
-import           Control.Lens                       (at, makeLenses, use, (.=), (<<+=),
-                                                     (?=))
+import           Control.Lens                       (at, each, makeLenses, use, view,
+                                                     (.=), (<<+=), (?=), (^..))
 import           Control.Monad                      (forM_, forever, replicateM_, void,
                                                      when)
 import           Control.Monad.Base                 (MonadBase)
@@ -58,15 +57,19 @@ import           Data.Conduit                       (Sink, Source, awaitForever,
 import           Data.Conduit.Binary                (sinkLbs, sourceLbs)
 import           Data.Conduit.Network               (sinkSocket, sourceSocket)
 import           Data.Conduit.TMChan                (sinkTBMChan, sourceTBMChan)
+import           Data.List                          (intersperse)
 import qualified Data.Map                           as M
 import           Data.Maybe                         (fromJust, isJust)
 import           Data.Streaming.Network             (getSocketFamilyTCP,
                                                      runTCPServerWithHandle,
                                                      serverSettingsTCP)
-import           Data.Text.Buildable                (Buildable (build))
+import           Data.Text                          (Text)
+import           Data.Text.Buildable                (Buildable (build), build)
+import           Data.Text.Encoding                 (decodeUtf8)
 import           Data.Tuple                         (swap)
 import           Data.Typeable                      (Typeable)
-import           Formatting                         (sformat, bprint,shown, (%))
+import           Formatting                         (bprint, builder, int, sformat, shown,
+                                                     stext, string, (%))
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
 import           Network.Socket                     as NS
 
@@ -103,6 +106,7 @@ data OutputConnection = OutputConnection
     , outConnClose :: IO ()
       -- ^ Closes socket as soon as all messages send, prevent any further manupulations
       -- with message queues.
+    , outConnAddr  :: Text
     }
 
 data InputConnection = InputConnection
@@ -172,21 +176,38 @@ modifyManager how = Transfer . lift $
 
 -- * Logic
 
+buildSockAddr :: NS.SockAddr -> Text
+buildSockAddr (NS.SockAddrInet port host) =
+    let buildHost = mconcat . intersperse ":"
+                  . map build . (^.. each) . NS.hostAddressToTuple
+    in  sformat (builder%":"%int) (buildHost host) port
+
+buildSockAddr (NS.SockAddrInet6 port _ host _) =
+    let buildHost6 = mconcat . intersperse ":"
+                   . map build . (^.. each) . NS.hostAddress6ToTuple
+    in  sformat (builder%":"%int) (buildHost6 host) port
+
+buildSockAddr (NS.SockAddrUnix addr) = sformat string addr
+
+buildSockAddr (NS.SockAddrCan addr) = sformat ("can:"%int) addr
+               -- ^ TODO: what is this?
+
 listenInbound :: Port
               -> Sink ByteString (ResponseT Transfer) ()
               -> Transfer ()
 listenInbound (fromIntegral -> port) sink =
     liftBaseWith $
     \runInBase -> runTCPServerWithHandle (serverSettingsTCP port "*") $
-        \sock _ _ -> void . runInBase $ do
+        \sock peerAddr _ -> void . runInBase $ do
             saveConn sock
             lock <- liftIO newEmptyMVar
             let source = sourceSocket sock
                 responseCtx =
                     ResponseContext
-                    { respSend  = \src -> synchronously lock $ src $$ sinkSocket sock
+                    { respSend     = \src -> synchronously lock $ src $$ sinkSocket sock
                                           -- ^ TODO: eliminate
-                    , respClose = NS.close sock
+                    , respClose    = NS.close sock
+                    , respPeerAddr = buildSockAddr peerAddr
                     }
             logOnErr $ flip runResponseT responseCtx $
                 hoist liftIO source $$ sink
@@ -233,7 +254,7 @@ getOutConnOrOpen address = do
             startWorker address conn chans `finally` releaseConn address
     return conn
   where
-    ensureConnExist addr = do
+    ensureConnExist addr@(host, port) = do
         settings <- Transfer ask
         modifyManager $ do
             existing <- use $ outputConn . at addr
@@ -259,6 +280,8 @@ getOutConnOrOpen address = do
                                      flip runResponseT (mkResponseCtx conn) $
                                      sourceTBMChan inChan $$ sink
                            , outConnClose = atomically $ writeTVar isClosed True
+                           , outConnAddr = sformat (stext%":"%int)
+                                           (decodeUtf8 host) port
                            }
                     outputConn . at addr ?= conn
                     return (conn, Just (inChan, outChan, isClosed))
@@ -329,8 +352,9 @@ getOutConnOrOpen address = do
 
     mkResponseCtx conn =
         ResponseContext
-            { respSend = outConnSend conn
-            , respClose = outConnClose conn
+            { respSend     = outConnSend conn
+            , respClose    = outConnClose conn
+            , respPeerAddr = outConnAddr conn
             }
 
     reportExecution eventChan action = do
