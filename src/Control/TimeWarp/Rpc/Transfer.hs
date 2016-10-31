@@ -51,7 +51,6 @@ import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (StateT (..), runStateT)
 import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
-import           Data.Buildable                     (Buildable(build))
 import           Data.ByteString                    (ByteString)
 import qualified Data.ByteString                    as BS
 import           Data.Conduit                       (Sink, Source, awaitForever, ($$),
@@ -64,6 +63,7 @@ import           Data.Maybe                         (fromJust, isJust)
 import           Data.Streaming.Network             (getSocketFamilyTCP,
                                                      runTCPServerWithHandle,
                                                      serverSettingsTCP)
+import           Data.Text.Buildable                (Buildable (build))
 import           Data.Tuple                         (swap)
 import           Formatting                         (sformat, bprint,shown, (%))
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
