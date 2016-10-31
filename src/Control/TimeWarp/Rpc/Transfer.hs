@@ -65,6 +65,7 @@ import           Data.Streaming.Network             (getSocketFamilyTCP,
                                                      serverSettingsTCP)
 import           Data.Text.Buildable                (Buildable (build))
 import           Data.Tuple                         (swap)
+import           Data.Typeable                      (Typeable)
 import           Formatting                         (sformat, bprint,shown, (%))
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
 import           Network.Socket                     as NS
