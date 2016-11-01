@@ -279,7 +279,10 @@ getOutConnOrOpen address = do
                                 flip onException (liftIO $ outConnClose conn) $
                                      flip runResponseT (mkResponseCtx conn) $
                                      sourceTBMChan inChan $$ sink
-                           , outConnClose = atomically $ writeTVar isClosed True
+                           , outConnClose = atomically $ do
+                                                writeTVar isClosed True
+                                                TBM.closeTBMChan inChan
+                                                TBM.closeTBMChan outChan
                            , outConnAddr = sformat (stext%":"%int)
                                            (decodeUtf8 host) port
                            }
