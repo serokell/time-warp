@@ -84,6 +84,7 @@ import           Control.TimeWarp.Timed             (Microsecond, MonadTimed, Th
                                                      TimedIO, for, fork, fork_, interval,
                                                      killThread, sec, wait)
 
+
 data TransferException = AlreadyListeningOutbound NetworkAddress
   deriving (Show, Typeable)
 
@@ -253,13 +254,12 @@ listenOutbound addr sink = do
     -- (closed channel still allows to extract it's values until it gets empty)
     fork_ $ logOnErr $ outConnRec conn sink
     return $ do
-        liftIO $ outConnClose conn
+        outConnClose conn
         atomically $ check =<< readTVar (outConnIsClosed conn)
 
 logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
 logOnErr = handleAll $ \e -> do
     commLog . logDebug $ sformat ("Server error: "%shown) e
-    throwM e
 
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
@@ -279,10 +279,13 @@ getOutConnOrOpen address = do
                 then
                     return $ (fromJust existing, Nothing)
                 else do
-                    inBusy   <- liftIO $ TV.newTVarIO False
-                    inChan   <- liftIO $ TBM.newTBMChanIO (_queueSize settings)
-                    outChan  <- liftIO $ TBM.newTBMChanIO (_queueSize settings)
-                    isClosed <- liftIO $ TV.newTVarIO False
+                    inBusy    <- liftIO $ TV.newTVarIO False
+                    inChan    <- liftIO $ TBM.newTBMChanIO (_queueSize settings)
+                    outChan   <- liftIO $ TBM.newTBMChanIO (_queueSize settings)
+                    -- set to @True@ on `close` invokation
+                    isClosed  <- liftIO $ TV.newTVarIO False
+                    -- set to @True@ when server stopped
+                    isClosedF <- liftIO $ TV.newTVarIO False
                     let conn =
                            OutputConnection
                            { outConnSend  = \src -> do
@@ -300,7 +303,7 @@ getOutConnOrOpen address = do
                                                 writeTVar isClosed True
                                                 TBM.closeTBMChan inChan
                                                 TBM.closeTBMChan outChan
-                           , outConnIsClosed = isClosed
+                           , outConnIsClosed = isClosedF
                            , outConnAddr = sformat (stext%":"%int)
                                            (decodeUtf8 host) port
                            }
@@ -395,6 +398,7 @@ instance MonadTransfer Transfer where
     listenRaw (AtPort   port) = listenInbound port
     listenRaw (AtConnTo addr) = listenOutbound addr
 
+    -- closes asynchronuosly
     close addr = do
         maybeConn <- modifyManager . use $ outputConn . at addr
         liftIO $ forM_ maybeConn outConnClose
