@@ -66,6 +66,7 @@ data Binding
 --    | Loopback                 -- ^ Listen at local pseudo-net (might be usefull)
     deriving (Eq, Ord, Show)
 
+
 -- * MonadTransfer
 
 -- | Allows to send/receive raw byte sequences.
@@ -77,9 +78,10 @@ class Monad m => MonadTransfer m where
             -> m ()
 
     -- | Listens at specified input or output connection.
+    -- Resturns server stopper, which blocks until server is actually stopped.
     listenRaw :: Binding                           -- ^ Port/address to listen to
               -> Sink ByteString (ResponseT m) ()  -- ^ Parser for input byte stream
-              -> m ()
+              -> m (IO ())                         -- ^ Server stopper
 
     -- | Closes connection to specified node, if exists.
     close :: NetworkAddress -> m ()
