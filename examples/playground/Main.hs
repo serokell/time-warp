@@ -13,6 +13,7 @@ module Main
     , transferScenario
     , proxyScenario
     , slowpokeScenario
+    , closingServerScenario
 --    , runEmulation
 --    , runReal
     ) where
@@ -46,6 +47,7 @@ import           Control.TimeWarp.Rpc              (BinaryP (..), Binding (..),
 import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, after, for,
                                                     fork_, interval, ms, runTimedIO,
                                                     schedule, sec, sec', till)
+
 
 main :: IO ()
 main = return ()  -- use ghci
@@ -271,7 +273,6 @@ slowpokeScenario = runTimedIO $ do
     initLogging Debug
     (saveWorker, killWorkers) <- workersManager
 
-    -- guy 1
     usingLoggerName "server" . runTransfer . runDialog packing . fork_ $ do
         wait (for 3 sec)
         saveWorker $ listen (AtPort 1234)
@@ -295,6 +296,33 @@ slowpokeScenario = runTimedIO $ do
     settings = transferSettings
         { _reconnectPolicy = return (Just $ interval 1 sec)
         }
+
+closingServerScenario :: IO ()
+closingServerScenario = runTimedIO $ do
+    initLogging Debug
+    (saveWorker, killWorkers) <- workersManager
+
+    usingLoggerName "server" . runTransfer . runDialog packing . fork_ $ do
+        saveWorker $ listen (AtPort 1234) []
+
+    wait (for 100 ms)
+
+    usingLoggerName "client" . runTransfer . runDialog packing $ do
+        replicateM_ 3 $ do
+            closer <- listen (AtConnTo (localhost, 1234)) []
+            wait (for 500 ms)
+            liftIO closer
+
+    wait (till finish)
+    killWorkers
+    wait (for 100 ms)
+  where
+    finish :: Second
+    finish = 3
+
+    packing :: BinaryP
+    packing = BinaryP
+
 
 workersManager :: (MonadIO m, MonadIO m1, MonadIO m2)
                => m (m1 (IO ()) -> m1 (), m2 ())
