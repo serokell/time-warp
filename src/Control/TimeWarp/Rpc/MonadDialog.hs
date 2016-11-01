@@ -74,10 +74,10 @@ import           Data.Conduit                       (Consumer, yield, (=$=))
 import           Data.Conduit.List                  as CL
 import           Data.Map                           as M
 import           Data.Proxy                         (Proxy (..))
-import           Formatting                         (sformat, (%), stext, shown)
+import           Formatting                         (sformat, shown, stext, (%))
 
 import           Control.TimeWarp.Logging           (LoggerNameBox (..), WithNamedLogger,
-                                                     logWarning, logDebug, logError)
+                                                     logDebug, logError, logWarning)
 import           Control.TimeWarp.Rpc.Message       (Empty (..), HeaderNContentData (..),
                                                      HeaderNNameData (..),
                                                      HeaderNRawData (..), Message (..),
@@ -85,10 +85,10 @@ import           Control.TimeWarp.Rpc.Message       (Empty (..), HeaderNContentD
                                                      RawData (..), Unpackable (..),
                                                      intangibleSink)
 import           Control.TimeWarp.Rpc.MonadTransfer (Binding, Host,
-                                                     MonadResponse (replyRaw, peerAddr),
+                                                     MonadResponse (peerAddr, replyRaw),
                                                      MonadTransfer (..), NetworkAddress,
                                                      Port, ResponseT (..), RpcError (..),
-                                                     hoistRespCond, localhost, commLog)
+                                                     commLog, hoistRespCond, localhost)
 import           Control.TimeWarp.Timed             (MonadTimed, ThreadId)
 
 
@@ -235,16 +235,16 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
         case nameM of
             Nothing          -> lift . commLog . logWarning $
                 sformat ("Unexpected end of incoming message")
-            Just (Left name) -> lift . commLog . logWarning $
+            Just (name, Nothing) -> lift . commLog . logWarning $
                 sformat ("No listener with name "%stext%" defined") name
-            Just (Right (ListenerH f)) -> do
+            Just (name, Just (ListenerH f)) -> do
                 msgM <- unpackMsg packing =$= CL.head
                 case msgM of
                     Nothing -> lift . commLog . logWarning $
                         sformat ("Unexpected end of incoming message")
                     Just (HeaderNContentData h r) ->
                         let _ = [h, header]  -- constraint on h type
-                        in  do lift . invokeListenerSafe $ f (header, r)
+                        in  do lift . invokeListenerSafe name $ f (header, r)
                                loop
 
     selector header = chooseListener packing header getListenerNameH listeners
@@ -253,12 +253,12 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
         commLog . logError $ sformat ("Uncaught error in raw listener: "%shown) e
         return False
 
-    invokeListenerSafe = handleAll $
-        commLog . logError . sformat ("Uncaught error in listener: "%shown)
+    invokeListenerSafe name = handleAll $
+        commLog . logError . sformat ("Uncaught error in listener "%shown%": "%shown) name
 
 chooseListener :: (MonadListener m, Unpackable p (HeaderNNameData h))
                => p -> h -> (l m -> MessageName) -> [l m]
-               -> Consumer ByteString (ResponseT m) (Maybe (Either MessageName (l m)))
+               -> Consumer ByteString (ResponseT m) (Maybe (MessageName, Maybe (l m)))
 chooseListener packing h getName listeners = do
     nameM <- intangibleSink $ unpackMsg packing
     forM nameM $
@@ -266,8 +266,7 @@ chooseListener packing h getName listeners = do
             let _ = [h, h0]  -- constraint h0 type
             in  do  lift . commLog . logDebug $
                         sformat ("Got message: "%stext) name
-                    return . maybe (Left name) Right $
-                        listenersMap ^. at name
+                    return (name, listenersMap ^. at name)
   where
     listenersMap = M.fromList [(getName li, li) | li <- listeners]
 
