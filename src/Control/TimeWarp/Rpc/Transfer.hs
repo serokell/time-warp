@@ -37,7 +37,7 @@ import qualified Control.Concurrent.STM.TBMChan     as TBM
 import           Control.Concurrent.STM.TChan       as TC
 import           Control.Concurrent.STM.TVar        as TV
 import           Control.Lens                       (at, each, makeLenses, use, view,
-                                                     (.=), (<<+=), (?=), (^..))
+                                                     (.=), (<<+=), (?=), (^..), (<<.=))
 import           Control.Monad                      (forM_, forever, replicateM_, void,
                                                      when)
 import           Control.Monad.Base                 (MonadBase)
@@ -97,16 +97,18 @@ instance Buildable TransferException where
 -- ** Connections
 
 data OutputConnection = OutputConnection
-    { outConnSend  :: forall m . (MonadIO m, MonadMask m)
-                   => Source m BS.ByteString -> m ()
+    { outConnSend     :: forall m . (MonadIO m, MonadMask m)
+                      => Source m BS.ByteString -> m ()
       -- ^ Keeps function to send to socket
-    , outConnRec   :: forall m . (MonadIO m, MonadCatch m)
-                   => Sink BS.ByteString (ResponseT m) () -> m ()
+    , outConnRec      :: forall m . (MonadIO m, MonadCatch m)
+                      => Sink BS.ByteString (ResponseT m) () -> m ()
       -- ^ Keeps listener sink, if free
-    , outConnClose :: IO ()
+    , outConnClose    :: IO ()
       -- ^ Closes socket as soon as all messages send, prevent any further manupulations
-      -- with message queues.
-    , outConnAddr  :: Text
+      -- with message queues
+    , outConnIsClosed :: TVar Bool
+      -- ^ Says whether all resouces allocated for connection were cleaned up
+    , outConnAddr     :: Text
     }
 
 data InputConnection = InputConnection
@@ -194,24 +196,32 @@ buildSockAddr (NS.SockAddrCan addr) = sformat ("can:"%int) addr
 
 listenInbound :: Port
               -> Sink ByteString (ResponseT Transfer) ()
-              -> Transfer ()
-listenInbound (fromIntegral -> port) sink =
-    liftBaseWith $
-    \runInBase -> runTCPServerWithHandle (serverSettingsTCP port "*") $
-        \sock peerAddr _ -> void . runInBase $ do
-            saveConn sock
-            lock <- liftIO newEmptyMVar
-            let source = sourceSocket sock
-                responseCtx =
-                    ResponseContext
-                    { respSend     = \src -> synchronously lock $ src $$ sinkSocket sock
-                                          -- ^ TODO: eliminate
-                    , respClose    = NS.close sock
-                    , respPeerAddr = buildSockAddr peerAddr
-                    }
-            logOnErr $ flip runResponseT responseCtx $
-                hoist liftIO source $$ sink
-            commLog $ logInfo "Input connection closed"
+              -> Transfer (IO ())
+listenInbound (fromIntegral -> port) sink = do
+    isClosed <- liftIO . atomically $ TV.newTVar False
+    stid <- startServer isClosed $ liftBaseWith $
+        \runInBase -> runTCPServerWithHandle (serverSettingsTCP port "*") $
+            \sock peerAddr _ -> void . runInBase $ do
+                saveConn sock
+                lock <- liftIO newEmptyMVar
+                let source = sourceSocket sock
+                    responseCtx =
+                        ResponseContext
+                        { respSend     = \src -> synchronously lock $
+                                              -- ^ TODO: eliminate
+                                            src $$ sinkSocket sock
+                        , respClose    = NS.close sock
+                        , respPeerAddr = buildSockAddr peerAddr
+                        }
+                logOnErr $ flip runResponseT responseCtx $
+                    hoist liftIO source $$ sink
+                commLog $ logInfo "Input connection closed"
+    -- hack to use @IO ()@ as closer, not @m ()@, for now.
+    m <- liftIO newEmptyMVar
+    fork_ $ liftIO (takeMVar m) >> killThread stid
+    return $ do
+        putMVar m ()
+        atomically $ check =<< TV.readTVar isClosed
   where
     saveConn _ = do
         let conn =
@@ -221,6 +231,8 @@ listenInbound (fromIntegral -> port) sink =
         modifyManager $ do
             connId <- inputConnCounter <<+= 1
             inputConn . at connId .= Just conn
+    startServer isClosed action =
+        fork $ action `finally` (liftIO . atomically $ TV.writeTVar isClosed True)
 
 synchronously :: (MonadIO m, MonadMask m) => MVar () -> m () -> m ()
 synchronously lock action =
@@ -234,10 +246,15 @@ synchronously lock action =
 -- Subscribtions could be implemented at layer above, where we operate with messages.
 listenOutbound :: NetworkAddress
                -> Sink ByteString (ResponseT Transfer) ()
-               -> Transfer ()
+               -> Transfer (IO ())
 listenOutbound addr sink = do
     conn <- getOutConnOrOpen addr
-    logOnErr $ outConnRec conn sink
+    -- TODO: can we remain following working when everything gets closed?
+    -- (closed channel still allows to extract it's values until it gets empty)
+    fork_ $ logOnErr $ outConnRec conn sink
+    return $ do
+        liftIO $ outConnClose conn
+        atomically $ check =<< readTVar (outConnIsClosed conn)
 
 logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
 logOnErr = handleAll $ \e -> do
@@ -283,6 +300,7 @@ getOutConnOrOpen address = do
                                                 writeTVar isClosed True
                                                 TBM.closeTBMChan inChan
                                                 TBM.closeTBMChan outChan
+                           , outConnIsClosed = isClosed
                            , outConnAddr = sformat (stext%":"%int)
                                            (decodeUtf8 host) port
                            }
@@ -337,7 +355,7 @@ getOutConnOrOpen address = do
                     commLog . logWarning $
                         sformat ("Reconnect in "%shown) delay
                     wait (for delay)
-                    action
+                    withRecovery addr isClosed action
 
     foreverSend sock outChan = do
         sourceTBMChan outChan =$= awaitForever sourceLbs $$ sinkSocket sock
@@ -348,10 +366,15 @@ getOutConnOrOpen address = do
                 hoist liftIO (sourceSocket sock) $$ sinkTBMChan inChan False
 
     releaseConn addr = do
-        modifyManager $ outputConn . at addr .= Nothing
-        commLog . logDebug $
-            sformat ("Socket to "%shown%" happily closed") addr
-
+        connM <- modifyManager $ outputConn . at addr <<.= Nothing
+        case connM of
+            Nothing -> commLog . logWarning $
+                sformat ("Unexpected behaviour: no connection to "%shown%
+                         " found on release") addr
+            Just conn -> do
+                liftIO . atomically $ writeTVar (outConnIsClosed conn) True
+                commLog . logDebug $
+                    sformat ("Socket to "%shown%" closed") addr
 
     mkResponseCtx conn =
         ResponseContext
