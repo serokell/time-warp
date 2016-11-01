@@ -44,7 +44,7 @@ import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Catch                (Exception, MonadCatch, MonadMask,
                                                      MonadThrow (..), bracket, bracket_,
                                                      catchAll, finally, handleAll,
-                                                     onException, throwM)
+                                                     throwM)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (StateT (..), runStateT)
@@ -101,8 +101,8 @@ data OutputConnection = OutputConnection
     { outConnSend     :: forall m . (MonadIO m, MonadMask m)
                       => Source m BS.ByteString -> m ()
       -- ^ Keeps function to send to socket
-    , outConnRec      :: forall m . (MonadIO m, MonadCatch m)
-                      => Sink BS.ByteString (ResponseT m) () -> m ()
+    , outConnRec      :: forall m . (MonadIO m, MonadCatch m, MonadTimed m)
+                      => Sink BS.ByteString (ResponseT m) () -> m (IO ())
       -- ^ Keeps listener sink, if free
     , outConnClose    :: IO ()
       -- ^ Closes socket as soon as all messages send, prevent any further manupulations
@@ -250,12 +250,7 @@ listenOutbound :: NetworkAddress
                -> Transfer (IO ())
 listenOutbound addr sink = do
     conn <- getOutConnOrOpen addr
-    -- TODO: can we remain following working when everything gets closed?
-    -- (closed channel still allows to extract it's values until it gets empty)
-    fork_ $ logOnErr $ outConnRec conn sink
-    return $ do
-        outConnClose conn
-        atomically $ check =<< readTVar (outConnIsClosed conn)
+    outConnRec conn sink
 
 logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
 logOnErr = handleAll $ \e -> do
@@ -296,9 +291,11 @@ getOutConnOrOpen address = do
                                 busy <- liftIO . atomically $ TV.swapTVar inBusy True
                                 when busy $ throwM $ AlreadyListeningOutbound addr
                                 -- ^ Or maybe retry?
-                                flip onException (liftIO $ outConnClose conn) $
-                                     flip runResponseT (mkResponseCtx conn) $
+                                fork_ $ flip runResponseT (mkResponseCtx conn) $
                                      sourceTBMChan inChan $$ sink
+                                return $ do
+                                    outConnClose conn
+                                    atomically $ check =<< readTVar isClosedF
                            , outConnClose = atomically $ do
                                                 writeTVar isClosed True
                                                 TBM.closeTBMChan inChan
