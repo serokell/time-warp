@@ -342,7 +342,7 @@ getOutConnOrOpen address = do
     foreverRec sock respCtx inChan =
         forever $
             flip runResponseT respCtx $
-                hoist liftIO (sourceSocket sock) $$ sinkTBMChan inChan True
+                hoist liftIO (sourceSocket sock) $$ sinkTBMChan inChan False
 
     releaseConn addr = do
         modifyManager $ outputConn . at addr .= Nothing
