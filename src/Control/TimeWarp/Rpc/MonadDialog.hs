@@ -64,11 +64,16 @@ module Control.TimeWarp.Rpc.MonadDialog
 
 import           Control.Lens                       (at, (^.))
 import           Control.Monad                      (forM, forM_)
+import           Control.Monad.Base                 (MonadBase (..))
 import           Control.Monad.Catch                (MonadCatch, MonadMask, MonadThrow,
                                                      handleAll)
 import           Control.Monad.Reader               (MonadReader (ask), ReaderT (..))
 import           Control.Monad.State                (MonadState)
 import           Control.Monad.Trans                (MonadIO, MonadTrans (..))
+import           Control.Monad.Trans.Control        (ComposeSt, MonadBaseControl (..),
+                                                     MonadTransControl (..), StM,
+                                                     defaultLiftBaseWith, defaultLiftWith,
+                                                     defaultRestoreM, defaultRestoreT)
 import           Data.ByteString                    (ByteString)
 import           Data.Conduit                       (Consumer, yield, (=$=))
 import           Data.Conduit.List                  as CL
@@ -312,6 +317,19 @@ newtype Dialog p m a = Dialog
 
 runDialog :: p -> Dialog p m a -> m a
 runDialog p = flip runReaderT p . getDialog
+
+instance MonadBase IO m => MonadBase IO (Dialog p m) where
+    liftBase = lift . liftBase
+
+instance MonadTransControl (Dialog p) where
+    type StT (Dialog p) a = StT (ReaderT p) a
+    liftWith = defaultLiftWith Dialog getDialog
+    restoreT = defaultRestoreT Dialog
+
+instance MonadBaseControl IO m => MonadBaseControl IO (Dialog p m) where
+    type StM (Dialog p m) a = ComposeSt (Dialog p) m a
+    liftBaseWith     = defaultLiftBaseWith
+    restoreM         = defaultRestoreM
 
 type instance ThreadId (Dialog p m) = ThreadId m
 
