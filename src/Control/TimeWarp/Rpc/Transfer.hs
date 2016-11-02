@@ -73,7 +73,7 @@ import           Formatting                         (bprint, builder, int, sform
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
 import           Network.Socket                     as NS
 
-import           Control.TimeWarp.Logging           (LoggerNameBox, WithNamedLogger,
+import           Control.TimeWarp.Logging           (LoggerNameBox, WithNamedLogger, logError,
                                                      logDebug, logInfo, logWarning)
 import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer (..),
                                                      NetworkAddress, Port,
@@ -201,6 +201,8 @@ listenInbound :: Port
 listenInbound (fromIntegral -> port) sink = do
     isClosed <- liftIO . atomically $ TV.newTVar False
     stid <- startServer isClosed $ liftBaseWith $
+        -- TODO rewrite `runTCPServerWithHandle` to separate `bind` and `listen`
+        -- bind should fail in thread, which launches server (not spawned one)
         \runInBase -> runTCPServerWithHandle (serverSettingsTCP port "*") $
             \sock peerAddr _ -> void . runInBase $ do
                 saveConn sock
@@ -233,7 +235,9 @@ listenInbound (fromIntegral -> port) sink = do
             connId <- inputConnCounter <<+= 1
             inputConn . at connId .= Just conn
     startServer isClosed action =
-        fork $ action `finally` (liftIO . atomically $ TV.writeTVar isClosed True)
+        fork $ action
+                `catchAll` (\e -> logError $ sformat ("Server at port " % int % " stopped with error " % shown) port e)
+                `finally` (liftIO . atomically $ TV.writeTVar isClosed True)
 
 synchronously :: (MonadIO m, MonadMask m) => MVar () -> m () -> m ()
 synchronously lock action =
