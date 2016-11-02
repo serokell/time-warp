@@ -205,6 +205,7 @@ listenInbound (fromIntegral -> port) sink = do
         -- bind should fail in thread, which launches server (not spawned one)
         \runInBase -> runTCPServerWithHandle (serverSettingsTCP port "*") $
             \sock peerAddr _ -> void . runInBase $ do
+                liftIO $ NS.setSocketOption sock NS.ReuseAddr 1
                 saveConn sock
                 lock <- liftIO newEmptyMVar
                 let source = sourceSocket sock
@@ -257,7 +258,7 @@ listenOutbound addr sink = do
     outConnRec conn sink
 
 logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
-logOnErr = handleAll $ \e -> do
+logOnErr = handleAll $ \e ->
     commLog . logDebug $ sformat ("Server error: "%shown) e
 
 
@@ -266,7 +267,7 @@ getOutConnOrOpen address = do
     -- TODO: care about async exceptions
     (conn, chansM) <- ensureConnExist address
     forM_ chansM $
-        \chans -> fork_ $ do
+        \chans -> fork_ $
             startWorker address conn chans `finally` releaseConn address
     return conn
   where
