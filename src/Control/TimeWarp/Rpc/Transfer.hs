@@ -207,6 +207,7 @@ listenInbound (fromIntegral -> port) sink = do
             \sock peerAddr _ -> void . runInBase $ do
                 liftIO $ NS.setSocketOption sock NS.ReuseAddr 1
                 saveConn sock
+                let peerName = buildSockAddr peerAddr
                 lock <- liftIO newEmptyMVar
                 let source = sourceSocket sock
                     responseCtx =
@@ -215,11 +216,12 @@ listenInbound (fromIntegral -> port) sink = do
                                               -- ^ TODO: eliminate
                                             src $$ sinkSocket sock
                         , respClose    = NS.close sock
-                        , respPeerAddr = buildSockAddr peerAddr
+                        , respPeerAddr = peerName
                         }
                 logOnErr $ flip runResponseT responseCtx $
                     hoist liftIO source $$ sink
-                commLog $ logInfo "Input connection closed"
+                commLog . logInfo $
+                    sformat ("Input connection from "%stext%" closed") peerName
     -- hack to use @IO ()@ as closer, not @m ()@, for now.
     m <- liftIO newEmptyMVar
     fork_ $ liftIO (takeMVar m) >> killThread stid
