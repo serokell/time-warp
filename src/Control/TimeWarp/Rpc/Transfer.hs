@@ -101,7 +101,8 @@ data OutputConnection = OutputConnection
     { outConnSend     :: forall m . (MonadIO m, MonadMask m)
                       => Source m BS.ByteString -> m ()
       -- ^ Keeps function to send to socket
-    , outConnRec      :: forall m . (MonadIO m, MonadCatch m, MonadTimed m)
+    , outConnRec      :: forall m . (MonadIO m, MonadCatch m, MonadTimed m,
+                                     WithNamedLogger m)
                       => Sink BS.ByteString (ResponseT m) () -> m (IO ())
       -- ^ Keeps listener sink, if free
     , outConnClose    :: IO ()
@@ -298,7 +299,8 @@ getOutConnOrOpen address = do
                                 busy <- liftIO . atomically $ TV.swapTVar inBusy True
                                 when busy $ throwM $ AlreadyListeningOutbound addr
                                 -- ^ Or maybe retry?
-                                fork_ $ flip runResponseT (mkResponseCtx conn) $
+                                fork_ $ logOnErr $
+                                     flip runResponseT (mkResponseCtx conn) $
                                      sourceTBMChan inChan $$ sink
                                 return $ do
                                     outConnClose conn
