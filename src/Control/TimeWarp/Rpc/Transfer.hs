@@ -321,7 +321,6 @@ buildSockAddr (NS.SockAddrInet6 port _ host _) =
 buildSockAddr (NS.SockAddrUnix addr) = sformat string addr
 
 buildSockAddr (NS.SockAddrCan addr) = sformat ("can:"%int) addr
-               -- ^ TODO: what is this?
 
 buildNetworkAddress :: NetworkAddress -> PeerAddr
 buildNetworkAddress (host, port) = sformat (stext%":"%int) (decodeUtf8 host) port
