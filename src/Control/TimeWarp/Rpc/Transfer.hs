@@ -37,7 +37,7 @@ import qualified Control.Concurrent.STM.TBMChan     as TBM
 import           Control.Concurrent.STM.TChan       as TC
 import           Control.Concurrent.STM.TVar        as TV
 import           Control.Lens                       (at, each, makeLenses, use, view,
-                                                     (.=), (<<+=), (?=), (^..))
+                                                     (.=), (?=), (^..))
 import           Control.Monad                      (forM_, unless, void, when)
 import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Catch                (Exception, MonadCatch, MonadMask,
@@ -127,13 +127,6 @@ data OutputConnection = OutputConnection
       -- ^ Address of socket on other side of net
     }
 
-data InputConnection = InputConnection
-    { -- _inConnClose :: IO ()
-    }
-$(makeLenses ''InputConnection)
-
-type InConnId = Int
-
 
 -- ** Settings
 
@@ -155,18 +148,14 @@ transferSettings = Settings
 -- ** Manager
 
 data Manager = Manager
-    { _inputConn        :: M.Map InConnId InputConnection
-    , _outputConn       :: M.Map NetworkAddress OutputConnection
-    , _inputConnCounter :: InConnId
+    { _outputConn :: M.Map NetworkAddress OutputConnection
     }
 $(makeLenses ''Manager)
 
 initManager :: Manager
 initManager =
     Manager
-    { _inputConn = M.empty
-    , _inputConnCounter = 0
-    , _outputConn = M.empty
+    { _outputConn = M.empty
     }
 
 
@@ -360,7 +349,6 @@ listenInbound (fromIntegral -> port) sink = do
         \runInBase -> runTCPServerWithHandle (serverSettingsTCP port "*") $
             \sock peerAddr _ -> void . runInBase $ do
                 liftIO $ NS.setSocketOption sock NS.ReuseAddr 1
-                saveConn sock
 
                 settings <- Transfer ask
                 sf <- mkSocketFrame settings $ buildSockAddr peerAddr
@@ -383,14 +371,6 @@ listenInbound (fromIntegral -> port) sink = do
         putMVar m ()
         atomically $ check =<< TV.readTVar isClosedF
   where
-    saveConn _ = do
-        let conn =
-                InputConnection
-                { -- _inConnClose = NS.close sock
-                }
-        modifyManager $ do
-            connId <- inputConnCounter <<+= 1
-            inputConn . at connId .= Just conn
     startServer isClosedF unlessClosed action =
         fork $ action `catchAll` (unlessClosed . logError . sformat ("Server at port "%
                                   int%" stopped with error "%shown) port)
