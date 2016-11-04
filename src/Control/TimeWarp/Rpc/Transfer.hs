@@ -38,12 +38,11 @@ import           Control.Concurrent.STM.TChan       as TC
 import           Control.Concurrent.STM.TVar        as TV
 import           Control.Lens                       (at, each, makeLenses, use, view,
                                                      (.=), (<<+=), (?=), (^..))
-import           Control.Monad                      (forM_, forever, replicateM_, unless,
-                                                     void, when)
-import           Control.Monad.Base                 (MonadBase (..))
+import           Control.Monad                      (forM_, unless, void, when)
+import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Catch                (Exception, MonadCatch, MonadMask,
-                                                     MonadThrow (..), bracket, bracket_,
-                                                     catchAll, finally, handleAll, throwM)
+                                                     MonadThrow (..), bracket, catchAll,
+                                                     finally, handleAll, throwM)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (StateT (..), runStateT)
@@ -85,6 +84,10 @@ import           Control.TimeWarp.Timed             (Microsecond, MonadTimed, Th
                                                      killThread, sec, wait)
 
 
+-- * Related datatypes
+
+-- ** Exceptions
+
 data TransferException = AlreadyListeningOutbound Text
     deriving (Show, Typeable)
 
@@ -94,7 +97,15 @@ instance Buildable TransferException where
     build (AlreadyListeningOutbound addr) =
         bprint ("Already listening at outbound connection to "%stext) addr
 
--- * Related datatypes
+
+data PeerClosedConnection = PeerClosedConnection
+    deriving (Show, Typeable)
+
+instance Exception PeerClosedConnection
+
+instance Buildable PeerClosedConnection where
+    build _ = "Peer closed connection"
+
 
 -- ** Connections
 
@@ -189,21 +200,21 @@ mkSocketFrame settings sfPeerAddr = liftIO $ do
 -- | Makes sender function in terms of @MonadTransfer@ for given `SocketFrame`.
 -- This first extracts ready `Lazy.ByteString` from given source, and then passes it to
 -- sending queue.
-sfSender :: MonadIO m
-         => SocketFrame -> Source m BS.ByteString -> m ()
-sfSender SocketFrame{..} src = do
+sfSend :: MonadIO m
+       => SocketFrame -> Source m BS.ByteString -> m ()
+sfSend SocketFrame{..} src = do
     lbs <- src $$ sinkLbs
     liftIO . atomically . TBM.writeTBMChan sfOutChan $ lbs
 
 -- | Constructs function which allows infinitelly listens on given `SocketFrame` in terms of
 -- `MonadTransfer`.
 -- Attempt to use this function twice will end with `AlreadyListeningOutbound` error.
-sfReceiver :: (MonadIO m, MonadCatch m, MonadTimed m, WithNamedLogger m)
-           => SocketFrame ->  Sink BS.ByteString (ResponseT m) () -> m (IO ())
-sfReceiver sf@SocketFrame{..} sink = do
+sfReceive :: (MonadIO m, MonadCatch m, MonadTimed m, WithNamedLogger m)
+          => SocketFrame ->  Sink BS.ByteString (ResponseT m) () -> m (IO ())
+sfReceive sf@SocketFrame{..} sink = do
     busy <- liftIO . atomically $ TV.swapTVar sfInBusy True
     when busy $ throwM $ AlreadyListeningOutbound sfPeerAddr
-    fork_ $ logOnErr $
+    fork_ $ logOnErr $  -- TODO: disconnect / reconnect on error?
         flip runResponseT (sfResponseCtx sf) $
             sourceTBMChan sfInChan $$ sink
     return $ do
@@ -219,8 +230,8 @@ sfClose SocketFrame{..} = liftIO . atomically $ do
 sfOutputConn :: SocketFrame -> OutputConnection
 sfOutputConn sf =
     OutputConnection
-    { outConnSend  = sfSender sf
-    , outConnRec   = sfReceiver sf
+    { outConnSend  = sfSend sf
+    , outConnRec   = sfReceive sf
     , outConnClose = sfClose sf
     , outConnAddr  = sfPeerAddr sf
     }
@@ -228,7 +239,7 @@ sfOutputConn sf =
 sfResponseCtx :: SocketFrame -> ResponseContext
 sfResponseCtx sf =
     ResponseContext
-    { respSend     = sfSender sf
+    { respSend     = sfSend sf
     , respClose    = sfClose sf
     , respPeerAddr = sfPeerAddr sf
     }
@@ -242,34 +253,34 @@ sfProcessSocket sf@SocketFrame{..} sock = do
     -- create channel to notify about error
     eventChan  <- liftIO TC.newTChanIO
     -- create worker threads
-    stid <- fork $ reportExecution eventChan foreverSend
-    rtid <- fork $ reportExecution eventChan foreverRec
+    stid <- fork $ reportErrors eventChan foreverSend
+    rtid <- fork $ reportErrors eventChan foreverRec
     -- check whether @isClosed@ keeps @True@
     ctid <- fork $ do
         liftIO . atomically $ check =<< TV.readTVar sfIsClosed
-        replicateM_ 2 . liftIO . atomically $
+        liftIO . atomically $
             TC.writeTChan eventChan $ Right ()
         mapM_ killThread [stid, rtid]
     -- wait for error messages
     let onError e = do
             mapM_ killThread [stid, rtid, ctid]
             throwM e
-    replicateM_ 2 $ do
-        event <- liftIO . atomically $ TC.readTChan eventChan
-        either onError return event
-    -- at this point channels are closed
+    event <- liftIO . atomically $ TC.readTChan eventChan
+    -- Left - worker error, Right - get closed
+    either onError return event
+    -- at this point workers are stopped
   where
-    foreverSend =
+    foreverSend = do
         sourceTBMChan sfOutChan =$= awaitForever sourceLbs $$ sinkSocket sock
+        error "Unexpected behaviour, out channel closed"
 
-    foreverRec =
-        forever $
-            flip runResponseT (sfResponseCtx sf) $
-                hoist liftIO (sourceSocket sock) $$ sinkTBMChan sfInChan False
+    foreverRec = do
+        flip runResponseT (sfResponseCtx sf) $
+            hoist liftIO (sourceSocket sock) $$ sinkTBMChan sfInChan False
+        throwM PeerClosedConnection
 
-    reportExecution eventChan action = do
+    reportErrors eventChan action =
         catchAll action $ liftIO . atomically . TC.writeTChan eventChan . Left
-        liftIO . atomically . TC.writeTChan eventChan $ Right ()
 
 
 -- * Transfer
@@ -319,36 +330,40 @@ listenInbound :: Port
               -> Sink BS.ByteString (ResponseT Transfer) ()
               -> Transfer (IO ())
 listenInbound (fromIntegral -> port) sink = do
-    isClosed <- liftIO . atomically $ TV.newTVar False
-    stid <- startServer isClosed $ liftBaseWith $
+    -- whether close was invoked
+    isClosed  <- liftIO . atomically $ TV.newTVar False
+    -- whether server complitelly stopped
+    isClosedF <- liftIO . atomically $ TV.newTVar False
+    let unlessClosed act = liftIO (TV.readTVarIO isClosed) >>= flip unless act
+
+    stid <- startServer isClosedF unlessClosed $ liftBaseWith $
         -- TODO rewrite `runTCPServerWithHandle` to separate `bind` and `listen`
         -- bind should fail in thread, which launches server (not spawned one)
         \runInBase -> runTCPServerWithHandle (serverSettingsTCP port "*") $
             \sock peerAddr _ -> void . runInBase $ do
                 liftIO $ NS.setSocketOption sock NS.ReuseAddr 1
                 saveConn sock
-                let peerName = buildSockAddr peerAddr
-                lock <- liftIO newEmptyMVar
-                let source = sourceSocket sock
-                    responseCtx =
-                        ResponseContext
-                        { respSend     = \src -> synchronously lock $
-                                              -- ^ TODO: eliminate
-                                            src $$ sinkSocket sock
-                        , respClose    = NS.close sock
-                        , respPeerAddr = peerName
-                        }
 
-                logOnErr $ flip runResponseT responseCtx $
-                    hoist liftIO source $$ sink
-                commLog . logInfo $
-                    sformat ("Input connection from "%stext%" closed") peerName
-    -- hack to use @IO ()@ as closer, not @m ()@, for now.
+                settings <- Transfer ask
+                sf <- mkSocketFrame settings $ buildSockAddr peerAddr
+                -- start listener, works in another thread
+                _ <- sfReceive sf sink
+                -- start `SocketFrame`'s' workers
+                startListener sf unlessClosed $ do
+                    sfProcessSocket sf sock
+                    commLog . logInfo $
+                        sformat ("Input connection "%int%" <- "%stext%" happily closed")
+                        port (sfPeerAddr sf)
+    -- Closer. Here is hack to use @IO ()@ as closer, not @m ()@, for now.
     m <- liftIO newEmptyMVar
-    fork_ $ liftIO (takeMVar m) >> killThread stid
+    fork_ $ do
+        liftIO (takeMVar m)
+        commLog . logDebug $ sformat ("Stopping server at "%int) port
+        killThread stid
     return $ do
+        liftIO . atomically $ TV.writeTVar isClosed True
         putMVar m ()
-        atomically $ check =<< TV.readTVar isClosed
+        atomically $ check =<< TV.readTVar isClosedF
   where
     saveConn _ = do
         let conn =
@@ -358,15 +373,15 @@ listenInbound (fromIntegral -> port) sink = do
         modifyManager $ do
             connId <- inputConnCounter <<+= 1
             inputConn . at connId .= Just conn
-    startServer isClosed action =
-        fork $ action
-                `catchAll` (logError . sformat ("Server at port " % int % " stopped with error " % shown) port)
-                `finally` (liftIO . atomically $ TV.writeTVar isClosed True)
-
-synchronously :: (MonadIO m, MonadMask m) => MVar () -> m () -> m ()
-synchronously lock =
-        bracket_ (liftIO $ putMVar lock ())
-                 (liftIO $ takeMVar lock)
+    startServer isClosedF unlessClosed action =
+        fork $ action `catchAll` (unlessClosed . logError . sformat ("Server at port "%
+                                  int%" stopped with error "%shown) port)
+                      `finally` (liftIO . atomically $ TV.writeTVar isClosedF True)
+    startListener sf unlessClosed action =
+        flip finally (sfClose sf) $
+        catchAll action $ unlessClosed . commLog . logError .
+            sformat ("Error in server socket "%int%" connected with "%stext%
+                     ": "%shown) port (sfPeerAddr sf)
 
 
 -- | Listens for incoming bytes on outbound connection.
@@ -382,7 +397,7 @@ listenOutbound addr sink = do
 
 logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
 logOnErr = handleAll $ \e ->
-    commLog . logDebug $ sformat ("Server error: "%shown) e
+    commLog . logDebug $ sformat ("Server !! error: "%shown) e
 
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
