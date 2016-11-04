@@ -61,7 +61,7 @@ library
                      , transformers-base
   hs-source-dirs:      src
   default-language:    Haskell2010
-  ghc-options:         -Wall -fno-warn-orphans -fprint-potential-instances
+  ghc-options:         -Wall -fno-warn-orphans
   default-extensions:  RecordWildCards
                      , OverloadedStrings
                      , DeriveDataTypeable
