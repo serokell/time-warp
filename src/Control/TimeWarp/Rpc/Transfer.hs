@@ -53,7 +53,6 @@ import qualified Data.ByteString.Lazy               as BL
 import           Data.Conduit                       (Sink, Source, awaitForever, ($$),
                                                      (=$=))
 import           Data.Conduit.Binary                (sinkLbs, sourceLbs)
-import qualified Data.Conduit.List                  as CL
 import           Data.Conduit.Network               (sinkSocket, sourceSocket)
 import           Data.Conduit.TMChan                (sinkTBMChan, sourceTBMChan)
 import           Data.List                          (intersperse)
@@ -266,7 +265,7 @@ sfResponseCtx sf =
 
 -- | Starts workers, which connect channels in `SocketFrame` with real `NS.Socket`.
 -- If error in any worker occured, it's propagaded.
-sfProcessSocket :: (MonadIO m, MonadCatch m, MonadTimed m, WithNamedLogger m)
+sfProcessSocket :: (MonadIO m, MonadCatch m, MonadTimed m)
                 => SocketFrame -> NS.Socket -> m ()
 sfProcessSocket SocketFrame{..} sock = do
     -- TODO: rewrite to async when MonadTimed supports it
