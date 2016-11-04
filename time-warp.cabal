@@ -2,6 +2,7 @@ name:                time-warp
 version:             1.1.0.1
 synopsis:            distributed systems execution emulation
 homepage:            http://gitlab.serokell.io/serokell-team/time-warp
+category:            Network
 license:             GPL-3
 license-file:        LICENSE
 author:              Serokell team
