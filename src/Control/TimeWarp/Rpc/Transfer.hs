@@ -37,21 +37,20 @@ import qualified Control.Concurrent.STM.TBMChan     as TBM
 import           Control.Concurrent.STM.TChan       as TC
 import           Control.Concurrent.STM.TVar        as TV
 import           Control.Lens                       (at, each, makeLenses, use, view,
-                                                     (.=), (<<+=), (?=), (^..), (<<.=))
-import           Control.Monad                      (forM_, forever, replicateM_, void,
-                                                     when)
-import           Control.Monad.Base                 (MonadBase(..))
+                                                     (.=), (<<+=), (?=), (^..))
+import           Control.Monad                      (forM_, forever, replicateM_, unless,
+                                                     void, when)
+import           Control.Monad.Base                 (MonadBase (..))
 import           Control.Monad.Catch                (Exception, MonadCatch, MonadMask,
                                                      MonadThrow (..), bracket, bracket_,
-                                                     catchAll, finally, handleAll,
-                                                     throwM)
+                                                     catchAll, finally, handleAll, throwM)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (StateT (..), runStateT)
 import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
-import           Data.ByteString                    (ByteString)
 import qualified Data.ByteString                    as BS
+import qualified Data.ByteString.Lazy               as BL
 import           Data.Conduit                       (Sink, Source, awaitForever, ($$),
                                                      (=$=))
 import           Data.Conduit.Binary                (sinkLbs, sourceLbs)
@@ -73,8 +72,9 @@ import           Formatting                         (bprint, builder, int, sform
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
 import           Network.Socket                     as NS
 
-import           Control.TimeWarp.Logging           (LoggerNameBox, WithNamedLogger, logError,
-                                                     logDebug, logInfo, logWarning)
+import           Control.TimeWarp.Logging           (LoggerNameBox, WithNamedLogger,
+                                                     logDebug, logError, logInfo,
+                                                     logWarning)
 import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer (..),
                                                      NetworkAddress, Port,
                                                      ResponseContext (..), ResponseT,
@@ -85,17 +85,21 @@ import           Control.TimeWarp.Timed             (Microsecond, MonadTimed, Th
                                                      killThread, sec, wait)
 
 
-data TransferException = AlreadyListeningOutbound NetworkAddress
-  deriving (Show, Typeable)
+data TransferException = AlreadyListeningOutbound Text
+    deriving (Show, Typeable)
 
 instance Exception TransferException
 
 instance Buildable TransferException where
-  build (AlreadyListeningOutbound addr) = bprint ("Already listening at outbound connection to "%shown) addr
+    build (AlreadyListeningOutbound addr) =
+        bprint ("Already listening at outbound connection to "%stext) addr
 
 -- * Related datatypes
 
 -- ** Connections
+
+-- | Textual representation of peer node. For debugging purposes only.
+type PeerAddr = Text
 
 data OutputConnection = OutputConnection
     { outConnSend     :: forall m . (MonadIO m, MonadMask m)
@@ -108,9 +112,8 @@ data OutputConnection = OutputConnection
     , outConnClose    :: IO ()
       -- ^ Closes socket as soon as all messages send, prevent any further manupulations
       -- with message queues
-    , outConnIsClosed :: TVar Bool
-      -- ^ Says whether all resouces allocated for connection were cleaned up
-    , outConnAddr     :: Text
+    , outConnAddr     :: PeerAddr
+      -- ^ Address of socket on other side of net
     }
 
 data InputConnection = InputConnection
@@ -156,6 +159,119 @@ initManager =
     }
 
 
+-- ** SocketFrame
+
+-- | Keeps data which helps to improve socket to smart socket.
+data SocketFrame = SocketFrame
+    { sfPeerAddr  :: PeerAddr
+    -- ^ Peer address, for debuging purposes only
+    , sfInBusy    :: TV.TVar Bool
+    -- ^ Whether someone already listens on this socket
+    , sfInChan    :: TBM.TBMChan BS.ByteString
+    -- ^ For incoming packs of bytes
+    , sfOutChan   :: TBM.TBMChan BL.ByteString
+     -- ^ For packs of bytes to send
+    , sfIsClosed  :: TV.TVar Bool
+    -- ^ Whether @close@ hhas been invoked
+    , sfIsClosedF :: TV.TVar Bool
+    -- ^ Whether socket is really closed and resources released
+    }
+
+mkSocketFrame :: MonadIO m => Settings -> PeerAddr -> m SocketFrame
+mkSocketFrame settings sfPeerAddr = liftIO $ do
+    sfInBusy    <- TV.newTVarIO False
+    sfInChan    <- TBM.newTBMChanIO (_queueSize settings)
+    sfOutChan   <- TBM.newTBMChanIO (_queueSize settings)
+    sfIsClosed  <- TV.newTVarIO False
+    sfIsClosedF <- TV.newTVarIO False
+    return SocketFrame{..}
+
+-- | Makes sender function in terms of @MonadTransfer@ for given `SocketFrame`.
+-- This first extracts ready `Lazy.ByteString` from given source, and then passes it to
+-- sending queue.
+sfSender :: MonadIO m
+         => SocketFrame -> Source m BS.ByteString -> m ()
+sfSender SocketFrame{..} src = do
+    lbs <- src $$ sinkLbs
+    liftIO . atomically . TBM.writeTBMChan sfOutChan $ lbs
+
+-- | Constructs function which allows infinitelly listens on given `SocketFrame` in terms of
+-- `MonadTransfer`.
+-- Attempt to use this function twice will end with `AlreadyListeningOutbound` error.
+sfReceiver :: (MonadIO m, MonadCatch m, MonadTimed m, WithNamedLogger m)
+           => SocketFrame ->  Sink BS.ByteString (ResponseT m) () -> m (IO ())
+sfReceiver sf@SocketFrame{..} sink = do
+    busy <- liftIO . atomically $ TV.swapTVar sfInBusy True
+    when busy $ throwM $ AlreadyListeningOutbound sfPeerAddr
+    fork_ $ logOnErr $
+        flip runResponseT (sfResponseCtx sf) $
+            sourceTBMChan sfInChan $$ sink
+    return $ do
+        sfClose sf
+        atomically $ check =<< readTVar sfIsClosedF
+
+sfClose :: MonadIO m => SocketFrame -> m ()
+sfClose SocketFrame{..} = liftIO . atomically $ do
+    writeTVar sfIsClosed True
+    TBM.closeTBMChan sfInChan
+    TBM.closeTBMChan sfOutChan
+
+sfOutputConn :: SocketFrame -> OutputConnection
+sfOutputConn sf =
+    OutputConnection
+    { outConnSend  = sfSender sf
+    , outConnRec   = sfReceiver sf
+    , outConnClose = sfClose sf
+    , outConnAddr  = sfPeerAddr sf
+    }
+
+sfResponseCtx :: SocketFrame -> ResponseContext
+sfResponseCtx sf =
+    ResponseContext
+    { respSend     = sfSender sf
+    , respClose    = sfClose sf
+    , respPeerAddr = sfPeerAddr sf
+    }
+
+-- | Starts workers, which connect channels in `SocketFrame` with real `NS.Socket`.
+-- If error in any worker occured, it's propagaded.
+sfProcessSocket :: (MonadIO m, MonadCatch m, MonadTimed m)
+                => SocketFrame -> NS.Socket -> m ()
+sfProcessSocket sf@SocketFrame{..} sock = do
+    -- TODO: rewrite to async when MonadTimed supports it
+    -- create channel to notify about error
+    eventChan  <- liftIO TC.newTChanIO
+    -- create worker threads
+    stid <- fork $ reportExecution eventChan foreverSend
+    rtid <- fork $ reportExecution eventChan foreverRec
+    -- check whether @isClosed@ keeps @True@
+    ctid <- fork $ do
+        liftIO . atomically $ check =<< TV.readTVar sfIsClosed
+        replicateM_ 2 . liftIO . atomically $
+            TC.writeTChan eventChan $ Right ()
+        mapM_ killThread [stid, rtid]
+    -- wait for error messages
+    let onError e = do
+            mapM_ killThread [stid, rtid, ctid]
+            throwM e
+    replicateM_ 2 $ do
+        event <- liftIO . atomically $ TC.readTChan eventChan
+        either onError return event
+    -- at this point channels are closed
+  where
+    foreverSend =
+        sourceTBMChan sfOutChan =$= awaitForever sourceLbs $$ sinkSocket sock
+
+    foreverRec =
+        forever $
+            flip runResponseT (sfResponseCtx sf) $
+                hoist liftIO (sourceSocket sock) $$ sinkTBMChan sfInChan False
+
+    reportExecution eventChan action = do
+        catchAll action $ liftIO . atomically . TC.writeTChan eventChan . Left
+        liftIO . atomically . TC.writeTChan eventChan $ Right ()
+
+
 -- * Transfer
 
 newtype Transfer a = Transfer
@@ -167,7 +283,7 @@ type instance ThreadId Transfer = C.ThreadId
 
 -- | Run with specified settings
 runTransferS :: Settings -> Transfer a -> LoggerNameBox TimedIO a
-runTransferS s t = do m <- liftIO (newMVar $ initManager)
+runTransferS s t = do m <- liftIO (newMVar initManager)
                       flip runReaderT m $ flip runReaderT s $ getTransfer t
 
 runTransfer :: Transfer a -> LoggerNameBox TimedIO a
@@ -180,7 +296,7 @@ modifyManager how = Transfer . lift $
 
 -- * Logic
 
-buildSockAddr :: NS.SockAddr -> Text
+buildSockAddr :: NS.SockAddr -> PeerAddr
 buildSockAddr (NS.SockAddrInet port host) =
     let buildHost = mconcat . intersperse "."
                   . map build . (^.. each) . NS.hostAddressToTuple
@@ -196,8 +312,11 @@ buildSockAddr (NS.SockAddrUnix addr) = sformat string addr
 buildSockAddr (NS.SockAddrCan addr) = sformat ("can:"%int) addr
                -- ^ TODO: what is this?
 
+buildNetworkAddress :: NetworkAddress -> PeerAddr
+buildNetworkAddress (host, port) = sformat (stext%":"%int) (decodeUtf8 host) port
+
 listenInbound :: Port
-              -> Sink ByteString (ResponseT Transfer) ()
+              -> Sink BS.ByteString (ResponseT Transfer) ()
               -> Transfer (IO ())
 listenInbound (fromIntegral -> port) sink = do
     isClosed <- liftIO . atomically $ TV.newTVar False
@@ -219,6 +338,7 @@ listenInbound (fromIntegral -> port) sink = do
                         , respClose    = NS.close sock
                         , respPeerAddr = peerName
                         }
+
                 logOnErr $ flip runResponseT responseCtx $
                     hoist liftIO source $$ sink
                 commLog . logInfo $
@@ -240,21 +360,21 @@ listenInbound (fromIntegral -> port) sink = do
             inputConn . at connId .= Just conn
     startServer isClosed action =
         fork $ action
-                `catchAll` (\e -> logError $ sformat ("Server at port " % int % " stopped with error " % shown) port e)
+                `catchAll` (logError . sformat ("Server at port " % int % " stopped with error " % shown) port)
                 `finally` (liftIO . atomically $ TV.writeTVar isClosed True)
 
 synchronously :: (MonadIO m, MonadMask m) => MVar () -> m () -> m ()
-synchronously lock action =
+synchronously lock =
         bracket_ (liftIO $ putMVar lock ())
                  (liftIO $ takeMVar lock)
-                 action
+
 
 -- | Listens for incoming bytes on outbound connection.
 -- Listening would occur until sink gets closed. Killing this thread won't help here.
 -- Attempt to listen on socket which is already being listened causes exception.
 -- Subscribtions could be implemented at layer above, where we operate with messages.
 listenOutbound :: NetworkAddress
-               -> Sink ByteString (ResponseT Transfer) ()
+               -> Sink BS.ByteString (ResponseT Transfer) ()
                -> Transfer (IO ())
 listenOutbound addr sink = do
     conn <- getOutConnOrOpen addr
@@ -266,90 +386,36 @@ logOnErr = handleAll $ \e ->
 
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
-getOutConnOrOpen address = do
+getOutConnOrOpen addr@(host, fromIntegral -> port) = do
     -- TODO: care about async exceptions
-    (conn, chansM) <- ensureConnExist address
-    forM_ chansM $
-        \chans -> fork_ $
-            startWorker address conn chans `finally` releaseConn address
+    (conn, sfm) <- ensureConnExist
+    forM_ sfm $
+        \sf -> fork_ $
+            startWorker sf `finally` releaseConn sf
     return conn
   where
-    ensureConnExist addr@(host, port) = do
+    ensureConnExist = do
         settings <- Transfer ask
         modifyManager $ do
             existing <- use $ outputConn . at addr
             if isJust existing
                 then
-                    return $ (fromJust existing, Nothing)
+                    return (fromJust existing, Nothing)
                 else do
-                    inBusy    <- liftIO $ TV.newTVarIO False
-                    inChan    <- liftIO $ TBM.newTBMChanIO (_queueSize settings)
-                    outChan   <- liftIO $ TBM.newTBMChanIO (_queueSize settings)
-                    -- set to @True@ on `close` invokation
-                    isClosed  <- liftIO $ TV.newTVarIO False
-                    -- set to @True@ when server stopped
-                    isClosedF <- liftIO $ TV.newTVarIO False
-                    let conn =
-                           OutputConnection
-                           { outConnSend  = \src -> do
-                                lbs <- src $$ sinkLbs
-                                liftIO . atomically . TBM.writeTBMChan outChan $ lbs
-                                -- TODO: overflow?
-                           , outConnRec   = \sink -> do
-                                busy <- liftIO . atomically $ TV.swapTVar inBusy True
-                                when busy $ throwM $ AlreadyListeningOutbound addr
-                                -- ^ Or maybe retry?
-                                fork_ $ logOnErr $
-                                     flip runResponseT (mkResponseCtx conn) $
-                                     sourceTBMChan inChan $$ sink
-                                return $ do
-                                    outConnClose conn
-                                    atomically $ check =<< readTVar isClosedF
-                           , outConnClose = atomically $ do
-                                                writeTVar isClosed True
-                                                TBM.closeTBMChan inChan
-                                                TBM.closeTBMChan outChan
-                           , outConnIsClosed = isClosedF
-                           , outConnAddr = sformat (stext%":"%int)
-                                           (decodeUtf8 host) port
-                           }
+                    sf <- mkSocketFrame settings $ buildNetworkAddress addr
+                    let conn = sfOutputConn sf
                     outputConn . at addr ?= conn
-                    return (conn, Just (inChan, outChan, isClosed))
+                    return (conn, Just sf)
 
-    startWorker addr@(host, fromIntegral -> port) conn (inChan, outChan, isClosed) =
-        withRecovery addr isClosed $ do
-             bracket (liftIO $ fst <$> getSocketFamilyTCP host port NS.AF_UNSPEC)
-                     (liftIO . NS.close) $
-                     \sock -> do
-                        -- TODO: rewrite to async when MonadTimed supports it
-                        -- create channel to notify about error
-                        eventChan  <- liftIO TC.newTChanIO
-                        -- create worker threads
-                        stid <- fork $ reportExecution eventChan $
-                            foreverSend sock outChan
-                        rtid <- fork $ reportExecution eventChan $
-                            foreverRec sock (mkResponseCtx conn) inChan
-                        -- check whether @isClosed@ keeps @True@
-                        ctid <- fork $ do
-                            liftIO . atomically $ check =<< TV.readTVar isClosed
-                            replicateM_ 2 . liftIO . atomically $
-                                TC.writeTChan eventChan $ Right ()
-                            killThread stid
-                            killThread rtid
-                        -- wait for error messages
-                        let onError e = do
-                                killThread stid
-                                killThread rtid
-                                killThread ctid
-                                throwM e
-                        replicateM_ 2 $ do
-                            event <- liftIO . atomically $ TC.readTChan eventChan
-                            either onError return event
-                        -- at this point channels are closed
+    startWorker sf =
+        withRecovery sf $
+            bracket (liftIO $ fst <$> getSocketFamilyTCP host port NS.AF_UNSPEC)
+                    (liftIO . NS.close) $
+                    sfProcessSocket sf
 
-    withRecovery addr isClosed action = catchAll action $ \e -> do
-        closed <- liftIO . atomically $ readTVar isClosed
-        when (not closed) $ do
+    withRecovery sf action = catchAll action $ \e -> do
+        closed <- liftIO . atomically $ readTVar (sfIsClosed sf)
+        unless closed $ do
             commLog . logWarning $
                 sformat ("Error while working with socket to "%shown%": "%shown) addr e
             reconnect <- Transfer $ view reconnectPolicy
@@ -364,37 +430,14 @@ getOutConnOrOpen address = do
                     commLog . logWarning $
                         sformat ("Reconnect in "%shown) delay
                     wait (for delay)
-                    withRecovery addr isClosed action
+                    withRecovery sf action
 
-    foreverSend sock outChan = do
-        sourceTBMChan outChan =$= awaitForever sourceLbs $$ sinkSocket sock
+    releaseConn sf = do
+        modifyManager $ outputConn . at addr .= Nothing
+        liftIO . atomically $ TV.writeTVar (sfIsClosedF sf) True
+        commLog . logDebug $
+            sformat ("Socket to "%shown%" closed") addr
 
-    foreverRec sock respCtx inChan =
-        forever $
-            flip runResponseT respCtx $
-                hoist liftIO (sourceSocket sock) $$ sinkTBMChan inChan False
-
-    releaseConn addr = do
-        connM <- modifyManager $ outputConn . at addr <<.= Nothing
-        case connM of
-            Nothing -> commLog . logWarning $
-                sformat ("Unexpected behaviour: no connection to "%shown%
-                         " found on release") addr
-            Just conn -> do
-                liftIO . atomically $ writeTVar (outConnIsClosed conn) True
-                commLog . logDebug $
-                    sformat ("Socket to "%shown%" closed") addr
-
-    mkResponseCtx conn =
-        ResponseContext
-            { respSend     = outConnSend conn
-            , respClose    = outConnClose conn
-            , respPeerAddr = outConnAddr conn
-            }
-
-    reportExecution eventChan action = do
-        catchAll action $ liftIO . atomically . TC.writeTChan eventChan . Left
-        liftIO . atomically . TC.writeTChan eventChan $ Right ()
 
 instance MonadTransfer Transfer where
     sendRaw addr src = do
