@@ -1,5 +1,5 @@
 name:                time-warp
-version:             0.1.0.0
+version:             0.1.1
 synopsis:            distributed systems execution emulation
 homepage:            http://gitlab.serokell.io/serokell-team/time-warp
 license:             GPL-3
@@ -60,8 +60,7 @@ library
                      , transformers-base
   hs-source-dirs:      src
   default-language:    Haskell2010
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-TN -Wall -O2
-                       -fno-warn-orphans
+  ghc-options:         -Wall -O2 -fno-warn-orphans
   default-extensions:  RecordWildCards
                      , OverloadedStrings
                      , DeriveDataTypeable
@@ -128,7 +127,7 @@ executable token-ring
                      , random >= 1.1
   hs-source-dirs:      examples/token-ring
   default-language:    Haskell2010  
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-TN -Wall -fno-warn-orphans
+  ghc-options:         -threaded -Wall -fno-warn-orphans
   default-extensions:  OverloadedStrings
                      , RecordWildCards
                      , DeriveDataTypeable
