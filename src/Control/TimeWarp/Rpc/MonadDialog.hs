@@ -234,9 +234,7 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
         nameM <- selector header
         case nameM of
             Nothing -> 
-                lift . commLog . logWarning $
-                    sformat ("Unexpected end of incoming message")
-                -- TODO: throw!
+                lift . commLog . logWarning $ "Unexpected end of incoming message"
             Just (name, Nothing) -> do
                 lift . commLog . logWarning $
                     sformat ("No listener with name "%stext%" defined") name
