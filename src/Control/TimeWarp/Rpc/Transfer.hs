@@ -53,6 +53,7 @@ import qualified Data.ByteString.Lazy               as BL
 import           Data.Conduit                       (Sink, Source, awaitForever, ($$),
                                                      (=$=))
 import           Data.Conduit.Binary                (sinkLbs, sourceLbs)
+import qualified Data.Conduit.List                  as CL
 import           Data.Conduit.Network               (sinkSocket, sourceSocket)
 import           Data.Conduit.TMChan                (sinkTBMChan, sourceTBMChan)
 import           Data.List                          (intersperse)
@@ -116,7 +117,7 @@ data OutputConnection = OutputConnection
     { outConnSend     :: forall m . (MonadIO m, MonadMask m)
                       => Source m BS.ByteString -> m ()
       -- ^ Keeps function to send to socket
-    , outConnRec      :: forall m . (MonadIO m, MonadCatch m, MonadTimed m,
+    , outConnRec      :: forall m . (MonadIO m, MonadMask m, MonadTimed m,
                                      WithNamedLogger m)
                       => Sink BS.ByteString (ResponseT m) () -> m (IO ())
       -- ^ Keeps listener sink, if free
@@ -209,23 +210,42 @@ sfSend SocketFrame{..} src = do
 -- | Constructs function which allows infinitelly listens on given `SocketFrame` in terms of
 -- `MonadTransfer`.
 -- Attempt to use this function twice will end with `AlreadyListeningOutbound` error.
-sfReceive :: (MonadIO m, MonadCatch m, MonadTimed m, WithNamedLogger m)
+sfReceive :: (MonadIO m, MonadMask m, MonadTimed m, WithNamedLogger m)
           => SocketFrame ->  Sink BS.ByteString (ResponseT m) () -> m (IO ())
 sfReceive sf@SocketFrame{..} sink = do
     busy <- liftIO . atomically $ TV.swapTVar sfInBusy True
     when busy $ throwM $ AlreadyListeningOutbound sfPeerAddr
-    fork_ $ logOnErr $  -- TODO: disconnect / reconnect on error?
-        flip runResponseT (sfResponseCtx sf) $
-            sourceTBMChan sfInChan $$ sink
+
+    liClosed <- liftIO $ TV.newTVarIO False
+    ltid <- fork $ logOnErr $  -- TODO: disconnect / reconnect on error?
+        flip finally (liftIO . atomically $ writeTVar liClosed True) $ do
+            flip runResponseT (sfResponseCtx sf) $
+                sourceTBMChan sfInChan $$ sink
+            commLog . logDebug $ sformat ("Listening on socket to "%shown%
+                                          " happily stopped") sfPeerAddr
+        
+    fork_ $ do
+        liftIO . atomically $ check =<< readTVar sfIsClosed
+        wait (for 3 sec)
+        c <- liftIO . atomically $ TV.readTVar liClosed
+        unless c $ do
+            commLog . logDebug $
+                sformat ("While closing socket to "%shown%" listener "%
+                         "worked for too long, closing with no regard to it") sfPeerAddr
+            killThread ltid
+            liftIO . atomically $ writeTVar liClosed True
     return $ do
         sfClose sf
-        atomically $ check =<< readTVar sfIsClosedF
+        atomically $ check =<< ((&&) <$> readTVar sfIsClosedF <*> readTVar liClosed)
 
-sfClose :: MonadIO m => SocketFrame -> m ()
+sfClose :: (MonadIO m) => SocketFrame -> m ()
 sfClose SocketFrame{..} = liftIO . atomically $ do
     writeTVar sfIsClosed True
     TBM.closeTBMChan sfInChan
     TBM.closeTBMChan sfOutChan
+    clearInChan
+  where
+    clearInChan = TBM.tryReadTBMChan sfInChan >>= maybe (return ()) (const clearInChan)
 
 sfOutputConn :: SocketFrame -> OutputConnection
 sfOutputConn sf =
@@ -246,7 +266,7 @@ sfResponseCtx sf =
 
 -- | Starts workers, which connect channels in `SocketFrame` with real `NS.Socket`.
 -- If error in any worker occured, it's propagaded.
-sfProcessSocket :: (MonadIO m, MonadCatch m, MonadTimed m)
+sfProcessSocket :: (MonadIO m, MonadCatch m, MonadTimed m, WithNamedLogger m)
                 => SocketFrame -> NS.Socket -> m ()
 sfProcessSocket SocketFrame{..} sock = do
     -- TODO: rewrite to async when MonadTimed supports it
