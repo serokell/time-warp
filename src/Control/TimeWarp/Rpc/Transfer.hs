@@ -270,13 +270,14 @@ sfProcessSocket SocketFrame{..} sock = do
     either onError return event
     -- at this point workers are stopped
   where
-    foreverSend = do
+    foreverSend =
         sourceTBMChan sfOutChan =$= awaitForever sourceLbs $$ sinkSocket sock
-        error "Unexpected behaviour, out channel closed"
 
     foreverRec = do
         hoist liftIO (sourceSocket sock) $$ sinkTBMChan sfInChan False
-        throwM PeerClosedConnection
+        isClosed <- liftIO $ readTVarIO sfIsClosed
+        unless isClosed $
+            throwM PeerClosedConnection
 
     reportErrors eventChan action =
         catchAll action $ liftIO . atomically . TC.writeTChan eventChan . Left
