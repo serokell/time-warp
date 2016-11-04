@@ -228,20 +228,19 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
                 cont <- lift . invokeRawListenerSafe $ rawListener (h, raw)
                 if cont
                     then processContent h
-                    else do -- this is expected to work as fast as indexing
-                            skip <- unpackMsg packing =$= CL.head
-                            forM_ skip $
-                                \(HeaderNRawData h0 _) ->
-                                    let _ = [h, h0]  -- constraint h0 type
-                                    in  loop
+                    else skipMsgAndGo h
 
     processContent header = do
         nameM <- selector header
         case nameM of
-            Nothing          -> lift . commLog . logWarning $
-                sformat ("Unexpected end of incoming message")
-            Just (name, Nothing) -> lift . commLog . logWarning $
-                sformat ("No listener with name "%stext%" defined") name
+            Nothing -> 
+                lift . commLog . logWarning $
+                    sformat ("Unexpected end of incoming message")
+                -- TODO: throw!
+            Just (name, Nothing) -> do
+                lift . commLog . logWarning $
+                    sformat ("No listener with name "%stext%" defined") name
+                skipMsgAndGo header
             Just (name, Just (ListenerH f)) -> do
                 msgM <- unpackMsg packing =$= CL.head
                 case msgM of
@@ -253,6 +252,15 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
                                loop
 
     selector header = chooseListener packing header getListenerNameH listeners
+
+    skipMsgAndGo h = do
+        -- this is expected to work as fast as indexing
+        skip <- unpackMsg packing =$= CL.head
+        forM_ skip $
+            \(HeaderNRawData h0 _) ->
+                let _ = [h, h0]  -- constraint h0 type
+                in  loop
+
 
     invokeRawListenerSafe = handleAll $ \e -> do
         commLog . logError $ sformat ("Uncaught error in raw listener: "%shown) e
