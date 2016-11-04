@@ -13,6 +13,7 @@ gui-db/
 dist/
 tmp/
 rscoin-deploy*/
+dist/
 explorer-db/
 flycheck_*
 
