@@ -248,7 +248,7 @@ sfResponseCtx sf =
 -- If error in any worker occured, it's propagaded.
 sfProcessSocket :: (MonadIO m, MonadCatch m, MonadTimed m)
                 => SocketFrame -> NS.Socket -> m ()
-sfProcessSocket sf@SocketFrame{..} sock = do
+sfProcessSocket SocketFrame{..} sock = do
     -- TODO: rewrite to async when MonadTimed supports it
     -- create channel to notify about error
     eventChan  <- liftIO TC.newTChanIO
@@ -275,8 +275,7 @@ sfProcessSocket sf@SocketFrame{..} sock = do
         error "Unexpected behaviour, out channel closed"
 
     foreverRec = do
-        flip runResponseT (sfResponseCtx sf) $
-            hoist liftIO (sourceSocket sock) $$ sinkTBMChan sfInChan False
+        hoist liftIO (sourceSocket sock) $$ sinkTBMChan sfInChan False
         throwM PeerClosedConnection
 
     reportErrors eventChan action =
