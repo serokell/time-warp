@@ -115,13 +115,13 @@ type PeerAddr = Text
 data OutputConnection = OutputConnection
     { outConnSend     :: forall m . (MonadIO m, MonadMask m)
                       => Source m BS.ByteString -> m ()
-      -- ^ Keeps function to send to socket
+      -- ^ Function to send to socket
     , outConnRec      :: forall m . (MonadIO m, MonadMask m, MonadTimed m,
                                      WithNamedLogger m)
                       => Sink BS.ByteString (ResponseT m) () -> m (IO ())
-      -- ^ Keeps listener sink, if free
+      -- ^ Function to stark sink-listener, returns synchronous closer.
     , outConnClose    :: IO ()
-      -- ^ Closes socket as soon as all messages send, prevent any further manupulations
+      -- ^ Closes socket, prevent any further manupulations
       -- with message queues
     , outConnAddr     :: PeerAddr
       -- ^ Address of socket on other side of net
@@ -222,7 +222,7 @@ sfReceive sf@SocketFrame{..} sink = do
                 sourceTBMChan sfInChan $$ sink
             commLog . logDebug $ sformat ("Listening on socket to "%shown%
                                           " happily stopped") sfPeerAddr
-        
+
     fork_ $ do
         liftIO . atomically $ check =<< readTVar sfIsClosed
         wait (for 3 sec)
@@ -237,7 +237,7 @@ sfReceive sf@SocketFrame{..} sink = do
         sfClose sf
         atomically $ check =<< ((&&) <$> readTVar sfIsClosedF <*> readTVar liClosed)
 
-sfClose :: (MonadIO m) => SocketFrame -> m ()
+sfClose :: MonadIO m => SocketFrame -> m ()
 sfClose SocketFrame{..} = liftIO . atomically $ do
     writeTVar sfIsClosed True
     TBM.closeTBMChan sfInChan
@@ -415,7 +415,7 @@ listenOutbound addr sink = do
 
 logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
 logOnErr = handleAll $ \e ->
-    commLog . logDebug $ sformat ("Server !! error: "%shown) e
+    commLog . logDebug $ sformat ("Server error: "%shown) e
 
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
