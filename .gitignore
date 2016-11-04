@@ -12,6 +12,7 @@ notary-db/
 gui-db/
 tmp/
 rscoin-deploy*/
+dist/
 explorer-db/
 flycheck_*
 
