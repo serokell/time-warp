@@ -44,7 +44,7 @@ import           Control.Monad.Catch                (Exception, MonadCatch,
                                                      MonadMask (mask), MonadThrow (..),
                                                      bracket, bracketOnError, catchAll,
                                                      finally, handleAll, onException,
-                                                     throwM)
+                                                     throwM, mask_)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (StateT (..), runStateT)
@@ -297,6 +297,7 @@ sfProcessSocket SocketFrame{..} sock = do
                 mask $ \unmask -> do
                     let pushback = liftIO . atomically $ TBM.unGetTBMChan sfOutChan dat
                     unmask (sourceLbs bs $$ sinkSocket sock) `onException` pushback
+                    -- TODO: if get async exception here   ^, will send msg twice
                     liftIO notif
                 foreverSend
 
@@ -451,13 +452,13 @@ logOnErr = handleAll $ \e ->
 
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
-getOutConnOrOpen addr@(host, fromIntegral -> port) = do
-    -- TODO: care about async exceptions
-    (conn, sfm) <- ensureConnExist
-    forM_ sfm $
-        \sf -> fork_ $
-            startWorker sf `finally` releaseConn sf
-    return conn
+getOutConnOrOpen addr@(host, fromIntegral -> port) =
+    mask_ $ do
+        (conn, sfm) <- ensureConnExist
+        forM_ sfm $
+            \sf -> fork_ $
+                startWorker sf `finally` releaseConn sf
+        return conn
   where
     ensureConnExist = do
         settings <- Transfer ask
