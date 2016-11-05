@@ -40,9 +40,10 @@ import           Control.Lens                       (at, each, makeLenses, use, 
                                                      (.=), (?=), (^..))
 import           Control.Monad                      (forM_, unless, void, when)
 import           Control.Monad.Base                 (MonadBase)
-import           Control.Monad.Catch                (Exception, MonadCatch, MonadMask,
-                                                     MonadThrow (..), bracket, catchAll,
-                                                     finally, handleAll, throwM)
+import           Control.Monad.Catch                (Exception, MonadCatch,
+                                                     MonadMask (mask), MonadThrow (..),
+                                                     bracket, catchAll, finally,
+                                                     handleAll, onException, throwM)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (StateT (..), runStateT)
@@ -50,8 +51,8 @@ import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
 import qualified Data.ByteString                    as BS
 import qualified Data.ByteString.Lazy               as BL
-import           Data.Conduit                       (Sink, Source, awaitForever, ($$),
-                                                     (=$=))
+import           Data.Conduit                       (Sink, Source, 
+                                                     ($$))
 import           Data.Conduit.Binary                (sinkLbs, sourceLbs)
 import           Data.Conduit.Network               (sinkSocket, sourceSocket)
 import           Data.Conduit.TMChan                (sinkTBMChan, sourceTBMChan)
@@ -115,11 +116,11 @@ type PeerAddr = Text
 data OutputConnection = OutputConnection
     { outConnSend     :: forall m . (MonadIO m, MonadMask m)
                       => Source m BS.ByteString -> m ()
-      -- ^ Function to send to socket
+      -- ^ Function to send all data produced by source
     , outConnRec      :: forall m . (MonadIO m, MonadMask m, MonadTimed m,
                                      WithNamedLogger m)
                       => Sink BS.ByteString (ResponseT m) () -> m (IO ())
-      -- ^ Function to stark sink-listener, returns synchronous closer.
+      -- ^ Function to stark sink-listener, returns synchronous closer
     , outConnClose    :: IO ()
       -- ^ Closes socket, prevent any further manupulations
       -- with message queues
@@ -169,8 +170,8 @@ data SocketFrame = SocketFrame
     -- ^ Whether someone already listens on this socket
     , sfInChan    :: TBM.TBMChan BS.ByteString
     -- ^ For incoming packs of bytes
-    , sfOutChan   :: TBM.TBMChan BL.ByteString
-     -- ^ For packs of bytes to send
+    , sfOutChan   :: TBM.TBMChan (BL.ByteString, IO ())
+     -- ^ For (packs of bytes to send, notification when bytes passed to socket)
     , sfIsClosed  :: TV.TVar Bool
     -- ^ Whether @close@ hhas been invoked
     , sfIsClosedF :: TV.TVar Bool
@@ -187,13 +188,25 @@ mkSocketFrame settings sfPeerAddr = liftIO $ do
     return SocketFrame{..}
 
 -- | Makes sender function in terms of @MonadTransfer@ for given `SocketFrame`.
--- This first extracts ready `Lazy.ByteString` from given source, and then passes it to
--- sending queue.
+-- This action is synchronous, it finishes ones data produced by given source is
+-- fully consumed by socket.
 sfSend :: MonadIO m
        => SocketFrame -> Source m BS.ByteString -> m ()
 sfSend SocketFrame{..} src = do
     lbs <- src $$ sinkLbs
-    liftIO . atomically . TBM.writeTBMChan sfOutChan $ lbs
+    (notifier, awaiter) <- mkMonitor
+    liftIO . atomically . TBM.writeTBMChan sfOutChan $ (lbs, atomically notifier)
+
+    -- wait till data get consumed by socket, but immediatelly quit on socket close.
+    liftIO . atomically $ do
+        closed <- TV.readTVar sfIsClosed
+        unless closed awaiter
+  where
+    mkMonitor = do
+        t <- liftIO $ TV.newTVarIO False
+        return ( TV.writeTVar t True
+               , check =<< TV.readTVar t
+               )
 
 -- | Constructs function which allows infinitelly listens on given `SocketFrame` in terms of
 -- `MonadTransfer`.
@@ -254,7 +267,7 @@ sfResponseCtx sf =
 
 -- | Starts workers, which connect channels in `SocketFrame` with real `NS.Socket`.
 -- If error in any worker occured, it's propagaded.
-sfProcessSocket :: (MonadIO m, MonadCatch m, MonadTimed m)
+sfProcessSocket :: (MonadIO m, MonadMask m, MonadTimed m)
                 => SocketFrame -> NS.Socket -> m ()
 sfProcessSocket SocketFrame{..} sock = do
     -- TODO: rewrite to async when MonadTimed supports it
@@ -278,8 +291,15 @@ sfProcessSocket SocketFrame{..} sock = do
     either onError return event
     -- at this point workers are stopped
   where
-    foreverSend =
-        sourceTBMChan sfOutChan =$= awaitForever sourceLbs $$ sinkSocket sock
+    foreverSend = do
+        datm <- liftIO . atomically $ TBM.readTBMChan sfOutChan
+        forM_ datm $
+            \dat@(bs, notif) -> do
+                mask $ \unmask -> do
+                    let pushback = liftIO . atomically $ TBM.unGetTBMChan sfOutChan dat
+                    unmask (sourceLbs bs $$ sinkSocket sock) `onException` pushback
+                    liftIO notif
+                foreverSend
 
     foreverRec = do
         hoist liftIO (sourceSocket sock) $$ sinkTBMChan sfInChan False
