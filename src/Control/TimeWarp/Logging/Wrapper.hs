@@ -1,10 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable    #-}
 {-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE TemplateHaskell       #-}
-{-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
 
@@ -169,7 +166,7 @@ setSeverityMaybe
     :: MonadIO m
     => LoggerName -> Maybe Severity -> m ()
 setSeverityMaybe (LoggerName name) Nothing =
-    liftIO $ updateGlobalLogger name $ clearLevel
+    liftIO $ updateGlobalLogger name clearLevel
 setSeverityMaybe n (Just x) = setSeverity n x
 
 
