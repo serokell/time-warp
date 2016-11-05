@@ -480,8 +480,8 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
                     sfProcessSocket sf
 
     withRecovery sf action = catchAll action $ \e -> do
-        closed <- liftIO . atomically $ readTVar (sfIsClosed sf)
-        unless closed $ do
+        let unlessClosed act = liftIO (readTVarIO $ sfIsClosed sf) >>= flip when act
+        unlessClosed $ do
             commLog . logWarning $
                 sformat ("Error while working with socket to "%shown%": "%shown) addr e
             reconnect <- Transfer $ view reconnectPolicy
@@ -493,10 +493,9 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
                                  ", closing connection") addr
                     throwM e
                 Just delay -> do
-                    commLog . logWarning $
-                        sformat ("Reconnect in "%shown) delay
+                    commLog . logWarning $ sformat ("Reconnect in "%shown) delay
                     wait (for delay)
-                    withRecovery sf action
+                    unlessClosed $ withRecovery sf action
 
     releaseConn sf = do
         modifyManager $ outputConn . at addr .= Nothing
