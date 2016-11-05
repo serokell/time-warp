@@ -78,9 +78,10 @@ library
   default-language:    Haskell2010
   ghc-options:         -Wall -fno-warn-orphans -fprint-potential-instances
   default-extensions:  RecordWildCards
-                     , OverloadedStrings
-                     , DeriveDataTypeable
-                     , GeneralizedNewtypeDeriving
+                       OverloadedStrings
+                       DeriveDataTypeable
+                       DeriveGeneric
+                       GeneralizedNewtypeDeriving
 
 test-suite time-warp-test
   main-is:             Test.hs
