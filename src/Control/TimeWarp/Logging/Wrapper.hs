@@ -19,6 +19,7 @@
 
 module Control.TimeWarp.Logging.Wrapper
        ( Severity (..)
+       , convertSeverity
        , initLogging
        , initLoggingWith
        , setSeverity
@@ -52,11 +53,13 @@ import           Control.Monad.Trans.Cont       (ContT, mapContT)
 import           Control.Monad.Trans.Control    (MonadBaseControl (..))
 
 import           Data.Default                   (Default (def))
+import           Data.Hashable                  (Hashable)
 import           Data.Semigroup                 (Semigroup)
 import qualified Data.Semigroup                 as Semigroup
 import           Data.String                    (IsString)
 import qualified Data.Text                      as T
 import           Data.Typeable                  (Typeable)
+import           Data.Yaml                      (FromJSON, ToJSON)
 import           GHC.Generics                   (Generic)
 
 
@@ -81,10 +84,13 @@ data Severity
     | Error
     deriving (Generic, Typeable, Show, Read, Eq)
 
+instance FromJSON Severity
+instance ToJSON   Severity
+
 -- | Logger name to keep in context.
 newtype LoggerName = LoggerName
     { loggerName :: String    -- TODO: replace with 'Text'
-    } deriving (Show, IsString)
+    } deriving (Show, IsString, Eq, Hashable)
 
 instance Monoid LoggerName where
     mempty = ""

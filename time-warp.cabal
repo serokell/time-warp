@@ -32,8 +32,11 @@ library
                      , Control.TimeWarp.Timed.TimedIO
                      , Control.TimeWarp.Timed.TimedT
   other-modules:     Control.TimeWarp.Logging.Color
+                     Control.TimeWarp.Logging.LoggerConfig
+                     Control.TimeWarp.Logging.Parser
                      Control.TimeWarp.Logging.Wrapper
-  build-depends:       ansi-terminal
+  build-depends:       aeson
+                     , ansi-terminal
                      , base == 4.*
                      , binary >= 0.8.3
                      , binary-conduit >= 1.2.4.1
@@ -43,8 +46,11 @@ library
                      , containers
                      , data-default
                      , deepseq >= 1.4.1
+                     , errors
                      , exceptions
+                     , extra
                      , formatting
+                     , hashable
                      , hslogger
                      , lens
                      , lifted-base >= 0.2.3
@@ -74,6 +80,8 @@ library
                      , time-units >= 1.0.0
                      , transformers >= 0.4.2.0
                      , transformers-base
+                     , unordered-containers
+                     , yaml
   hs-source-dirs:      src
   default-language:    Haskell2010
   ghc-options:         -Wall -fno-warn-orphans -fprint-potential-instances
