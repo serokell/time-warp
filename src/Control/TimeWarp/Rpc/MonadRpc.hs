@@ -41,7 +41,7 @@ import           Control.Monad.Reader       (ReaderT (..))
 import           Control.Monad.Trans        (lift)
 import           Data.ByteString            (ByteString)
 
-import           Data.MessagePack.Object    (MessagePack, Object (..), toObject)
+import           Data.MessagePack           (MessagePack, toObject, Object)
 import           Data.Time.Units            (TimeUnit)
 
 import qualified Network.MessagePack.Client as C
@@ -60,7 +60,7 @@ type Host = ByteString
 type NetworkAddress = (Host, Port)
 
 
-deriving instance (Monad m, WithNamedLogger m) => WithNamedLogger (S.ServerT m)
+deriving instance WithNamedLogger m => WithNamedLogger (S.ServerT m)
 
 -- | Defines protocol of RPC layer.
 class MonadThrow r => MonadRpc r where
@@ -133,7 +133,7 @@ instance MonadRpc m => MonadRpc (ReaderT r m) where
     serve port methods = ReaderT $
                             \r -> serve port (convert r <$> methods)
       where
-        convert :: Monad m => r -> Method (ReaderT r m) -> Method m
+        convert :: r -> Method (ReaderT r m) -> Method m
         convert r Method {..} =
             Method methodName (flip runReaderT r . methodBody)
 

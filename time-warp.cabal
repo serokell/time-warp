@@ -36,6 +36,7 @@ library
                      , bytestring >= 0.10.6.0
                      , containers
                      , data-default
+                     , data-msgpack >= 0.0.8
                      , exceptions
                      , formatting
                      , hslogger
@@ -45,8 +46,7 @@ library
                      , MonadRandom
                      , monad-loops
                      , monad-control
-                     , msgpack >= 1.0.0
-                     , msgpack-rpc >= 1.0.0
+                     , network-msgpack-rpc == 0.0.1
                      , pqueue
                      , QuickCheck >= 2.8.1
                      , quickcheck-instances
@@ -83,11 +83,12 @@ test-suite time-warp-test
   build-depends:       async >= 2.0.1
                      , base >= 4.8 && < 5
                      , data-default
+                     , data-msgpack >= 0.0.8
                      , exceptions >= 0.8.2.1
                      , hspec >= 2.1.10
                      , lens >= 4.13
-                     , msgpack >= 1.0.0
                      , mtl
+                     , network-msgpack-rpc == 0.0.1
                      , QuickCheck >= 2.8.1
                      , serokell-util
                      , stm >= 2.4.4.1
@@ -96,7 +97,6 @@ test-suite time-warp-test
                      , time-units >= 1.0.0
                      , time-warp
                      , transformers >= 0.4.2.0
-                     , msgpack-rpc >= 1.0.0
                      , random >= 1.1
   hs-source-dirs:      test
   default-language:    Haskell2010
@@ -111,12 +111,13 @@ executable token-ring
   build-depends:       async >= 2.0.1
                      , base >= 4.8 && < 5
                      , data-default
+                     , data-msgpack >= 0.0.8
                      , exceptions >= 0.8.2.1
                      , formatting
                      , hspec >= 2.1.10
                      , lens >= 4.13
+                     , network-msgpack-rpc == 0.0.1
                      , MonadRandom
-                     , msgpack >= 1.0.0
                      , mtl
                      , QuickCheck >= 2.8.1
                      , serokell-util
@@ -126,7 +127,6 @@ executable token-ring
                      , time-units >= 1.0.0
                      , time-warp
                      , transformers >= 0.4.2.0
-                     , msgpack-rpc >= 1.0.0
                      , random >= 1.1
   hs-source-dirs:      examples/token-ring
   default-language:    Haskell2010  

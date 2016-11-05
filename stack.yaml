@@ -8,13 +8,6 @@ packages:
     git: https://github.com/serokell/serokell-util.git
     commit: 3fd9a911211276f1f2a2a9fe78bddbb2e1ffd503
   extra-dep: true
-- location:
-    git: https://github.com/serokell/msgpack-haskell.git
-    commit: d0dc2d7bdeef569d1fe6cf876d04046e0845e796
-  extra-dep: true
-  subdirs:
-    - msgpack
-    - msgpack-rpc
 
 nix:
     enable: false
@@ -27,6 +20,7 @@ extra-deps:
 - recursion-schemes-5
 - aeson-extra-0.4.0.0
 - data-msgpack-0.0.8
+- network-msgpack-rpc-0.0.1
 
 # Override default flag values for local packages and extra-deps
 flags: {}

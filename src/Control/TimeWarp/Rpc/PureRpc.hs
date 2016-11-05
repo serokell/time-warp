@@ -41,8 +41,7 @@ import           Data.Time.Units               (fromMicroseconds, toMicroseconds
 import           Data.Typeable                 (Typeable)
 import           System.Random                 (StdGen)
 
-import           Data.MessagePack              (Object)
-import           Data.MessagePack.Object       (MessagePack, fromObject, toObject)
+import           Data.MessagePack              (Object, MessagePack (..))
 
 import           Control.TimeWarp.Logging      (WithNamedLogger)
 import           Control.TimeWarp.Rpc.MonadRpc (Client (..), Host, Method (..),
@@ -190,7 +189,7 @@ runPureRpc _randSeed (toDelays -> _delays) rpc =
     net        = NetInfo{..}
     _listeners = Map.empty
 
-request :: (Monad m, MonadThrow m, MessagePack a)
+request :: (MonadThrow m, MessagePack a)
         => Client a
         -> Listeners (PureRpc m)
         -> Port
@@ -202,7 +201,7 @@ request (Client name args) listeners' port =
         Just f  -> do
             res <- f args
             case fromObject res of
-                Nothing -> throwM $ ResultTypeError "type mismatch"
+                Nothing -> throwM $ ResultTypeError "type mismatch" res
                 Just r  -> return r
 
 
