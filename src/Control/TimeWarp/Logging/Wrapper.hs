@@ -83,7 +83,7 @@ data Severity
 
 -- | Logger name to keep in context.
 newtype LoggerName = LoggerName
-    { loggerName :: String
+    { loggerName :: String    -- TODO: replace with 'Text'
     } deriving (Show, IsString)
 
 instance Monoid LoggerName where
