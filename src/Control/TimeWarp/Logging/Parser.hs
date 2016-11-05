@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP          #-}
 {-# LANGUAGE ViewPatterns #-}
 
 -- |
@@ -24,6 +25,11 @@ module Control.TimeWarp.Logging.Parser
        ( initLoggingFromConfig
        ) where
 
+#if PatakDebugSkovorodaBARDAQ
+import qualified Data.ByteString.Char8                 as BS (putStrLn)
+import           Data.Yaml.Pretty                      (defConfig, encodePretty)
+#endif
+
 import           Control.Error.Util                    ((?:))
 import           Control.Exception                     (throwIO)
 import           Control.Monad                         (join)
@@ -46,9 +52,6 @@ import           Control.TimeWarp.Logging.Wrapper      (LoggerName (..),
                                                         convertSeverity, initLogging,
                                                         setSeverityMaybe)
 
--- import qualified Data.ByteString.Char8            as BS (putStrLn)
--- import           Data.Yaml.Pretty                 (defConfig, encodePretty)
-
 traverseLoggerConfig :: MonadIO m => LoggerName -> LoggerMap -> m ()
 traverseLoggerConfig parent (HM.toList -> loggers) = for_ loggers $ \(name, LoggerConfig{..}) -> do
     let thisLoggerName = LoggerName $ unpack name
@@ -67,5 +70,10 @@ traverseLoggerConfig parent (HM.toList -> loggers) = for_ loggers $ \(name, Logg
 initLoggingFromConfig :: MonadIO m => FilePath -> m ()
 initLoggingFromConfig loggerConfigPath = do
     loggerConfig <- liftIO $ join $ either throwIO return <$> decodeFileEither loggerConfigPath
+
+#if PatakDebugSkovorodaBARDAQ
+    liftIO $ BS.putStrLn $ encodePretty defConfig loggerConfig
+#endif
+
     initLogging Warning
     traverseLoggerConfig (LoggerName rootLoggerName) loggerConfig
