@@ -233,7 +233,7 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
     processContent header = do
         nameM <- selector header
         case nameM of
-            Nothing -> 
+            Nothing ->
                 lift . commLog . logWarning $ "Unexpected end of incoming message"
             Just (name, Nothing) -> do
                 lift . commLog . logWarning $
@@ -265,7 +265,7 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
         return False
 
     invokeListenerSafe name = handleAll $
-        commLog . logError . sformat ("Uncaught error in listener "%shown%": "%shown) name
+        commLog . logError . sformat ("Uncaught error in listener "%stext%": "%shown) name
 
 chooseListener :: (MonadListener m, Unpackable p (HeaderNNameData h))
                => p -> h -> (l m -> MessageName) -> [l m]

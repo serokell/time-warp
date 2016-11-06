@@ -68,6 +68,7 @@ import           Data.Tuple                         (swap)
 import           Data.Typeable                      (Typeable)
 import           Formatting                         (bprint, builder, int, sformat, shown,
                                                      stext, string, (%))
+import qualified Formatting                         as F
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
 import qualified Network.Socket                     as NS
 
@@ -221,7 +222,7 @@ sfReceive sf@SocketFrame{..} sink = do
         flip finally (liftIO . atomically $ TV.writeTVar liClosed True) $ do
             flip runResponseT (sfResponseCtx sf) $
                 sourceTBMChan sfInChan $$ sink
-            commLog . logDebug $ sformat ("Listening on socket to "%shown%
+            commLog . logDebug $ sformat ("Listening on socket to "%stext%
                                           " happily stopped") sfPeerAddr
 
     fork_ $ do
@@ -230,7 +231,7 @@ sfReceive sf@SocketFrame{..} sink = do
         c <- liftIO . atomically $ TV.readTVar liClosed
         unless c $ do
             commLog . logDebug $
-                sformat ("While closing socket to "%shown%" listener "%
+                sformat ("While closing socket to "%stext%" listener "%
                          "worked for too long, closing with no regard to it") sfPeerAddr
             killThread ltid
             liftIO . atomically $ TV.writeTVar liClosed True
@@ -460,6 +461,8 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
                 startWorker sf `finally` releaseConn sf
         return conn
   where
+    addrName = buildNetworkAddress addr
+
     ensureConnExist = do
         settings <- Transfer ask
         modifyManager $ do
@@ -468,7 +471,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
                 then
                     return (fromJust existing, Nothing)
                 else do
-                    sf <- mkSocketFrame settings $ buildNetworkAddress addr
+                    sf <- mkSocketFrame settings addrName
                     let conn = sfOutputConn sf
                     outputConn . at addr ?= conn
                     return (conn, Just sf)
@@ -483,14 +486,15 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
         closed <- liftIO . atomically $ TV.readTVar (sfIsClosed sf)
         unless closed $ do
             commLog . logWarning $
-                sformat ("Error while working with socket to "%shown%": "%shown) addr e
+                sformat ("Error while working with socket to "%stext%": "%shown)
+                    addrName e
             reconnect <- Transfer $ view reconnectPolicy
             maybeReconnect <- reconnect
             case maybeReconnect of
                 Nothing -> do
                     commLog . logWarning $
-                        sformat ("Reconnection policy = don't reconnect "%shown%
-                                 ", closing connection") addr
+                        sformat ("Reconnection policy = don't reconnect "%stext%
+                                 ", closing connection") addrName
                     throwM e
                 Just delay -> do
                     commLog . logWarning $
@@ -502,7 +506,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
         modifyManager $ outputConn . at addr .= Nothing
         liftIO . atomically $ TV.writeTVar (sfIsClosedF sf) True
         commLog . logDebug $
-            sformat ("Socket to "%shown%" closed") addr
+            sformat ("Socket to "%stext%" closed") addrName
 
 
 instance MonadTransfer Transfer where
