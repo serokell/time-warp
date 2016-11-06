@@ -56,7 +56,7 @@ import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, a
 -- use ghci; this is only for logger debugging
 main :: IO ()
 main = bracket_
-    (initLoggingFromYaml "logger-config-example2.yaml")
+    (initLoggingFromYaml "logger-config-example.yaml")
     removeAllHandlers
     (return ())
 
