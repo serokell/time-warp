@@ -1,5 +1,4 @@
 {-# LANGUAGE ConstraintKinds           #-}
-{-# LANGUAGE DefaultSignatures         #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
@@ -243,7 +242,7 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
                 msgM <- unpackMsg packing =$= CL.head
                 case msgM of
                     Nothing -> lift . commLog . logWarning $
-                        sformat ("Unexpected end of incoming message")
+                        sformat "Unexpected end of incoming message"
                     Just (HeaderNContentData h r) ->
                         let _ = [h, header]  -- constraint on h type
                         in  do lift . invokeListenerSafe name $ f (header, r)
