@@ -34,8 +34,8 @@ import           Control.Concurrent.MVar            (MVar, modifyMVar, newEmptyM
                                                      newMVar, putMVar, takeMVar)
 import           Control.Concurrent.STM             (atomically, check)
 import qualified Control.Concurrent.STM.TBMChan     as TBM
-import           Control.Concurrent.STM.TChan       as TC
-import           Control.Concurrent.STM.TVar        as TV
+import qualified Control.Concurrent.STM.TChan       as TC
+import qualified Control.Concurrent.STM.TVar        as TV
 import           Control.Lens                       (at, each, makeLenses, use, view,
                                                      (.=), (?=), (^..))
 import           Control.Monad                      (forM_, forever, unless, when)
@@ -43,8 +43,8 @@ import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Catch                (Exception, MonadCatch,
                                                      MonadMask (mask), MonadThrow (..),
                                                      bracket, bracketOnError, catchAll,
-                                                     finally, handleAll, onException,
-                                                     throwM, mask_)
+                                                     finally, handleAll, mask_,
+                                                     onException, throwM)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (StateT (..), runStateT)
@@ -69,7 +69,7 @@ import           Data.Typeable                      (Typeable)
 import           Formatting                         (bprint, builder, int, sformat, shown,
                                                      stext, string, (%))
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
-import           Network.Socket                     as NS
+import qualified Network.Socket                     as NS
 
 import           Control.TimeWarp.Logging           (LoggerNameBox, WithNamedLogger,
                                                      logDebug, logError, logInfo,
@@ -218,14 +218,14 @@ sfReceive sf@SocketFrame{..} sink = do
 
     liClosed <- liftIO $ TV.newTVarIO False
     ltid <- fork $ logOnErr $  -- TODO: disconnect / reconnect on error?
-        flip finally (liftIO . atomically $ writeTVar liClosed True) $ do
+        flip finally (liftIO . atomically $ TV.writeTVar liClosed True) $ do
             flip runResponseT (sfResponseCtx sf) $
                 sourceTBMChan sfInChan $$ sink
             commLog . logDebug $ sformat ("Listening on socket to "%shown%
                                           " happily stopped") sfPeerAddr
 
     fork_ $ do
-        liftIO . atomically $ check =<< readTVar sfIsClosed
+        liftIO . atomically $ check =<< TV.readTVar sfIsClosed
         wait (for 3 sec)
         c <- liftIO . atomically $ TV.readTVar liClosed
         unless c $ do
@@ -233,14 +233,14 @@ sfReceive sf@SocketFrame{..} sink = do
                 sformat ("While closing socket to "%shown%" listener "%
                          "worked for too long, closing with no regard to it") sfPeerAddr
             killThread ltid
-            liftIO . atomically $ writeTVar liClosed True
+            liftIO . atomically $ TV.writeTVar liClosed True
     return $ do
         sfClose sf
-        atomically $ check =<< ((&&) <$> readTVar sfIsClosedF <*> readTVar liClosed)
+        atomically $ check =<< ((&&) <$> TV.readTVar sfIsClosedF <*> TV.readTVar liClosed)
 
 sfClose :: MonadIO m => SocketFrame -> m ()
 sfClose SocketFrame{..} = liftIO . atomically $ do
-    writeTVar sfIsClosed True
+    TV.writeTVar sfIsClosed True
     TBM.closeTBMChan sfInChan
     TBM.closeTBMChan sfOutChan
     clearInChan
@@ -303,7 +303,7 @@ sfProcessSocket SocketFrame{..} sock = do
 
     foreverRec = do
         hoist liftIO (sourceSocket sock) $$ sinkTBMChan sfInChan False
-        isClosed <- liftIO $ readTVarIO sfIsClosed
+        isClosed <- liftIO $ TV.readTVarIO sfIsClosed
         unless isClosed $
             throwM PeerClosedConnection
 
@@ -362,14 +362,14 @@ listenInbound (fromIntegral -> port) sink = do
     let unlessClosed act = liftIO (TV.readTVarIO isClosed) >>= flip unless act
     -- stoppers
     -- TODO: remove stoppers / awaiters when they are not more needed
-    stoppers  <- liftIO . atomically $ newTVar []
-    let addStopper s = liftIO . atomically $ modifyTVar' stoppers (s:)
+    stoppers  <- liftIO . atomically $ TV.newTVar []
+    let addStopper s = liftIO . atomically $ TV.modifyTVar' stoppers (s:)
     -- waiters till resources cleaned
     awaiters  <- liftIO . atomically $ TV.newTVar []
     let addAwaiter = liftIO . atomically $ do
-            t <- newTVar False
-            modifyTVar' awaiters $ (:) $ liftIO . atomically $ check =<< readTVar t
-            return $ atomically $ writeTVar t True
+            t <- TV.newTVar False
+            TV.modifyTVar' awaiters $ (:) $ liftIO . atomically $ check =<< TV.readTVar t
+            return $ atomically $ TV.writeTVar t True
 
     -- launch server
     bracketOnError (liftIO $ bindPortTCP port "*") (liftIO . NS.close) $
@@ -420,7 +420,7 @@ listenInbound (fromIntegral -> port) sink = do
                 port (sfPeerAddr sf)
 
         -- here socket processing stopped, release resources
-        liftIO . atomically $ writeTVar (sfIsClosedF sf) True
+        liftIO . atomically $ TV.writeTVar (sfIsClosedF sf) True
         liftIO stopper
 
     startProcessing sf unlessClosed action =
@@ -480,8 +480,8 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
                     sfProcessSocket sf
 
     withRecovery sf action = catchAll action $ \e -> do
-        let unlessClosed act = liftIO (readTVarIO $ sfIsClosed sf) >>= flip when act
-        unlessClosed $ do
+        closed <- liftIO . atomically $ TV.readTVar (sfIsClosed sf)
+        unless closed $ do
             commLog . logWarning $
                 sformat ("Error while working with socket to "%shown%": "%shown) addr e
             reconnect <- Transfer $ view reconnectPolicy
@@ -493,9 +493,10 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
                                  ", closing connection") addr
                     throwM e
                 Just delay -> do
-                    commLog . logWarning $ sformat ("Reconnect in "%shown) delay
+                    commLog . logWarning $
+                        sformat ("Reconnect in "%shown) delay
                     wait (for delay)
-                    unlessClosed $ withRecovery sf action
+                    withRecovery sf action
 
     releaseConn sf = do
         modifyManager $ outputConn . at addr .= Nothing
