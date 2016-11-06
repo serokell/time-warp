@@ -40,8 +40,8 @@ module Control.TimeWarp.Rpc.Transfer
        ) where
 
 import qualified Control.Concurrent                 as C
-import           Control.Concurrent.MVar            (MVar, modifyMVar, newEmptyMVar,
-                                                     newMVar, putMVar, takeMVar)
+import           Control.Concurrent.MVar            (MVar, modifyMVar,
+                                                     newMVar)
 import           Control.Concurrent.STM             (STM, atomically, check)
 import qualified Control.Concurrent.STM.TBMChan     as TBM
 import qualified Control.Concurrent.STM.TChan       as TC
@@ -228,9 +228,10 @@ data OutputConnection = OutputConnection
       -- ^ Function to send all data produced by source
     , outConnRec      :: forall m . (MonadIO m, MonadMask m, MonadTimed m,
                                      WithNamedLogger m)
-                      => Sink BS.ByteString (ResponseT m) () -> m (IO ())
+                      => Sink BS.ByteString (ResponseT m) () -> m (m ())
       -- ^ Function to stark sink-listener, returns synchronous closer
-    , outConnClose    :: IO ()
+    , outConnClose    :: forall m . MonadIO m
+                      => m ()
       -- ^ Closes socket, prevent any further manupulations
       -- with message queues
     , outConnAddr     :: PeerAddr
@@ -321,7 +322,7 @@ sfSend SocketFrame{..} src = do
 -- `MonadTransfer`.
 -- Attempt to use this function twice will end with `AlreadyListeningOutbound` error.
 sfReceive :: (MonadIO m, MonadMask m, MonadTimed m, WithNamedLogger m)
-          => SocketFrame ->  Sink BS.ByteString (ResponseT m) () -> m (IO ())
+          => SocketFrame ->  Sink BS.ByteString (ResponseT m) () -> m (m ())
 sfReceive sf@SocketFrame{..} sink = do
     busy <- liftIO . atomically $ TV.swapTVar sfInBusy True
     when busy $ throwM $ AlreadyListeningOutbound sfPeerAddr
@@ -346,7 +347,8 @@ sfReceive sf@SocketFrame{..} sink = do
             liftIO . atomically $ TV.writeTVar liClosed True
     return $ do
         sfClose sf
-        atomically $ check =<< ((&&) <$> TV.readTVar sfIsClosedF <*> TV.readTVar liClosed)
+        liftIO . atomically $
+            check =<< ((&&) <$> TV.readTVar sfIsClosedF <*> TV.readTVar liClosed)
 
 sfClose :: MonadIO m => SocketFrame -> m ()
 sfClose SocketFrame{..} = liftIO . atomically $ do
@@ -465,7 +467,7 @@ buildNetworkAddress (host, port) = sformat (stext%":"%int) (decodeUtf8 host) por
 
 listenInbound :: Port
               -> Sink BS.ByteString (ResponseT Transfer) ()
-              -> Transfer (IO ())
+              -> Transfer (Transfer ())
 listenInbound (fromIntegral -> port) sink = do
     -- whether `close` was invoked
     isClosed  <- liftIO . atomically $ TV.newTVar False
@@ -488,19 +490,17 @@ listenInbound (fromIntegral -> port) sink = do
             sid <- fork . flip finally (liftIO $ NS.close lsocket) . unmask $
                 logOnServeErr unlessClosed $
                     serve lsocket unlessClosed addStopper addAwaiter `finally` markReady
-            addStopper =<< actionToIO (killThread sid)
+            addStopper $ killThread sid
 
     -- closer
-    logClose  <- actionToIO $ commLog . logDebug $
-        sformat ("Stopping server at "%int) port
-    logClosed <- actionToIO $ commLog . logDebug $
-        sformat ("Server at "%int%" fully stopped") port
     return $ do
         liftIO . atomically $ TV.writeTVar isClosed True
-        logClose
-        sequence_ =<< TV.readTVarIO stoppers
-        sequence_ =<< TV.readTVarIO awaiters
-        logClosed
+        commLog . logDebug $
+            sformat ("Stopping server at "%int) port
+        sequence_ =<< liftIO (TV.readTVarIO stoppers)
+        sequence_ =<< liftIO (TV.readTVarIO awaiters)
+        commLog . logDebug $
+            sformat ("Server at "%int%" fully stopped") port
   where
     serve lsocket unlessClosed addStopper addAwaiter = forever $
         bracketOnError (liftIO $ acceptSafe lsocket) (liftIO . NS.close . fst) $
@@ -521,7 +521,7 @@ listenInbound (fromIntegral -> port) sink = do
         sf <- mkSocketFrame settings $ buildSockAddr peerAddr
         -- start listener, which works in another thread
         stopper <- sfReceive sf sink
-        addStopper =<< actionToIO (liftIO stopper)
+        addStopper stopper
         -- start `SocketFrame`'s' workers
         unlessClosed $ startProcessing sf unlessClosed $ do
             sfProcessSocket sf sock
@@ -531,19 +531,12 @@ listenInbound (fromIntegral -> port) sink = do
 
         -- here socket processing stopped, release resources
         liftIO . atomically $ TV.writeTVar (sfIsClosedF sf) True
-        liftIO stopper
+        stopper
 
     startProcessing sf unlessClosed action =
         catchAll action $ unlessClosed . commLog . logWarning .
             sformat ("Error in server socket "%int%" connected with "%stext%": "%shown)
                 port (sfPeerAddr sf)
-
--- Here is hack to use @IO ()@ as closer, not @m ()@, for now. TODO: remove
-actionToIO :: (MonadIO m, MonadTimed m) => m () -> m (IO ())
-actionToIO a = do
-    m <- liftIO newEmptyMVar
-    fork_ $ liftIO (takeMVar m) >> a
-    return $ putMVar m ()
 
 -- | Listens for incoming bytes on outbound connection.
 -- Listening would occur until sink gets closed. Killing this thread won't help here.
@@ -551,7 +544,7 @@ actionToIO a = do
 -- Subscribtions could be implemented at layer above, where we operate with messages.
 listenOutbound :: NetworkAddress
                -> Sink BS.ByteString (ResponseT Transfer) ()
-               -> Transfer (IO ())
+               -> Transfer (Transfer ())
 listenOutbound addr sink = do
     conn <- getOutConnOrOpen addr
     outConnRec conn sink
