@@ -14,6 +14,10 @@ description:
     be launched as either real program or fast emulation without need to wait
     for delays and with network nastiness manually controlled.
 
+Flag PatakDebugSkovorodaBARDAQ
+    default:     False
+    description: Enable debug support
+
 library
   exposed-modules:     Control.TimeWarp.Logging
 
@@ -32,8 +36,12 @@ library
                      , Control.TimeWarp.Timed.TimedIO
                      , Control.TimeWarp.Timed.TimedT
   other-modules:     Control.TimeWarp.Logging.Color
+                     Control.TimeWarp.Logging.Formatter
+                     Control.TimeWarp.Logging.LoggerConfig
+                     Control.TimeWarp.Logging.Parser
                      Control.TimeWarp.Logging.Wrapper
-  build-depends:       ansi-terminal
+  build-depends:       aeson
+                     , ansi-terminal
                      , base == 4.*
                      , binary >= 0.8.3
                      , binary-conduit >= 1.2.4.1
@@ -43,8 +51,11 @@ library
                      , containers
                      , data-default
                      , deepseq >= 1.4.1
+                     , errors
                      , exceptions
+                     , extra
                      , formatting
+                     , hashable
                      , hslogger
                      , lens
                      , lifted-base >= 0.2.3
@@ -74,13 +85,18 @@ library
                      , time-units >= 1.0.0
                      , transformers >= 0.4.2.0
                      , transformers-base
+                     , unordered-containers
+                     , yaml
   hs-source-dirs:      src
   default-language:    Haskell2010
   ghc-options:         -Wall -fno-warn-orphans -fprint-potential-instances
+  if flag(PatakDebugSkovorodaBARDAQ)
+      cpp-options:     -DPatakDebugSkovorodaBARDAQ
   default-extensions:  RecordWildCards
-                     , OverloadedStrings
-                     , DeriveDataTypeable
-                     , GeneralizedNewtypeDeriving
+                       OverloadedStrings
+                       DeriveDataTypeable
+                       DeriveGeneric
+                       GeneralizedNewtypeDeriving
 
 test-suite time-warp-test
   main-is:             Test.hs
@@ -126,6 +142,7 @@ executable playground
                      , data-default
                      , exceptions >= 0.8.2.1
                      , formatting
+                     , hslogger
                      , hspec >= 2.1.10
                      , lens >= 4.13
                      , MonadRandom
