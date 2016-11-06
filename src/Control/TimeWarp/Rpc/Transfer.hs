@@ -40,8 +40,7 @@ module Control.TimeWarp.Rpc.Transfer
        ) where
 
 import qualified Control.Concurrent                 as C
-import           Control.Concurrent.MVar            (MVar, modifyMVar,
-                                                     newMVar)
+import           Control.Concurrent.MVar            (MVar, modifyMVar, newMVar)
 import           Control.Concurrent.STM             (STM, atomically, check)
 import qualified Control.Concurrent.STM.TBMChan     as TBM
 import qualified Control.Concurrent.STM.TChan       as TC
@@ -54,8 +53,8 @@ import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Catch                (Exception, MonadCatch,
                                                      MonadMask (mask), MonadThrow (..),
                                                      bracket, bracketOnError, catchAll,
-                                                     finally, handleAll, mask_,
-                                                     onException, throwM)
+                                                     finally, handleAll, onException,
+                                                     throwM)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (State, StateT (..), runState,
@@ -556,12 +555,13 @@ logOnErr = handleAll $ \e ->
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
 getOutConnOrOpen addr@(host, fromIntegral -> port) =
-    mask_ $ do
-        (conn, sfm) <- ensureConnExist
-        forM_ sfm $
-            \sf -> fork_ $
-                startWorker sf `finally` releaseConn sf
-        return conn
+    mask $
+        \unmask -> do
+            (conn, sfm) <- ensureConnExist
+            forM_ sfm $
+                \sf -> fork_ $
+                    unmask (startWorker sf) `finally` releaseConn sf
+            return conn
   where
     addrName = buildNetworkAddress addr
 
