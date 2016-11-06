@@ -27,17 +27,28 @@ module Control.TimeWarp.Rpc.Transfer
        , transferSettings
        , queueSize
        , reconnectPolicy
+
+       -- TODO: do smth with this
+       , JobManager
+       , mkJobManager
+       , addJob
+       , interruptAllJobs
+       , awaitAllJobs
+       , stopAllJobs
+       , addManagerAsJob
+       , addThreadJob
        ) where
 
 import qualified Control.Concurrent                 as C
 import           Control.Concurrent.MVar            (MVar, modifyMVar, newEmptyMVar,
                                                      newMVar, putMVar, takeMVar)
-import           Control.Concurrent.STM             (atomically, check)
+import           Control.Concurrent.STM             (STM, atomically, check)
 import qualified Control.Concurrent.STM.TBMChan     as TBM
 import qualified Control.Concurrent.STM.TChan       as TC
 import qualified Control.Concurrent.STM.TVar        as TV
-import           Control.Lens                       (at, each, makeLenses, use, view,
-                                                     (.=), (?=), (^..))
+import           Control.Lens                       (at, at, each, makeLenses, use, view,
+                                                     (&), (.=), (.~), (<<+=), (<<.=),
+                                                     (?=), (^.), (^..))
 import           Control.Monad                      (forM_, forever, unless, when)
 import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Catch                (Exception, MonadCatch,
@@ -47,7 +58,8 @@ import           Control.Monad.Catch                (Exception, MonadCatch,
                                                      onException, throwM)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
-import           Control.Monad.State                (StateT (..), runStateT)
+import           Control.Monad.State                (State, StateT (..), runState,
+                                                     runStateT)
 import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
 import qualified Data.ByteString                    as BS
@@ -68,7 +80,6 @@ import           Data.Tuple                         (swap)
 import           Data.Typeable                      (Typeable)
 import           Formatting                         (bprint, builder, int, sformat, shown,
                                                      stext, string, (%))
-import qualified Formatting                         as F
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
 import qualified Network.Socket                     as NS
 
@@ -82,7 +93,7 @@ import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer
                                                      sendRaw)
 import           Control.TimeWarp.Timed             (Microsecond, MonadTimed, ThreadId,
                                                      TimedIO, for, fork, fork_, interval,
-                                                     killThread, sec, wait)
+                                                     killThread, myThreadId, sec, wait)
 
 
 -- * Related datatypes
@@ -106,6 +117,104 @@ instance Exception PeerClosedConnection
 
 instance Buildable PeerClosedConnection where
     build _ = "Peer closed connection"
+
+
+-- * Job manager
+
+type JobId = Int
+
+type JobInterrupter m = m ()
+
+type MarkJobFinished m = m ()
+
+data JobsState m = JobsState
+    { _jmIsClosed :: Bool
+      -- ^ whether close had been invoked
+    , _jmJobs     :: M.Map JobId (JobInterrupter m)
+      -- ^ map with currently active jobs
+    , _jmCounter  :: JobId
+      -- ^ total number of allocated jobs ever
+    }
+$(makeLenses ''JobsState)
+
+-- | Keeps set of jobs. Allows to stop jobs and wait till all of them finish.
+type JobManager m = TV.TVar (JobsState m)
+
+mkJobManager :: MonadIO m => m (JobManager m0)
+mkJobManager = liftIO . TV.newTVarIO $
+    JobsState
+    { _jmIsClosed = False
+    , _jmJobs     = M.empty
+    , _jmCounter  = 0
+    }
+
+modifyTVarS :: TV.TVar s -> State s a -> STM a
+modifyTVarS t st = do
+    s <- TV.readTVar t
+    let (a, s') = runState st s
+    TV.writeTVar t s'
+    return a
+
+-- | Remembers and starts given action.
+-- Once `interruptAllJobs` called on this manager, if job is not completed yet,
+-- `JobInterrupter` is invoked.
+--
+-- Given job *must* invoke given `MarkJobFinished` upon finishing, even if it was
+-- interrupted.
+--
+-- If manager is already stopped, action would not start, and `JobInterrupter` would be
+-- invoked.
+addJob :: MonadIO m
+       => JobManager m -> JobInterrupter m -> (MarkJobFinished m -> m ()) -> m ()
+addJob manager stopper action = do
+    jidm <- liftIO . atomically $ do
+        st <- TV.readTVar manager
+        let closed = st ^. jmIsClosed
+        if closed
+            then return Nothing
+            else modifyTVarS manager $ do
+                    no <- jmCounter <<+= 1
+                    jmJobs . at no ?= stopper
+                    return $ Just no
+    maybe stopper (action . markReady) jidm
+  where
+    markReady jid = liftIO . atomically $ do
+        st <- TV.readTVar manager
+        TV.writeTVar manager $ st & jmJobs . at jid .~ Nothing
+
+-- | Invokes `JobInterrupter`s for all incompleted jobs.
+-- Has no effect on second call.
+interruptAllJobs :: MonadIO m => JobManager m -> m ()
+interruptAllJobs m = do
+    jobs <- liftIO . atomically $ modifyTVarS m $ do
+        wasClosed <- jmIsClosed <<.= True
+        if wasClosed
+            then return M.empty
+            else use jmJobs
+    sequence_ jobs
+
+-- | Waits for all registered jobs to invoke `MaskForJobFinished`.
+awaitAllJobs :: MonadIO m => JobManager m -> m ()
+awaitAllJobs m =
+    liftIO . atomically $ check . M.null . view jmJobs =<< TV.readTVar m
+
+-- | Interrupts and then awaits for all jobs to complete.
+stopAllJobs :: MonadIO m => JobManager m -> m ()
+stopAllJobs m = interruptAllJobs m >> awaitAllJobs m
+
+-- | Add second manager as a job to first manager.
+addManagerAsJob :: MonadIO m => JobManager m -> JobManager m -> m ()
+addManagerAsJob manager managerJob =
+    addJob manager (stopAllJobs managerJob) (awaitAllJobs managerJob >>)
+
+-- | Adds job executing in another thread, where interrupting kills the thread.
+addThreadJob :: (MonadIO m,  MonadMask m, MonadTimed m) => JobManager m -> m () -> m ()
+addThreadJob manager action =
+    mask $
+        \unmask -> fork_ $ do
+            tid <- myThreadId
+            addJob manager (killThread tid) $
+                finally $ unmask action
 
 
 -- ** Connections
