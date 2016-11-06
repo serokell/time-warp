@@ -46,6 +46,7 @@ import           System.Log.Handler.Simple             (fileHandler)
 import           System.Log.Logger                     (addHandler, rootLoggerName,
                                                         updateGlobalLogger)
 
+import           Control.TimeWarp.Logging.Formatter    (setStdoutFormatter)
 import           Control.TimeWarp.Logging.LoggerConfig (LoggerConfig (..), LoggerMap)
 import           Control.TimeWarp.Logging.Wrapper      (LoggerName (..),
                                                         Severity (Debug, Warning),
@@ -60,7 +61,7 @@ traverseLoggerConfig parent (HM.toList -> loggers) = for_ loggers $ \(name, Logg
 
     whenJust lcFile $ \fileName -> liftIO $ do
         let fileSeverity   = convertSeverity $ lcSeverity ?: Debug
-        thisLoggerHandler <- fileHandler fileName fileSeverity
+        thisLoggerHandler <- setStdoutFormatter True <$> fileHandler fileName fileSeverity
         updateGlobalLogger (loggerName thisLogger) $ addHandler thisLoggerHandler
 
     traverseLoggerConfig thisLogger lcSubloggers
