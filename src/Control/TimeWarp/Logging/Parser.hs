@@ -23,6 +23,7 @@
 
 module Control.TimeWarp.Logging.Parser
        ( initLoggingFromYaml
+       , initLoggingFromYamlWithMapper
        ) where
 
 #if PatakDebugSkovorodaBARDAQ
@@ -53,23 +54,31 @@ import           Control.TimeWarp.Logging.Wrapper      (LoggerName (..),
                                                         convertSeverity, initLogging,
                                                         setSeverityMaybe)
 
-traverseLoggerConfig :: MonadIO m => LoggerName -> LoggerMap -> m ()
-traverseLoggerConfig parent (HM.toList -> loggers) = for_ loggers $ \(name, LoggerConfig{..}) -> do
-    let thisLoggerName = LoggerName $ unpack name
-    let thisLogger     = parent <> thisLoggerName
-    setSeverityMaybe thisLogger lcSeverity
+traverseLoggerConfig
+    :: MonadIO m
+    => (LoggerName -> LoggerName)
+    -> LoggerName
+    -> LoggerMap
+    -> m ()
+traverseLoggerConfig logMapper = processLoggers
+  where
+    processLoggers:: MonadIO m => LoggerName -> LoggerMap -> m ()
+    processLoggers parent (HM.toList -> loggers) = for_ loggers $ \(name, LoggerConfig{..}) -> do
+        let thisLoggerName = LoggerName $ unpack name
+        let thisLogger     = logMapper  $ parent <> thisLoggerName
+        setSeverityMaybe thisLogger lcSeverity
 
-    whenJust lcFile $ \fileName -> liftIO $ do
-        let fileSeverity   = convertSeverity $ lcSeverity ?: Debug
-        thisLoggerHandler <- setStdoutFormatter True <$> fileHandler fileName fileSeverity
-        updateGlobalLogger (loggerName thisLogger) $ addHandler thisLoggerHandler
+        whenJust lcFile $ \fileName -> liftIO $ do
+            let fileSeverity   = convertSeverity $ lcSeverity ?: Debug
+            thisLoggerHandler <- setStdoutFormatter True <$> fileHandler fileName fileSeverity
+            updateGlobalLogger (loggerName thisLogger) $ addHandler thisLoggerHandler
 
-    traverseLoggerConfig thisLogger lcSubloggers
+        processLoggers thisLogger lcSubloggers
 
 -- | Initialize logger hierarchy from configuration file.
 -- See this module description.
-initLoggingFromYaml :: MonadIO m => FilePath -> m ()
-initLoggingFromYaml loggerConfigPath = do
+initLoggingFromYamlWithMapper :: MonadIO m => (LoggerName -> LoggerName) -> FilePath -> m ()
+initLoggingFromYamlWithMapper loggerMapper loggerConfigPath = do
     loggerConfig <- liftIO $ join $ either throwIO return <$> decodeFileEither loggerConfigPath
 
 #if PatakDebugSkovorodaBARDAQ
@@ -77,4 +86,7 @@ initLoggingFromYaml loggerConfigPath = do
 #endif
 
     initLogging Warning
-    traverseLoggerConfig (LoggerName rootLoggerName) loggerConfig
+    traverseLoggerConfig loggerMapper (LoggerName rootLoggerName) loggerConfig
+
+initLoggingFromYaml :: MonadIO m => FilePath -> m ()
+initLoggingFromYaml = initLoggingFromYamlWithMapper id
