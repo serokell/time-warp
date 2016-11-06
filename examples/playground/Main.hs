@@ -40,7 +40,7 @@ import           System.Log.Logger                 (removeAllHandlers)
 
 import           Control.TimeWarp.Logging          (Severity (Debug), initLogging,
                                                     initLoggingFromYaml, logDebug,
-                                                    logInfo, usingLoggerName)
+                                                    logError, logInfo, usingLoggerName)
 import           Control.TimeWarp.Rpc              (BinaryP (..), Binding (..),
                                                     Listener (..), ListenerH (..),
                                                     Message, MonadTransfer (..),
@@ -55,10 +55,14 @@ import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, a
 
 -- use ghci; this is only for logger debugging
 main :: IO ()
-main = bracket_
-    (initLoggingFromYaml "logger-config-example.yaml")
-    removeAllHandlers
-    (return ())
+main = bracket_ (initLoggingFromYaml "logger-config-example.yaml")
+                removeAllHandlers
+                testLogging
+  where
+    testLogging = usingLoggerName "node" $ do
+        logInfo  "patak"
+        logDebug "skovoroda"
+        logError "BARDAQ"
 
 
 {-
