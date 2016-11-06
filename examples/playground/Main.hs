@@ -20,9 +20,11 @@ module Main
 
 import           Control.Concurrent.MVar           (newEmptyMVar, putMVar, takeMVar)
 import           Control.Concurrent.STM.TVar       (modifyTVar, newTVar, readTVar)
+import           Control.Exception                 (bracket_)
 import           Control.Monad                     (forM_, replicateM_, when)
 import           Control.Monad.STM                 (atomically)
 import           Control.Monad.Trans               (MonadIO (liftIO))
+
 import           Data.Binary                       (Binary, Get, Put, get, put)
 import           Data.Conduit                      (yield, (=$=))
 import qualified Data.Conduit.List                 as CL
@@ -34,8 +36,11 @@ import           Data.Word                         (Word16)
 import           Formatting                        (sformat, shown, string, (%))
 import           GHC.Generics                      (Generic)
 
+import           System.Log.Logger                 (removeAllHandlers)
+
 import           Control.TimeWarp.Logging          (Severity (Debug), initLogging,
-                                                    logDebug, logInfo, usingLoggerName)
+                                                    initLoggingFromYaml, logDebug,
+                                                    logError, logInfo, usingLoggerName)
 import           Control.TimeWarp.Rpc              (BinaryP (..), Binding (..),
                                                     Listener (..), ListenerH (..),
                                                     Message, MonadTransfer (..),
@@ -48,9 +53,17 @@ import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, a
                                                     fork_, interval, ms, runTimedIO,
                                                     schedule, sec, sec', till)
 
-
+-- use ghci; this is only for logger debugging
 main :: IO ()
-main = return ()  -- use ghci
+main = bracket_ (initLoggingFromYaml "logger-config-example.yaml")
+                removeAllHandlers
+                testLogging
+  where
+    testLogging = usingLoggerName "node" $ do
+        logInfo  "patak"
+        logDebug "skovoroda"
+        logError "BARDAQ"
+
 
 {-
 runReal :: MsgPackRpc a -> IO a
