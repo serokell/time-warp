@@ -39,7 +39,7 @@ import           GHC.Generics                      (Generic)
 import           System.Log.Logger                 (removeAllHandlers)
 
 import           Control.TimeWarp.Logging          (Severity (Debug), initLogging,
-                                                    initLoggingFromConfig, logDebug,
+                                                    initLoggingFromYaml, logDebug,
                                                     logInfo, usingLoggerName)
 import           Control.TimeWarp.Rpc              (BinaryP (..), Binding (..),
                                                     Listener (..), ListenerH (..),
@@ -56,7 +56,7 @@ import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, a
 -- use ghci; this is only for logger debugging
 main :: IO ()
 main = bracket_
-    (initLoggingFromConfig "logger-config-example2.yaml")
+    (initLoggingFromYaml "logger-config-example2.yaml")
     removeAllHandlers
     (return ())
 

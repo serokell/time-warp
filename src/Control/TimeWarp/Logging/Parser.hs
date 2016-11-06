@@ -22,7 +22,7 @@
 -- @node@ and @node.comm@.
 
 module Control.TimeWarp.Logging.Parser
-       ( initLoggingFromConfig
+       ( initLoggingFromYaml
        ) where
 
 #if PatakDebugSkovorodaBARDAQ
@@ -67,8 +67,8 @@ traverseLoggerConfig parent (HM.toList -> loggers) = for_ loggers $ \(name, Logg
 
 -- | Initialize logger hierarchy from configuration file.
 -- See this module description.
-initLoggingFromConfig :: MonadIO m => FilePath -> m ()
-initLoggingFromConfig loggerConfigPath = do
+initLoggingFromYaml :: MonadIO m => FilePath -> m ()
+initLoggingFromYaml loggerConfigPath = do
     loggerConfig <- liftIO $ join $ either throwIO return <$> decodeFileEither loggerConfigPath
 
 #if PatakDebugSkovorodaBARDAQ
