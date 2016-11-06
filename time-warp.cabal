@@ -36,6 +36,7 @@ library
                      , Control.TimeWarp.Timed.TimedIO
                      , Control.TimeWarp.Timed.TimedT
   other-modules:     Control.TimeWarp.Logging.Color
+                     Control.TimeWarp.Logging.Formatter
                      Control.TimeWarp.Logging.LoggerConfig
                      Control.TimeWarp.Logging.Parser
                      Control.TimeWarp.Logging.Wrapper

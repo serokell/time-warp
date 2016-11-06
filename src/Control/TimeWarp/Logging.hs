@@ -12,9 +12,11 @@
 -- Messages are colored depending on used serverity.
 
 module Control.TimeWarp.Logging
-       ( module Control.TimeWarp.Logging.Parser
+       ( module Control.TimeWarp.Logging.LoggerConfig
+       , module Control.TimeWarp.Logging.Parser
        , module Control.TimeWarp.Logging.Wrapper
        ) where
 
+import           Control.TimeWarp.Logging.LoggerConfig
 import           Control.TimeWarp.Logging.Parser
 import           Control.TimeWarp.Logging.Wrapper

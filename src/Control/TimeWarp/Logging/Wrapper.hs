@@ -42,37 +42,36 @@ module Control.TimeWarp.Logging.Wrapper
        , logMessage
        ) where
 
-import           Control.Lens                   (Wrapped (..), iso)
-import           Control.Monad.Base             (MonadBase)
-import           Control.Monad.Catch            (MonadCatch, MonadMask, MonadThrow)
-import           Control.Monad.Except           (ExceptT (..), runExceptT)
-import           Control.Monad.Reader           (MonadReader (..), ReaderT, runReaderT)
-import           Control.Monad.State            (MonadState (get), StateT, evalStateT)
-import           Control.Monad.Trans            (MonadIO (liftIO), MonadTrans, lift)
-import           Control.Monad.Trans.Cont       (ContT, mapContT)
-import           Control.Monad.Trans.Control    (MonadBaseControl (..))
+import           Control.Lens                       (Wrapped (..), iso)
+import           Control.Monad.Base                 (MonadBase)
+import           Control.Monad.Catch                (MonadCatch, MonadMask, MonadThrow)
+import           Control.Monad.Except               (ExceptT (..), runExceptT)
+import           Control.Monad.Reader               (MonadReader (..), ReaderT,
+                                                     runReaderT)
+import           Control.Monad.State                (MonadState (get), StateT, evalStateT)
+import           Control.Monad.Trans                (MonadIO (liftIO), MonadTrans, lift)
+import           Control.Monad.Trans.Cont           (ContT, mapContT)
+import           Control.Monad.Trans.Control        (MonadBaseControl (..))
 
-import           Data.Default                   (Default (def))
-import           Data.Hashable                  (Hashable)
-import           Data.Semigroup                 (Semigroup)
-import qualified Data.Semigroup                 as Semigroup
-import           Data.String                    (IsString)
-import qualified Data.Text                      as T
-import           Data.Typeable                  (Typeable)
-import           Data.Yaml                      (FromJSON, ToJSON)
-import           GHC.Generics                   (Generic)
+import           Data.Default                       (Default (def))
+import           Data.Hashable                      (Hashable)
+import           Data.Semigroup                     (Semigroup)
+import qualified Data.Semigroup                     as Semigroup
+import           Data.String                        (IsString)
+import qualified Data.Text                          as T
+import           Data.Typeable                      (Typeable)
+import           Data.Yaml                          (FromJSON, ToJSON)
+import           GHC.Generics                       (Generic)
 
+import           System.IO                          (stderr, stdout)
+import           System.Log.Handler.Simple          (streamHandler)
+import           System.Log.Logger                  (Priority (DEBUG, ERROR, INFO, NOTICE, WARNING),
+                                                     clearLevel, logM, rootLoggerName,
+                                                     setHandlers, setLevel,
+                                                     updateGlobalLogger)
 
-import           System.IO                      (stderr, stdout)
-import           System.Log.Formatter           (simpleLogFormatter)
-import           System.Log.Handler             (setFormatter)
-import           System.Log.Handler.Simple      (streamHandler)
-import           System.Log.Logger              (Priority (DEBUG, ERROR, INFO, NOTICE, WARNING),
-                                                 clearLevel, logM, rootLoggerName,
-                                                 setHandlers, setLevel,
-                                                 updateGlobalLogger)
-
-import           Control.TimeWarp.Logging.Color (colorizer)
+import           Control.TimeWarp.Logging.Formatter (setStderrFormatter,
+                                                     setStdoutFormatter)
 
 -- | This type is intended to be used as command line option
 -- which specifies which messages to print.
@@ -140,23 +139,12 @@ initLoggingWith
 initLoggingWith LoggingFormat {..} defaultSeverity = liftIO $ do
     -- We set DEBUG here, to allow all messages by stdout handler.
     -- They will be filtered by loggers.
-    stdoutHandler <-
-        flip setFormatter stdoutFormatter <$> streamHandler stdout DEBUG
-    stderrHandler <-
-        flip setFormatter stderrFormatter <$> streamHandler stderr ERROR
+    stdoutHandler <- setStdoutFormatter lfShowTime <$> streamHandler stdout DEBUG
+    stderrHandler <- setStderrFormatter            <$> streamHandler stderr ERROR
     updateGlobalLogger rootLoggerName $
         setHandlers [stderrHandler, stdoutHandler]
     updateGlobalLogger rootLoggerName $
         setLevel (convertSeverity defaultSeverity)
-  where
-    stderrFormatter =
-        simpleLogFormatter $
-        mconcat [colorizer ERROR "[$loggername:$prio] ", timeFmt, "$msg"]
-    timeFmt = "[$time] "
-    timeFmtStdout = if lfShowTime then timeFmt else ""
-    stdoutFmt pr = mconcat
-        [colorizer pr "[$loggername:$prio] ", timeFmtStdout, "$msg"]
-    stdoutFormatter h r@(pr, _) = simpleLogFormatter (stdoutFmt pr) h r
 
 -- | Version of initLoggingWith without any predefined loggers.
 initLogging :: MonadIO m => Severity -> m ()
