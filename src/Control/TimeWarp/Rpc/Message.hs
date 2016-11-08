@@ -11,7 +11,7 @@
 -- Module      : Control.TimeWarp.Rpc.Message
 -- Copyright   : (c) Serokell, 2016
 -- License     : GPL-3 (see the file LICENSE)
--- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
+-- Maintainer  : Serokell <hi@serokell.io>
 -- Stability   : experimental
 -- Portability : POSIX, GHC
 --
