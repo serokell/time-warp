@@ -1,5 +1,5 @@
 name:                time-warp
-version:             0.1.1
+version:             0.1.1.1
 synopsis:            distributed systems execution emulation
 homepage:            https://github.com/serokell/time-warp
 bug-reports:         https://github.com/serokell/time-warp/issues
@@ -11,8 +11,8 @@ copyright:           2016 Serokell
 build-type:          Simple
 cabal-version:       >=1.18
 category:            Control, Network
-synopsis:            Disctributed systems execution emulation
-description:         This package allows to write scenarious over distributed
+synopsis:            Distributed systems execution emulation
+description:         This package allows to write scenarios over distributed
                      systems, which can be launched as either real program or
                      fast emulation without need to wait for delays and with
                      network nastiness manually controlled.
