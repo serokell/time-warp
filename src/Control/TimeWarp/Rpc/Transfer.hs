@@ -38,7 +38,7 @@ import           Control.Concurrent.STM.TChan       as TC
 import           Control.Concurrent.STM.TVar        as TV
 import           Control.Lens                       (at, each, makeLenses, use, view,
                                                      (.=), (<<+=), (?=), (^..))
-import           Control.Monad                      (forM_, forever, unless, when)
+import           Control.Monad                      (forM_, forever, guard, unless, when)
 import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Catch                (Exception, MonadCatch, MonadMask,
                                                      MonadThrow (..), bracket,
@@ -56,6 +56,7 @@ import           Data.Conduit                       (Sink, Source, awaitForever,
 import           Data.Conduit.Binary                (sinkLbs, sourceLbs)
 import           Data.Conduit.Network               (sinkSocket, sourceSocket)
 import           Data.Conduit.TMChan                (sinkTBMChan, sourceTBMChan)
+import qualified Data.IORef                         as IR
 import           Data.List                          (intersperse)
 import qualified Data.Map                           as M
 import           Data.Maybe                         (fromJust, isJust)
@@ -137,10 +138,12 @@ type InConnId = Int
 
 -- ** Settings
 
+type FailsInRow = Int
+
 data Settings = Settings
     { _queueSize       :: Int
     , _reconnectPolicy :: forall m . (WithNamedLogger m, MonadIO m)
-                       => m (Maybe Microsecond)
+                       => FailsInRow -> m (Maybe Microsecond)
     }
 $(makeLenses ''Settings)
 
@@ -148,7 +151,8 @@ $(makeLenses ''Settings)
 transferSettings :: Settings
 transferSettings = Settings
     { _queueSize = 100
-    , _reconnectPolicy = return (Just $ interval 3 sec)
+    , _reconnectPolicy =
+        \failsInRow -> return $ guard (failsInRow < 3) >> Just (interval 3 sec)
     }
 
 
@@ -474,30 +478,34 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) = do
                     outputConn . at addr ?= conn
                     return (conn, Just sf)
 
-    startWorker sf =
-        withRecovery sf $
+    startWorker sf = do
+        failsInRow <- liftIO $ IR.newIORef 0
+        withRecovery sf failsInRow $
             bracket (liftIO $ fst <$> getSocketFamilyTCP host port NS.AF_UNSPEC)
                     (liftIO . NS.close) $
-                    sfProcessSocket sf
+                    \sock -> do
+                        liftIO $ IR.writeIORef failsInRow 0
+                        sfProcessSocket sf sock
 
-    withRecovery sf action = catchAll action $ \e -> do
+    withRecovery sf failsInRow action = catchAll action $ \e -> do
         closed <- liftIO . atomically $ readTVar (sfIsClosed sf)
         unless closed $ do
             commLog . logWarning $
                 sformat ("Error while working with socket to "%shown%": "%shown) addr e
+
             reconnect <- Transfer $ view reconnectPolicy
-            maybeReconnect <- reconnect
+            fails <- liftIO $ succ <$> IR.readIORef failsInRow
+            liftIO $ IR.writeIORef failsInRow fails
+            maybeReconnect <- reconnect fails
             case maybeReconnect of
-                Nothing -> do
+                Nothing ->
                     commLog . logWarning $
-                        sformat ("Reconnection policy = don't reconnect "%shown%
-                                 ", closing connection") addr
-                    throwM e
+                        sformat ("Can't connect to "%shown%", closing connection") addr
                 Just delay -> do
                     commLog . logWarning $
                         sformat ("Reconnect in "%shown) delay
                     wait (for delay)
-                    withRecovery sf action
+                    withRecovery sf failsInRow action
 
     releaseConn sf = do
         modifyManager $ outputConn . at addr .= Nothing

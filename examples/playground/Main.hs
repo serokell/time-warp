@@ -294,7 +294,8 @@ slowpokeScenario = runTimedIO $ do
     packing = BinaryP
 
     settings = transferSettings
-        { _reconnectPolicy = return (Just $ interval 1 sec)
+        { _reconnectPolicy = \failsInRow -> return $
+            if failsInRow < 5 then Just (interval 1 sec) else Nothing
         }
 
 closingServerScenario :: IO ()
