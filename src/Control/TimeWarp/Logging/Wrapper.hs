@@ -42,6 +42,7 @@ module Control.TimeWarp.Logging.Wrapper
        , logMessage
        ) where
 
+import           Control.Concurrent.MVar            (MVar, newMVar, withMVar)
 import           Control.Lens                       (Wrapped (..), iso)
 import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Catch                (MonadCatch, MonadMask, MonadThrow)
@@ -63,8 +64,8 @@ import           Data.Typeable                      (Typeable)
 import           Data.Yaml                          (FromJSON, ToJSON)
 import           GHC.Generics                       (Generic)
 
-import           System.IO                          (stderr, stdout)
-import           System.Log.Handler.Simple          (streamHandler)
+import           System.IO                          (Handle, stderr, stdout)
+import           System.Log.Handler.Simple          (GenericHandler (..), streamHandler)
 import           System.Log.Logger                  (Priority (DEBUG, ERROR, INFO, NOTICE, WARNING),
                                                      clearLevel, logM, rootLoggerName,
                                                      setHandlers, setLevel,
@@ -95,6 +96,8 @@ instance Monoid LoggerName where
     mempty = ""
     mappend = (Semigroup.<>)
 
+
+
 -- | Defined such that @n1@ is parent for @(n1 <> n2)@
 -- (see <http://hackage.haskell.org/package/hslogger-1.2.10/docs/System-Log-Logger.html hslogger description>).
 instance Semigroup LoggerName where
@@ -120,6 +123,19 @@ data LoggingFormat = LoggingFormat
 instance Default LoggingFormat where
     def = LoggingFormat {lfShowTime = True}
 
+-- | Like `streamHandler`, but syncronized using given `MVar` as lock
+-- (it should be filled before this function call).
+streamHandlerWithLock :: MVar () -> Handle -> Priority -> IO (GenericHandler Handle)
+streamHandlerWithLock lock h p = do
+    GenericHandler{..} <- streamHandler h p
+    return GenericHandler
+        { priority  = priority
+        , formatter = formatter
+        , privData  = privData
+        , writeFunc = \a s -> withMVar lock $ const $ writeFunc a s
+        , closeFunc = closeFunc
+        }
+
 -- | This function initializes global logging system. At high level, it sets
 -- severity which will be used by all loggers by default, sets default
 -- formatters and sets custom severity for given loggers (if any).
@@ -137,10 +153,13 @@ initLoggingWith
     :: MonadIO m
     => LoggingFormat -> Severity -> m ()
 initLoggingWith LoggingFormat {..} defaultSeverity = liftIO $ do
+    lock <- liftIO $ newMVar ()
     -- We set DEBUG here, to allow all messages by stdout handler.
     -- They will be filtered by loggers.
-    stdoutHandler <- setStdoutFormatter lfShowTime <$> streamHandler stdout DEBUG
-    stderrHandler <- setStderrFormatter            <$> streamHandler stderr ERROR
+    stdoutHandler <- setStdoutFormatter lfShowTime <$>
+        streamHandlerWithLock lock stdout DEBUG
+    stderrHandler <- setStderrFormatter <$>
+        streamHandlerWithLock lock stderr ERROR
     updateGlobalLogger rootLoggerName $
         setHandlers [stderrHandler, stdoutHandler]
     updateGlobalLogger rootLoggerName $
