@@ -62,6 +62,7 @@ import qualified Data.Map                           as M
 import           Data.Maybe                         (fromJust, isJust)
 import           Data.Streaming.Network             (acceptSafe, bindPortTCP,
                                                      getSocketFamilyTCP)
+import           Data.Conduit.List                  (iterM)
 import           Data.Text                          (Text)
 import           Data.Text.Buildable                (Buildable (build), build)
 import           Data.Text.Encoding                 (decodeUtf8)
@@ -269,7 +270,7 @@ sfResponseCtx sf =
 
 -- | Starts workers, which connect channels in `SocketFrame` with real `NS.Socket`.
 -- If error in any worker occured, it's propagaded.
-sfProcessSocket :: (MonadIO m, MonadCatch m, MonadTimed m)
+sfProcessSocket :: (MonadIO m, MonadCatch m, MonadTimed m, WithNamedLogger m)
                 => SocketFrame -> NS.Socket -> m ()
 sfProcessSocket SocketFrame{..} sock = do
     -- TODO: rewrite to async when MonadTimed supports it
@@ -294,13 +295,21 @@ sfProcessSocket SocketFrame{..} sock = do
     -- at this point workers are stopped
   where
     foreverSend =
-        sourceTBMChan sfOutChan =$= awaitForever sourceLbs $$ sinkSocket sock
+        sourceTBMChan sfOutChan =$= awaitForever sourceLbs =$= noteSend $$ sinkSocket sock
 
     foreverRec = do
-        hoist liftIO (sourceSocket sock) $$ sinkTBMChan sfInChan False
+        hoist liftIO (sourceSocket sock) =$= noteRec $$ sinkTBMChan sfInChan False
         isClosed <- liftIO $ readTVarIO sfIsClosed
         unless isClosed $
             throwM PeerClosedConnection
+
+    noteSend = iterM $ const $
+        commLog . logDebug $
+            sformat ("-> "%stext%" +1 message") sfPeerAddr
+
+    noteRec = iterM $ const $
+        commLog . logDebug $
+            sformat ("<- "%stext%" +1 message") sfPeerAddr
 
     reportErrors eventChan action =
         catchAll action $ liftIO . atomically . TC.writeTChan eventChan . Left
