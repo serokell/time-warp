@@ -194,7 +194,7 @@ replyRP packing h raw = replyRaw $ yield (HeaderNRawData h raw) =$= packMsg pack
 type MonadListener m =
     ( MonadTransfer m
     , MonadIO m
-    , MonadMask m
+    , MonadCatch m
     , WithNamedLogger m
     )
 
