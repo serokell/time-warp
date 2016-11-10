@@ -496,11 +496,15 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) = do
 
     startWorker sf = do
         failsInRow <- liftIO $ IR.newIORef 0
+        commLog . logDebug $ sformat ("Lively socket to "%stext%" created, processing")
+            (sfPeerAddr sf)
         withRecovery sf failsInRow $
             bracket (liftIO $ fst <$> getSocketFamilyTCP host port NS.AF_UNSPEC)
                     (liftIO . NS.close) $
                     \sock -> do
                         liftIO $ IR.writeIORef failsInRow 0
+                        commLog . logDebug $
+                            sformat ("Established connection to "%stext) (sfPeerAddr sf)
                         sfProcessSocket sf sock
 
     withRecovery sf failsInRow action = catchAll action $ \e -> do
