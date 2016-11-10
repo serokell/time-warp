@@ -414,7 +414,11 @@ listenInbound (fromIntegral -> port) sink = do
 
         settings <- Transfer ask
         sf <- mkSocketFrame settings $ buildSockAddr peerAddr
-        -- start listener, which works in another thread
+        commLog . logDebug $
+            sformat ("New input connection: "%int%" <- "%stext)
+            port (sfPeerAddr sf)
+
+       -- start listener, which works in another thread
         stopper <- sfReceive sf sink
         addStopper =<< actionToIO (liftIO stopper)
         -- start `SocketFrame`'s' workers

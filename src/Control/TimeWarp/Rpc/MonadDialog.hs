@@ -166,8 +166,11 @@ sendP packing addr msg = sendRaw addr $
 
 sendHP :: (Packable p (HeaderNContentData h r), MonadTransfer m)
       => p -> NetworkAddress -> h -> r -> m ()
-sendHP packing addr h msg = sendRaw addr $
-    yield (HeaderNContentData h msg) =$= packMsg packing
+sendHP packing addr h msg = do
+--    commLog . logDebug $
+--        sformat ("Sending to "%shown%" "%shown) addr (messageName $ proxyOf r)
+    sendRaw addr $
+        yield (HeaderNContentData h msg) =$= packMsg packing
 
 sendRP :: (Packable p (HeaderNRawData h), MonadTransfer m)
       => p -> NetworkAddress -> h -> RawData -> m ()
@@ -277,8 +280,9 @@ chooseListener packing h getName listeners = do
     forM nameM $
         \(HeaderNNameData h0 name) ->
             let _ = [h, h0]  -- constraint h0 type
-            in  do  lift . commLog . logDebug $
-                        sformat ("Got message: "%stext) name
+            in  do  peer <- lift peerAddr
+                    lift . commLog . logDebug $
+                        sformat ("Got message from "%stext%": "%stext) peer name
                     return (name, listenersMap ^. at name)
   where
     listenersMap = M.fromList [(getName li, li) | li <- listeners]
