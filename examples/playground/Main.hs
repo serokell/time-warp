@@ -103,7 +103,7 @@ yohohoScenario = runTimedIO $ do
 
     -- guy 1
     usingLoggerName "guy.1" . runTransfer . runDialog packing . fork_ $ do
-        saveWorker $ listen (AtPort $ guysPort 1)
+        saveWorker $ listen (AtConnTo $ guy 2)
             [ Listener $ \Pong ->
               do logDebug "Got Pong!"
                  reply $ EpicRequest 14 " men on the dead man's chest"
@@ -114,25 +114,25 @@ yohohoScenario = runTimedIO $ do
             send (guy 2) Ping
             logInfo "Sent"
 
+
     -- guy 2
     usingLoggerName "guy.2" . runTransfer . runDialog packing . fork_ $ do
         saveWorker $ listen (AtPort $ guysPort 2)
             [ Listener $ \Ping ->
               do logDebug "Got Ping!"
-                 send (guy 1) Pong
-            ]
-        saveWorker $ listen (AtConnTo $ guy 1) $
-            [ Listener $ \EpicRequest{..} ->
+                 reply Pong
+            , Listener $ \EpicRequest{..} ->
               do logDebug "Got EpicRequest!"
                  wait (for 0.1 sec')
                  logInfo $ sformat (shown%string) (num + 1) msg
             ]
+
     wait (till finish)
     killWorkers
     wait (for 100 ms)
   where
     finish :: Second
-    finish = 1
+    finish = 5
 
     packing :: BinaryP
     packing = BinaryP
