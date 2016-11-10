@@ -210,9 +210,9 @@ sfSend :: (MonadIO m, WithNamedLogger m)
 sfSend SocketFrame{..} src = do
     lbs <- src $$ sinkLbs
     whenM (liftIO . atomically $ TBM.isFullTBMChan sfOutChan) $
-      logWarning $ sformat ("Send channel for " % shown % " is full") sfPeerAddr
+      commLog . logWarning $ sformat ("Send channel for " % shown % " is full") sfPeerAddr
     whenM (liftIO . atomically $ TBM.isClosedTBMChan sfOutChan) $
-      logWarning $ sformat ("Send channel for " % shown % " is closed, message wouldn't be sent") sfPeerAddr
+      commLog . logWarning $ sformat ("Send channel for " % shown % " is closed, message wouldn't be sent") sfPeerAddr
     liftIO . atomically . TBM.writeTBMChan sfOutChan $ lbs
   where
     whenM condM action = condM >>= flip when action
@@ -283,8 +283,8 @@ sfProcessSocket SocketFrame{..} sock = do
     -- create channel to notify about error
     eventChan  <- liftIO TC.newTChanIO
     -- create worker threads
-    stid <- fork $ reportErrors eventChan foreverSend
-    rtid <- fork $ reportErrors eventChan foreverRec
+    stid <- fork $ reportErrors eventChan foreverSend $ sformat ("foreverSend on " % stext) sfPeerAddr
+    rtid <- fork $ reportErrors eventChan foreverRec  $ sformat ("foreverRec on " % stext) sfPeerAddr
     commLog . logDebug $ sformat ("Start processing of socket to "%stext) sfPeerAddr
     -- check whether @isClosed@ keeps @True@
     ctid <- fork $ do
@@ -320,8 +320,11 @@ sfProcessSocket SocketFrame{..} sock = do
         commLog . logDebug $
             sformat ("<- "%stext%" +1 message") sfPeerAddr
 
-    reportErrors eventChan action =
-        catchAll action $ liftIO . atomically . TC.writeTChan eventChan . Left
+    reportErrors eventChan action desc =
+        action
+          `catchAll` \e -> do
+              commLog . logDebug $ sformat ("Caught error on " % stext % ": " % shown) desc e
+              liftIO . atomically . TC.writeTChan eventChan . Left $ e
 
 
 -- * Transfer
@@ -422,8 +425,9 @@ listenInbound (fromIntegral -> port) sink = do
                     unmask (processSocket sock addr unlessClosed addStopper)
                             `finally` liftIO (NS.close sock >> markReady)
 
-    logOnServeErr unlessClosed = handleAll $ unlessClosed . logError .
-        sformat ("Server at port "%int%" stopped with error "%shown) port
+    logOnServeErr unlessClosed = handleAll $ \e -> do
+            unlessClosed . logError $ sformat ("Server at port "%int%" stopped with error "%shown) port e
+            logDebug $ sformat ("Server at port "%int%" stopped with error "%shown) port e
 
     -- makes socket work, finishes once it's fully shutdown
     processSocket sock peerAddr unlessClosed addStopper = do
@@ -451,9 +455,13 @@ listenInbound (fromIntegral -> port) sink = do
         liftIO stopper
 
     startProcessing sf unlessClosed action =
-        catchAll action $ unlessClosed . commLog . logWarning .
+        action `catchAll` \e -> do
+          unlessClosed . commLog . logWarning $
             sformat ("Error in server socket "%int%" connected with "%stext%": "%shown)
-                port (sfPeerAddr sf)
+                port (sfPeerAddr sf) e
+          commLog . logDebug $
+            sformat ("Error in server socket "%int%" connected with "%stext%": "%shown)
+                port (sfPeerAddr sf) e
 
 -- Here is hack to use @IO ()@ as closer, not @m ()@, for now. TODO: remove
 actionToIO :: (MonadIO m, MonadTimed m) => m () -> m (IO ())
