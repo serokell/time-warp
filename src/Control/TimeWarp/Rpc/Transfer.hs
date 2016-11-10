@@ -54,6 +54,7 @@ import qualified Data.ByteString.Lazy               as BL
 import           Data.Conduit                       (Sink, Source, awaitForever, ($$),
                                                      (=$=))
 import           Data.Conduit.Binary                (sinkLbs, sourceLbs)
+import           Data.Conduit.List                  (iterM)
 import           Data.Conduit.Network               (sinkSocket, sourceSocket)
 import           Data.Conduit.TMChan                (sinkTBMChan, sourceTBMChan)
 import qualified Data.IORef                         as IR
@@ -114,8 +115,8 @@ instance Buildable PeerClosedConnection where
 type PeerAddr = Text
 
 data OutputConnection = OutputConnection
-    { outConnSend     :: forall m . (MonadIO m, MonadMask m)
-                      => Source m BS.ByteString -> m ()
+    { outConnSend     :: forall m . (MonadIO m, MonadMask m, WithNamedLogger m)
+                      => Source IO BS.ByteString -> m ()
       -- ^ Keeps function to send to socket
     , outConnRec      :: forall m . (MonadIO m, MonadMask m, MonadTimed m,
                                      WithNamedLogger m)
@@ -205,9 +206,9 @@ mkSocketFrame settings sfPeerAddr = liftIO $ do
 -- This first extracts ready `Lazy.ByteString` from given source, and then passes it to
 -- sending queue.
 sfSend :: MonadIO m
-       => SocketFrame -> Source m BS.ByteString -> m ()
+       => SocketFrame -> Source IO BS.ByteString -> m ()
 sfSend SocketFrame{..} src = do
-    lbs <- src $$ sinkLbs
+    lbs <- liftIO $ src $$ sinkLbs
     liftIO . atomically . TBM.writeTBMChan sfOutChan $ lbs
 
 -- | Constructs function which allows infinitelly listens on given `SocketFrame` in terms of
@@ -269,7 +270,7 @@ sfResponseCtx sf =
 
 -- | Starts workers, which connect channels in `SocketFrame` with real `NS.Socket`.
 -- If error in any worker occured, it's propagaded.
-sfProcessSocket :: (MonadIO m, MonadCatch m, MonadTimed m)
+sfProcessSocket :: (MonadIO m, MonadCatch m, MonadTimed m, WithNamedLogger m)
                 => SocketFrame -> NS.Socket -> m ()
 sfProcessSocket SocketFrame{..} sock = do
     -- TODO: rewrite to async when MonadTimed supports it
@@ -294,13 +295,21 @@ sfProcessSocket SocketFrame{..} sock = do
     -- at this point workers are stopped
   where
     foreverSend =
-        sourceTBMChan sfOutChan =$= awaitForever sourceLbs $$ sinkSocket sock
+        sourceTBMChan sfOutChan =$= awaitForever sourceLbs =$= noteSend $$ sinkSocket sock
 
     foreverRec = do
-        hoist liftIO (sourceSocket sock) $$ sinkTBMChan sfInChan False
+        hoist liftIO (sourceSocket sock) =$= noteRec $$ sinkTBMChan sfInChan False
         isClosed <- liftIO $ readTVarIO sfIsClosed
         unless isClosed $
             throwM PeerClosedConnection
+
+    noteSend = iterM $ const $
+        commLog . logDebug $
+            sformat ("-> "%stext%" +1 message") sfPeerAddr
+
+    noteRec = iterM $ const $
+        commLog . logDebug $
+            sformat ("<- "%stext%" +1 message") sfPeerAddr
 
     reportErrors eventChan action =
         catchAll action $ liftIO . atomically . TC.writeTChan eventChan . Left
@@ -521,7 +530,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) = do
 instance MonadTransfer Transfer where
     sendRaw addr src = do
         conn <- getOutConnOrOpen addr
-        liftIO $ outConnSend conn src
+        outConnSend conn src
 
     listenRaw (AtPort   port) = listenInbound port
     listenRaw (AtConnTo addr) = listenOutbound addr

@@ -99,8 +99,8 @@ class Monad m => MonadResponse m where
     peerAddr :: m Text
 
 data ResponseContext = ResponseContext
-    { respSend     :: forall m . (MonadIO m, MonadMask m)
-                   => Source m ByteString -> m ()
+    { respSend     :: forall m . (MonadIO m, MonadMask m, WithNamedLogger m)
+                   => Source IO ByteString -> m ()
     , respClose    :: IO ()
     , respPeerAddr :: Text
     }
@@ -128,8 +128,9 @@ instance MonadTransfer m => MonadTransfer (ResponseT m) where
         ResponseT $ listenRaw binding $ hoistRespCond getResponseT sink
     close addr = lift $ close addr
 
-instance (MonadTransfer m, MonadIO m) => MonadResponse (ResponseT m) where
-    replyRaw dat = ResponseT $ ask >>= \ctx -> liftIO $ respSend ctx dat
+instance (MonadTransfer m, MonadIO m, MonadMask m, WithNamedLogger m)
+       => MonadResponse (ResponseT m) where
+    replyRaw dat = ResponseT $ ask >>= \ctx -> respSend ctx dat
 
     closeR = ResponseT $ ask >>= liftIO . respClose
 
