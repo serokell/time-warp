@@ -67,6 +67,7 @@ import           Control.Monad                      (forM, forM_)
 import           Control.Monad.Base                 (MonadBase (..))
 import           Control.Monad.Catch                (MonadCatch, MonadMask, MonadThrow,
                                                      handleAll)
+import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (MonadReader (ask), ReaderT (..))
 import           Control.Monad.State                (MonadState)
 import           Control.Monad.Trans                (MonadIO, MonadTrans (..))
@@ -111,46 +112,46 @@ class MonadTransfer m => MonadDialog p m | m -> p where
 -- different kinds of `send`, `reply` and `listen` functions, but they weren't :(
 
 -- | Send a message.
-send :: (Packable p (HeaderNContentData Empty r), MonadDialog p m)
+send :: (Packable p (HeaderNContentData Empty r), MonadDialog p m, MonadThrow m)
      => NetworkAddress -> r -> m ()
 send addr msg = packingType >>= \p -> sendP p addr msg
 
-sendH :: (Packable p (HeaderNContentData h r), MonadDialog p m)
+sendH :: (Packable p (HeaderNContentData h r), MonadDialog p m, MonadThrow m)
       => NetworkAddress -> h -> r -> m ()
 sendH addr h msg = packingType >>= \p -> sendHP p addr h msg
 
-sendR :: (Packable p (HeaderNRawData h), MonadDialog p m)
+sendR :: (Packable p (HeaderNRawData h), MonadDialog p m, MonadThrow m)
       => NetworkAddress -> h -> RawData -> m ()
 sendR addr h raw = packingType >>= \p -> sendRP p addr h raw
 
 -- | Sends message to peer node.
-reply :: (Packable p (HeaderNContentData Empty r), MonadDialog p m, MonadResponse m)
+reply :: (Packable p (HeaderNContentData Empty r), MonadDialog p m, MonadResponse m, MonadThrow m)
       => r -> m ()
 reply msg = packingType >>= \p -> replyP p msg
 
-replyH :: (Packable p (HeaderNContentData h r), MonadDialog p m, MonadResponse m)
+replyH :: (Packable p (HeaderNContentData h r), MonadDialog p m, MonadResponse m, MonadThrow m)
        => h -> r -> m ()
 replyH h msg = packingType >>= \p -> replyHP p h msg
 
-replyR :: (Packable p (HeaderNRawData h), MonadDialog p m, MonadResponse m)
+replyR :: (Packable p (HeaderNRawData h), MonadDialog p m, MonadResponse m, MonadThrow m)
        => h -> RawData -> m ()
 replyR h raw = packingType >>= \p -> replyRP p h raw
 
 -- | Starts server.
 listen :: (Unpackable p (HeaderNNameData Empty), Unpackable p (HeaderNRawData Empty),
-           MonadListener m, MonadDialog p m)
+           MonadListener m, MonadDialog p m, MonadMask m, WithNamedLogger m)
        => Binding -> [Listener p m] -> m (IO ())
 listen binding listeners =
     packingType >>= \p -> listenP p binding listeners
 
 listenH :: (Unpackable p (HeaderNNameData h), Unpackable p (HeaderNRawData h),
-            MonadListener m, MonadDialog p m)
+            MonadListener m, MonadDialog p m, MonadMask m, WithNamedLogger m)
         => Binding -> [ListenerH p h m] -> m (IO ())
 listenH binding listeners =
     packingType >>= \p -> listenHP p binding listeners
 
 listenR :: (Unpackable p (HeaderNNameData h), Unpackable p (HeaderNRawData h),
-            MonadListener m, MonadDialog p m)
+            MonadListener m, MonadDialog p m, MonadMask m, WithNamedLogger m)
         => Binding -> [ListenerH p h m] -> ListenerR h m -> m (IO ())
 listenR binding listeners rawListener =
     packingType >>= \p -> listenRP p binding listeners rawListener
@@ -159,12 +160,12 @@ listenR binding listeners rawListener =
 -- ** Packing type manually defined
 
 -- | Send a message.
-sendP :: (Packable p (HeaderNContentData Empty r), MonadTransfer m)
+sendP :: (Packable p (HeaderNContentData Empty r), MonadTransfer m, MonadThrow m)
       => p -> NetworkAddress -> r -> m ()
 sendP packing addr msg = sendRaw addr $
     yield (HeaderNContentData Empty msg) =$= packMsg packing
 
-sendHP :: (Packable p (HeaderNContentData h r), MonadTransfer m)
+sendHP :: (Packable p (HeaderNContentData h r), MonadTransfer m, MonadThrow m)
       => p -> NetworkAddress -> h -> r -> m ()
 sendHP packing addr h msg = do
 --    commLog . logDebug $
@@ -172,22 +173,22 @@ sendHP packing addr h msg = do
     sendRaw addr $
         yield (HeaderNContentData h msg) =$= packMsg packing
 
-sendRP :: (Packable p (HeaderNRawData h), MonadTransfer m)
+sendRP :: (Packable p (HeaderNRawData h), MonadTransfer m, MonadThrow m)
       => p -> NetworkAddress -> h -> RawData -> m ()
 sendRP packing addr h raw = sendRaw addr $
     yield (HeaderNRawData h raw) =$= packMsg packing
 
 
 -- | Sends message to peer node.
-replyP :: (Packable p (HeaderNContentData Empty r), MonadResponse m)
+replyP :: (Packable p (HeaderNContentData Empty r), MonadResponse m, MonadThrow m)
        => p -> r -> m ()
 replyP packing msg = replyRaw $ yield (HeaderNContentData Empty msg) =$= packMsg packing
 
-replyHP :: (Packable p (HeaderNContentData h r), MonadResponse m)
+replyHP :: (Packable p (HeaderNContentData h r), MonadResponse m, MonadThrow m)
        => p -> h -> r -> m ()
 replyHP packing h msg = replyRaw $ yield (HeaderNContentData h msg) =$= packMsg packing
 
-replyRP :: (Packable p (HeaderNRawData h), MonadResponse m)
+replyRP :: (Packable p (HeaderNRawData h), MonadResponse m, MonadThrow m)
        => p -> h -> RawData -> m ()
 replyRP packing h raw = replyRaw $ yield (HeaderNRawData h raw) =$= packMsg packing
 
@@ -200,7 +201,7 @@ type MonadListener m =
 
 -- | Starts server.
 listenP :: (Unpackable p (HeaderNNameData Empty), Unpackable p (HeaderNRawData Empty),
-            MonadListener m)
+            MonadListener m, MonadMask m, WithNamedLogger m)
         => p -> Binding -> [Listener p m] -> m (IO ())
 listenP packing binding listeners = listenHP packing binding $ convert <$> listeners
   where
@@ -209,14 +210,14 @@ listenP packing binding listeners = listenHP packing binding $ convert <$> liste
     second (Empty, r) = r
 
 listenHP :: (Unpackable p (HeaderNNameData h), Unpackable p (HeaderNRawData h),
-             MonadListener m)
+             MonadListener m, MonadMask m, WithNamedLogger m)
          => p -> Binding -> [ListenerH p h m] -> m (IO ())
 listenHP packing binding listeners =
     listenRP packing binding listeners (const $ return True)
 
 
 listenRP :: (Unpackable p (HeaderNNameData h), Unpackable p (HeaderNRawData h),
-             MonadListener m)
+             MonadListener m, MonadMask m, WithNamedLogger m)
          => p -> Binding -> [ListenerH p h m] -> ListenerR h m -> m (IO ())
 listenRP packing binding listeners rawListener = listenRaw binding loop
   where
@@ -236,7 +237,7 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
     processContent header = do
         nameM <- selector header
         case nameM of
-            Nothing -> 
+            Nothing ->
                 lift . commLog . logWarning $
                     sformat ("Unexpected end of incoming message")
                 -- TODO: throw!
@@ -272,7 +273,7 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
     invokeListenerSafe name = handleAll $
         commLog . logError . sformat ("Uncaught error in listener "%shown%": "%shown) name
 
-chooseListener :: (MonadListener m, Unpackable p (HeaderNNameData h))
+chooseListener :: (MonadListener m, Unpackable p (HeaderNNameData h), MonadMask m, WithNamedLogger m)
                => p -> h -> (l m -> MessageName) -> [l m]
                -> Consumer ByteString (ResponseT m) (Maybe (MessageName, Maybe (l m)))
 chooseListener packing h getName listeners = do
@@ -346,7 +347,7 @@ instance MonadBaseControl IO m => MonadBaseControl IO (Dialog p m) where
 type instance ThreadId (Dialog p m) = ThreadId m
 
 instance MonadTransfer m => MonadTransfer (Dialog p m) where
-    sendRaw addr req = lift $ sendRaw addr req
+    sendRaw addr req = Dialog ask >>= \ctx -> lift $ sendRaw addr (hoist (runDialog ctx) req)
     listenRaw binding sink =
         Dialog $ listenRaw binding $ hoistRespCond getDialog sink
     close = lift . close
