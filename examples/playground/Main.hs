@@ -305,7 +305,8 @@ slowpokeScenario = runTimedIO $ do
     finish = 5
 
     settings = transferSettings
-        { _reconnectPolicy = return (Just $ interval 1 sec)
+        { _reconnectPolicy = \failsInRow -> return $
+            if failsInRow < 5 then Just (interval 1 sec) else Nothing
         }
 
 closingServerScenario :: IO ()
