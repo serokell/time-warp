@@ -270,7 +270,7 @@ sfResponseCtx sf =
 
 -- | Starts workers, which connect channels in `SocketFrame` with real `NS.Socket`.
 -- If error in any worker occured, it's propagaded.
-sfProcessSocket :: (MonadIO m, MonadCatch m, MonadTimed m, WithNamedLogger m)
+sfProcessSocket :: (MonadIO m, MonadMask m, MonadTimed m, WithNamedLogger m)
                 => SocketFrame -> NS.Socket -> m ()
 sfProcessSocket SocketFrame{..} sock = do
     -- TODO: rewrite to async when MonadTimed supports it
@@ -279,6 +279,7 @@ sfProcessSocket SocketFrame{..} sock = do
     -- create worker threads
     stid <- fork $ reportErrors eventChan foreverSend
     rtid <- fork $ reportErrors eventChan foreverRec
+    commLog . logDebug $ sformat ("Start processing of socket to "%stext) sfPeerAddr
     -- check whether @isClosed@ keeps @True@
     ctid <- fork $ do
         liftIO . atomically $ check =<< TV.readTVar sfIsClosed
@@ -290,12 +291,14 @@ sfProcessSocket SocketFrame{..} sock = do
             mapM_ killThread [stid, rtid, ctid]
             throwM e
     event <- liftIO . atomically $ TC.readTChan eventChan
+    commLog . logDebug $ sformat ("Stop processing socket to "%stext) sfPeerAddr
     -- Left - worker error, Right - get closed
     either onError return event
     -- at this point workers are stopped
   where
-    foreverSend =
-        sourceTBMChan sfOutChan =$= awaitForever sourceLbs =$= noteSend $$ sinkSocket sock
+    foreverSend = do
+        commLog . logDebug $ sformat ("Init foreverSend to "%stext) sfPeerAddr
+        finally (sourceTBMChan sfOutChan =$= noteSend =$= awaitForever sourceLbs $$ sinkSocket sock) (commLog . logDebug $ sformat ("Quit foreverSend for "%stext) sfPeerAddr)
 
     foreverRec = do
         hoist liftIO (sourceSocket sock) =$= noteRec $$ sinkTBMChan sfInChan False
