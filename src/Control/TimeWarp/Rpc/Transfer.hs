@@ -115,7 +115,7 @@ instance Buildable PeerClosedConnection where
 type PeerAddr = Text
 
 data OutputConnection = OutputConnection
-    { outConnSend     :: forall m . (MonadIO m, MonadMask m)
+    { outConnSend     :: forall m . (MonadIO m, MonadMask m, WithNamedLogger m)
                       => Source m BS.ByteString -> m ()
       -- ^ Keeps function to send to socket
     , outConnRec      :: forall m . (MonadIO m, MonadMask m, MonadTimed m,
@@ -205,11 +205,17 @@ mkSocketFrame settings sfPeerAddr = liftIO $ do
 -- | Makes sender function in terms of @MonadTransfer@ for given `SocketFrame`.
 -- This first extracts ready `Lazy.ByteString` from given source, and then passes it to
 -- sending queue.
-sfSend :: MonadIO m
+sfSend :: (MonadIO m, WithNamedLogger m)
        => SocketFrame -> Source m BS.ByteString -> m ()
 sfSend SocketFrame{..} src = do
     lbs <- src $$ sinkLbs
+    whenM (liftIO . atomically $ TBM.isFullTBMChan sfOutChan) $
+      logWarning $ sformat ("Send channel for " % shown % " is full") sfPeerAddr
+    whenM (liftIO . atomically $ TBM.isClosedTBMChan sfOutChan) $
+      logWarning $ sformat ("Send channel for " % shown % " is closed, message wouldn't be sent") sfPeerAddr
     liftIO . atomically . TBM.writeTBMChan sfOutChan $ lbs
+  where
+    whenM condM action = condM >>= flip when action
 
 -- | Constructs function which allows infinitelly listens on given `SocketFrame` in terms of
 -- `MonadTransfer`.
@@ -537,7 +543,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) = do
 instance MonadTransfer Transfer where
     sendRaw addr src = do
         conn <- getOutConnOrOpen addr
-        liftIO $ outConnSend conn src
+        outConnSend conn src
 
     listenRaw (AtPort   port) = listenInbound port
     listenRaw (AtConnTo addr) = listenOutbound addr

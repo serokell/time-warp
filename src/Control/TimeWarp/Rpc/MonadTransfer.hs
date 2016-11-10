@@ -56,7 +56,8 @@ import           Data.Text.Buildable         (Buildable (..))
 import           Data.Word                   (Word16)
 
 import           Control.TimeWarp.Logging    (LoggerName, LoggerNameBox (..),
-                                              WithNamedLogger, modifyLoggerName)
+                                              WithNamedLogger, getLoggerName,
+                                              modifyLoggerName, usingLoggerName)
 import           Control.TimeWarp.Timed      (MonadTimed, ThreadId)
 
 
@@ -74,7 +75,7 @@ class Monad m => MonadTransfer m where
     -- | Sends raw data.
     -- TODO: NetworkAddress -> Consumer ByteString m ()
     sendRaw :: NetworkAddress          -- ^ Destination address
-            -> Source IO ByteString    -- ^ Data to send
+            -> Source m ByteString    -- ^ Data to send
             -> m ()
 
     -- | Listens at specified input or output connection.
@@ -92,14 +93,14 @@ class Monad m => MonadTransfer m where
 -- | Provides operations related to /peer/ node. Peer is a node, which this node is
 -- currently communicating with.
 class Monad m => MonadResponse m where
-    replyRaw :: Producer IO ByteString -> m ()
+    replyRaw :: Producer m ByteString -> m ()
 
     closeR :: m ()
 
     peerAddr :: m Text
 
 data ResponseContext = ResponseContext
-    { respSend     :: forall m . (MonadIO m, MonadMask m)
+    { respSend     :: forall m . (MonadIO m, MonadMask m, WithNamedLogger m)
                    => Source m ByteString -> m ()
     , respClose    :: IO ()
     , respPeerAddr :: Text
@@ -123,13 +124,13 @@ instance MonadReader r m => MonadReader r (ResponseT m) where
     local = mapResponseT . local
 
 instance MonadTransfer m => MonadTransfer (ResponseT m) where
-    sendRaw addr src = lift $ sendRaw addr src
+    sendRaw addr src = ResponseT ask >>= \ctx -> lift $ sendRaw addr (hoist (flip runResponseT ctx) src)
     listenRaw binding sink =
         ResponseT $ listenRaw binding $ hoistRespCond getResponseT sink
     close addr = lift $ close addr
 
-instance (MonadTransfer m, MonadIO m) => MonadResponse (ResponseT m) where
-    replyRaw dat = ResponseT $ ask >>= \ctx -> liftIO $ respSend ctx dat
+instance (MonadTransfer m, MonadIO m, WithNamedLogger m, MonadMask m) => MonadResponse (ResponseT m) where
+    replyRaw dat = ResponseT ask >>= \ctx -> respSend ctx dat
 
     closeR = ResponseT $ ask >>= liftIO . respClose
 
@@ -189,18 +190,18 @@ hoistRespCond :: Monad m
 hoistRespCond how = hoist $ mapResponseT how
 
 instance MonadTransfer m => MonadTransfer (ReaderT r m) where
-    sendRaw addr req = lift $ sendRaw addr req
+    sendRaw addr req = ask >>= \ctx -> lift $ sendRaw addr (hoist (flip runReaderT ctx) req)
     listenRaw binding sink =
         liftWith $ \run -> listenRaw binding $ hoistRespCond run sink
     close = lift . close
 
 instance MonadTransfer m => MonadTransfer (LoggerNameBox m) where
-    sendRaw addr req = lift $ sendRaw addr req
+    sendRaw addr req = getLoggerName >>= \loggerName -> lift $ sendRaw addr (hoist (usingLoggerName loggerName) req)
     listenRaw binding sink =
         LoggerNameBox $ listenRaw binding $ hoistRespCond loggerNameBoxEntry sink
     close = lift . close
 
 instance MonadResponse m => MonadResponse (ReaderT r m) where
-    replyRaw x = lift $ replyRaw x
+    replyRaw dat = ask >>= \ctx -> lift $ replyRaw (hoist (flip runReaderT ctx) dat)
     closeR = lift closeR
     peerAddr = lift peerAddr
