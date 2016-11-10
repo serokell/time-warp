@@ -65,6 +65,7 @@ import qualified Data.ByteString                    as BS
 import qualified Data.ByteString.Lazy               as BL
 import           Data.Conduit                       (Sink, Source, ($$))
 import           Data.Conduit.Binary                (sinkLbs, sourceLbs)
+import           Data.Conduit.List                  (iterM)
 import           Data.Conduit.Network               (sinkSocket, sourceSocket)
 import           Data.Conduit.TMChan                (sinkTBMChan, sourceTBMChan)
 import qualified Data.IORef                         as IR
@@ -223,7 +224,7 @@ addThreadJob manager action =
 type PeerAddr = Text
 
 data OutputConnection = OutputConnection
-    { outConnSend     :: forall m . (MonadIO m, MonadMask m)
+    { outConnSend     :: forall m . (MonadIO m, MonadMask m, WithNamedLogger m)
                       => Source m BS.ByteString -> m ()
       -- ^ Function to send all data produced by source
     , outConnRec      :: forall m . (MonadIO m, MonadMask m, MonadTimed m,
@@ -301,12 +302,16 @@ mkSocketFrame settings sfPeerAddr = liftIO $ do
     return SocketFrame{..}
 
 -- | Makes sender function in terms of @MonadTransfer@ for given `SocketFrame`.
--- This action is synchronous, it finishes ones data produced by given source is
--- fully consumed by socket.
-sfSend :: MonadIO m
+-- This first extracts ready `Lazy.ByteString` from given source, and then passes it to
+-- sending queue.
+sfSend :: (MonadIO m, WithNamedLogger m)
        => SocketFrame -> Source m BS.ByteString -> m ()
 sfSend SocketFrame{..} src = do
     lbs <- src $$ sinkLbs
+    whenM (liftIO . atomically $ TBM.isFullTBMChan sfOutChan) $
+      commLog . logWarning $ sformat ("Send channel for " % shown % " is full") sfPeerAddr
+    whenM (liftIO . atomically $ TBM.isClosedTBMChan sfOutChan) $
+      commLog . logWarning $ sformat ("Send channel for " % shown % " is closed, message wouldn't be sent") sfPeerAddr
     (notifier, awaiter) <- mkMonitor
     liftIO . atomically . TBM.writeTBMChan sfOutChan $ (lbs, atomically notifier)
 
@@ -320,6 +325,7 @@ sfSend SocketFrame{..} src = do
         return ( TV.writeTVar t True
                , check =<< TV.readTVar t
                )
+    whenM condM action = condM >>= flip when action
 
 -- | Constructs function which allows infinitelly listens on given `SocketFrame` in terms of
 -- `MonadTransfer`.
@@ -381,15 +387,16 @@ sfResponseCtx sf =
 
 -- | Starts workers, which connect channels in `SocketFrame` with real `NS.Socket`.
 -- If error in any worker occured, it's propagaded.
-sfProcessSocket :: (MonadIO m, MonadMask m, MonadTimed m)
+sfProcessSocket :: (MonadIO m, MonadMask m, MonadTimed m, WithNamedLogger m)
                 => SocketFrame -> NS.Socket -> m ()
 sfProcessSocket SocketFrame{..} sock = do
     -- TODO: rewrite to async when MonadTimed supports it
     -- create channel to notify about error
     eventChan  <- liftIO TC.newTChanIO
     -- create worker threads
-    stid <- fork $ reportErrors eventChan foreverSend
-    rtid <- fork $ reportErrors eventChan foreverRec
+    stid <- fork $ reportErrors eventChan foreverSend $ sformat ("foreverSend on " % stext) sfPeerAddr
+    rtid <- fork $ reportErrors eventChan foreverRec  $ sformat ("foreverRec on " % stext) sfPeerAddr
+    commLog . logDebug $ sformat ("Start processing of socket to "%stext) sfPeerAddr
     -- check whether @isClosed@ keeps @True@
     ctid <- fork $ do
         liftIO . atomically $ check =<< TV.readTVar sfIsClosed
@@ -401,6 +408,7 @@ sfProcessSocket SocketFrame{..} sock = do
             mapM_ killThread [stid, rtid, ctid]
             throwM e
     event <- liftIO . atomically $ TC.readTChan eventChan
+    commLog . logDebug $ sformat ("Stop processing socket to "%stext) sfPeerAddr
     -- Left - worker error, Right - get closed
     either onError return event
     -- at this point workers are stopped
@@ -422,8 +430,19 @@ sfProcessSocket SocketFrame{..} sock = do
         unless isClosed $
             throwM PeerClosedConnection
 
-    reportErrors eventChan action =
-        catchAll action $ liftIO . atomically . TC.writeTChan eventChan . Left
+    -- noteSend = iterM $ const $
+    --     commLog . logDebug $
+    --         sformat ("-> "%stext%" +1 message") sfPeerAddr
+
+    -- noteRec = iterM $ const $
+    --     commLog . logDebug $
+    --         sformat ("<- "%stext%" +1 message") sfPeerAddr
+
+    reportErrors eventChan action desc =
+        action
+          `catchAll` \e -> do
+              commLog . logDebug $ sformat ("Caught error on " % stext % ": " % shown) desc e
+              liftIO . atomically . TC.writeTChan eventChan . Left $ e
 
 
 -- * Transfer
@@ -513,15 +532,20 @@ listenInbound (fromIntegral -> port) sink = do
                     unmask (processSocket sock addr unlessClosed addStopper)
                             `finally` liftIO (NS.close sock >> markReady)
 
-    logOnServeErr unlessClosed = handleAll $ unlessClosed . logError .
-        sformat ("Server at port "%int%" stopped with error "%shown) port
+    logOnServeErr unlessClosed = handleAll $ \e -> do
+            unlessClosed . logError $ sformat ("Server at port "%int%" stopped with error "%shown) port e
+            logDebug $ sformat ("Server at port "%int%" stopped with error "%shown) port e
 
     -- makes socket work, finishes once it's fully shutdown
     processSocket sock peerAddr unlessClosed addStopper = do
         liftIO $ NS.setSocketOption sock NS.ReuseAddr 1
         settings <- Transfer ask
         sf <- mkSocketFrame settings $ buildSockAddr peerAddr
-        -- start listener, which works in another thread
+        commLog . logDebug $
+            sformat ("New input connection: "%int%" <- "%stext)
+            port (sfPeerAddr sf)
+
+       -- start listener, which works in another thread
         stopper <- sfReceive sf sink
         addStopper stopper
         -- start `SocketFrame`'s' workers
@@ -536,9 +560,13 @@ listenInbound (fromIntegral -> port) sink = do
         stopper
 
     startProcessing sf unlessClosed action =
-        catchAll action $ unlessClosed . commLog . logWarning .
+        action `catchAll` \e -> do
+          unlessClosed . commLog . logWarning $
             sformat ("Error in server socket "%int%" connected with "%stext%": "%shown)
-                port (sfPeerAddr sf)
+                port (sfPeerAddr sf) e
+          commLog . logDebug $
+            sformat ("Error in server socket "%int%" connected with "%stext%": "%shown)
+                port (sfPeerAddr sf) e
 
 -- | Listens for incoming bytes on outbound connection.
 -- Listening would occur until sink gets closed. Killing this thread won't help here.
@@ -583,11 +611,15 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
 
     startWorker sf = do
         failsInRow <- liftIO $ IR.newIORef 0
+        commLog . logDebug $ sformat ("Lively socket to "%stext%" created, processing")
+            (sfPeerAddr sf)
         withRecovery sf failsInRow $
             bracket (liftIO $ fst <$> getSocketFamilyTCP host port NS.AF_UNSPEC)
                     (liftIO . NS.close) $
                     \sock -> do
                         liftIO $ IR.writeIORef failsInRow 0
+                        commLog . logDebug $
+                            sformat ("Established connection to "%stext) (sfPeerAddr sf)
                         sfProcessSocket sf sock
 
     withRecovery sf failsInRow action = catchAll action $ \e -> do
@@ -620,7 +652,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
 instance MonadTransfer Transfer where
     sendRaw addr src = do
         conn <- getOutConnOrOpen addr
-        liftIO $ outConnSend conn src
+        outConnSend conn src
 
     listenRaw (AtPort   port) = listenInbound port
     listenRaw (AtConnTo addr) = listenOutbound addr
