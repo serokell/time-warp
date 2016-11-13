@@ -46,8 +46,7 @@ import           Data.Text                             (unpack)
 import           Data.Yaml                             (decodeFileEither)
 
 import           System.Log.Handler.Simple             (fileHandler)
-import           System.Log.Logger                     (addHandler, rootLoggerName,
-                                                        updateGlobalLogger)
+import           System.Log.Logger                     (addHandler, updateGlobalLogger)
 
 import           Control.TimeWarp.Logging.Formatter    (setStdoutFormatter)
 import           Control.TimeWarp.Logging.LoggerConfig (LoggerConfig (..), LoggerMap,
@@ -55,7 +54,7 @@ import           Control.TimeWarp.Logging.LoggerConfig (LoggerConfig (..), Logge
 import           Control.TimeWarp.Logging.Wrapper      (LoggerName (..),
                                                         Severity (Debug, Warning),
                                                         convertSeverity, initLogging,
-                                                        setSeverityMaybe)
+                                                        setSeverity, setSeverityMaybe)
 
 traverseLoggerConfig
     :: MonadIO m
@@ -86,8 +85,14 @@ parseLoggerConfig loggerConfigPath =
 
 -- | Initialize logger hierarchy from configuration file.
 -- See this module description.
-initLoggingFromYamlWithMapper :: MonadIO m => (LoggerName -> LoggerName) -> FilePath -> m ()
-initLoggingFromYamlWithMapper loggerMapper loggerConfigPath = do
+initLoggingFromYamlWithMapper
+    :: MonadIO m
+    => (LoggerName -> LoggerName)
+    -> FilePath
+    -> LoggerName
+    -> Severity
+    -> m ()
+initLoggingFromYamlWithMapper loggerMapper loggerConfigPath rootLogger rootSeverity = do
     loggerConfig <- parseLoggerConfig loggerConfigPath
 
 #if PatakDebugSkovorodaBARDAQ
@@ -95,7 +100,13 @@ initLoggingFromYamlWithMapper loggerMapper loggerConfigPath = do
 #endif
 
     initLogging Warning
-    traverseLoggerConfig loggerMapper (LoggerName rootLoggerName) loggerConfig
+    setSeverity rootLogger rootSeverity
+    traverseLoggerConfig loggerMapper rootLogger loggerConfig
 
-initLoggingFromYaml :: MonadIO m => FilePath -> m ()
+initLoggingFromYaml
+    :: MonadIO m
+    => FilePath
+    -> LoggerName
+    -> Severity
+    -> m ()
 initLoggingFromYaml = initLoggingFromYamlWithMapper id
