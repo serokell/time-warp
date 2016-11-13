@@ -348,13 +348,16 @@ sfSend :: (MonadIO m, WithNamedLogger m)
 sfSend SocketFrame{..} src = do
     lbs <- src $$ sinkLbs
     whenM (liftIO . atomically $ TBM.isFullTBMChan sfOutChan) $
-      commLog . logWarning $ sformat ("Send channel for " % shown % " is full") sfPeerAddr
+        commLog . logWarning $
+            sformat ("Send channel for "%shown%" is full") sfPeerAddr
     whenM (liftIO . atomically $ TBM.isClosedTBMChan sfOutChan) $
-      commLog . logWarning $ sformat ("Send channel for " % shown % " is closed, message wouldn't be sent") sfPeerAddr
+        commLog . logWarning $
+            sformat ("Send channel for "%shown%" is closed, message wouldn't be sent")
+                sfPeerAddr
     (notifier, awaiter) <- mkMonitor
     liftIO . atomically . TBM.writeTBMChan sfOutChan $ (lbs, atomically notifier)
 
-    -- wait till data get consumed by socket, but immediatelly quit on socket close.
+    -- wait till data get consumed by socket, but immediatelly quit on socket closed.
     liftIO . atomically $ do
         closed <- view jmIsClosed <$> TV.readTVar sfJobManager
         unless closed awaiter
@@ -426,8 +429,10 @@ sfProcessSocket SocketFrame{..} sock = do
     -- create channel to notify about error
     eventChan  <- liftIO TC.newTChanIO
     -- create worker threads
-    stid <- fork $ reportErrors eventChan foreverSend $ sformat ("foreverSend on " % stext) sfPeerAddr
-    rtid <- fork $ reportErrors eventChan foreverRec  $ sformat ("foreverRec on " % stext) sfPeerAddr
+    stid <- fork $ reportErrors eventChan foreverSend $
+        sformat ("foreverSend on "%stext) sfPeerAddr
+    rtid <- fork $ reportErrors eventChan foreverRec $
+        sformat ("foreverRec on "%stext) sfPeerAddr
     commLog . logDebug $ sformat ("Start processing of socket to "%stext) sfPeerAddr
     -- check whether @isClosed@ keeps @True@
     ctid <- fork $ do
@@ -470,10 +475,9 @@ sfProcessSocket SocketFrame{..} sock = do
     --         sformat ("<- "%stext%" +1 message") sfPeerAddr
 
     reportErrors eventChan action desc =
-        action
-          `catchAll` \e -> do
-              commLog . logDebug $ sformat ("Caught error on " % stext % ": " % shown) desc e
-              liftIO . atomically . TC.writeTChan eventChan . Left $ e
+        action `catchAll` \e -> do
+            commLog . logDebug $ sformat ("Caught error on "%stext%": " % shown) desc e
+            liftIO . atomically . TC.writeTChan eventChan . Left $ e
 
 
 -- * Transfer
