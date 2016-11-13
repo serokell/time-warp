@@ -48,7 +48,8 @@ import           System.Log.Logger                     (addHandler, rootLoggerNa
                                                         updateGlobalLogger)
 
 import           Control.TimeWarp.Logging.Formatter    (setStdoutFormatter)
-import           Control.TimeWarp.Logging.LoggerConfig (LoggerConfig (..), LoggerMap)
+import           Control.TimeWarp.Logging.LoggerConfig (LoggerConfig (..), LoggerMap,
+                                                        commLoggerName, commLoggerTag)
 import           Control.TimeWarp.Logging.Wrapper      (LoggerName (..),
                                                         Severity (Debug, Warning),
                                                         convertSeverity, initLogging,
@@ -64,8 +65,9 @@ traverseLoggerConfig logMapper = processLoggers
   where
     processLoggers:: MonadIO m => LoggerName -> LoggerMap -> m ()
     processLoggers parent (HM.toList -> loggers) = for_ loggers $ \(name, LoggerConfig{..}) -> do
-        let thisLoggerName = LoggerName $ unpack name
-        let thisLogger     = logMapper  $ parent <> thisLoggerName
+        let curLoggerName  = if name == commLoggerTag then commLoggerName else name
+        let thisLoggerName = LoggerName $ unpack curLoggerName
+        let thisLogger     = parent <> logMapper thisLoggerName
         setSeverityMaybe thisLogger lcSeverity
 
         whenJust lcFile $ \fileName -> liftIO $ do
