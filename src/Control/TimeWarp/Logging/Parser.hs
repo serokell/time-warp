@@ -24,6 +24,8 @@
 module Control.TimeWarp.Logging.Parser
        ( initLoggingFromYaml
        , initLoggingFromYamlWithMapper
+       , parseLoggerConfig
+       , traverseLoggerConfig
        ) where
 
 #if PatakDebugSkovorodaBARDAQ
@@ -44,15 +46,15 @@ import           Data.Text                             (unpack)
 import           Data.Yaml                             (decodeFileEither)
 
 import           System.Log.Handler.Simple             (fileHandler)
-import           System.Log.Logger                     (addHandler, rootLoggerName,
-                                                        updateGlobalLogger)
+import           System.Log.Logger                     (addHandler, updateGlobalLogger)
 
 import           Control.TimeWarp.Logging.Formatter    (setStdoutFormatter)
-import           Control.TimeWarp.Logging.LoggerConfig (LoggerConfig (..), LoggerMap)
+import           Control.TimeWarp.Logging.LoggerConfig (LoggerConfig (..), LoggerMap,
+                                                        commLoggerName, commLoggerTag)
 import           Control.TimeWarp.Logging.Wrapper      (LoggerName (..),
                                                         Severity (Debug, Warning),
                                                         convertSeverity, initLogging,
-                                                        setSeverityMaybe)
+                                                        setSeverity, setSeverityMaybe)
 
 traverseLoggerConfig
     :: MonadIO m
@@ -64,8 +66,9 @@ traverseLoggerConfig logMapper = processLoggers
   where
     processLoggers:: MonadIO m => LoggerName -> LoggerMap -> m ()
     processLoggers parent (HM.toList -> loggers) = for_ loggers $ \(name, LoggerConfig{..}) -> do
-        let thisLoggerName = LoggerName $ unpack name
-        let thisLogger     = logMapper  $ parent <> thisLoggerName
+        let curLoggerName  = if name == commLoggerTag then commLoggerName else name
+        let thisLoggerName = LoggerName $ unpack curLoggerName
+        let thisLogger     = parent <> logMapper thisLoggerName
         setSeverityMaybe thisLogger lcSeverity
 
         whenJust lcFile $ \fileName -> liftIO $ do
@@ -75,18 +78,35 @@ traverseLoggerConfig logMapper = processLoggers
 
         processLoggers thisLogger lcSubloggers
 
+-- | Parses logger config from given file path.
+parseLoggerConfig :: MonadIO m => FilePath -> m LoggerMap
+parseLoggerConfig loggerConfigPath =
+    liftIO $ join $ either throwIO return <$> decodeFileEither loggerConfigPath
+
 -- | Initialize logger hierarchy from configuration file.
 -- See this module description.
-initLoggingFromYamlWithMapper :: MonadIO m => (LoggerName -> LoggerName) -> FilePath -> m ()
-initLoggingFromYamlWithMapper loggerMapper loggerConfigPath = do
-    loggerConfig <- liftIO $ join $ either throwIO return <$> decodeFileEither loggerConfigPath
+initLoggingFromYamlWithMapper
+    :: MonadIO m
+    => (LoggerName -> LoggerName)
+    -> FilePath
+    -> LoggerName
+    -> Severity
+    -> m ()
+initLoggingFromYamlWithMapper loggerMapper loggerConfigPath rootLogger rootSeverity = do
+    loggerConfig <- parseLoggerConfig loggerConfigPath
 
 #if PatakDebugSkovorodaBARDAQ
     liftIO $ BS.putStrLn $ encodePretty defConfig loggerConfig
 #endif
 
     initLogging Warning
-    traverseLoggerConfig loggerMapper (LoggerName rootLoggerName) loggerConfig
+    setSeverity rootLogger rootSeverity
+    traverseLoggerConfig loggerMapper rootLogger loggerConfig
 
-initLoggingFromYaml :: MonadIO m => FilePath -> m ()
+initLoggingFromYaml
+    :: MonadIO m
+    => FilePath
+    -> LoggerName
+    -> Severity
+    -> m ()
 initLoggingFromYaml = initLoggingFromYamlWithMapper id
