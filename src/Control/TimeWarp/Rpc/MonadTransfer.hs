@@ -72,6 +72,7 @@ data Binding
 -- | Allows to send/receive raw byte sequences.
 class Monad m => MonadTransfer m where
     -- | Sends raw data.
+    -- TODO: NetworkAddress -> Consumer ByteString m ()
     sendRaw :: NetworkAddress          -- ^ Destination address
             -> Source IO ByteString    -- ^ Data to send
             -> m ()
@@ -80,7 +81,7 @@ class Monad m => MonadTransfer m where
     -- Resturns server stopper, which blocks until server is actually stopped.
     listenRaw :: Binding                           -- ^ Port/address to listen to
               -> Sink ByteString (ResponseT m) ()  -- ^ Parser for input byte stream
-              -> m (m ())                          -- ^ Server stopper
+              -> m (IO ())                         -- ^ Server stopper
 
     -- | Closes connection to specified node, if exists.
     close :: NetworkAddress -> m ()
@@ -124,7 +125,7 @@ instance MonadReader r m => MonadReader r (ResponseT m) where
 instance MonadTransfer m => MonadTransfer (ResponseT m) where
     sendRaw addr src = lift $ sendRaw addr src
     listenRaw binding sink =
-        fmap ResponseT $ ResponseT $ listenRaw binding $ hoistRespCond getResponseT sink
+        ResponseT $ listenRaw binding $ hoistRespCond getResponseT sink
     close addr = lift $ close addr
 
 instance (MonadTransfer m, MonadIO m) => MonadResponse (ResponseT m) where
@@ -190,12 +191,12 @@ hoistRespCond how = hoist $ mapResponseT how
 instance MonadTransfer m => MonadTransfer (ReaderT r m) where
     sendRaw addr req = lift $ sendRaw addr req
     listenRaw binding sink =
-        fmap lift $ liftWith $ \run -> listenRaw binding $ hoistRespCond run sink
+        liftWith $ \run -> listenRaw binding $ hoistRespCond run sink
     close = lift . close
 
 instance MonadTransfer m => MonadTransfer (LoggerNameBox m) where
     sendRaw addr req = lift $ sendRaw addr req
-    listenRaw binding sink = fmap LoggerNameBox $
+    listenRaw binding sink =
         LoggerNameBox $ listenRaw binding $ hoistRespCond loggerNameBoxEntry sink
     close = lift . close
 

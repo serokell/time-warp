@@ -138,19 +138,19 @@ replyR h raw = packingType >>= \p -> replyRP p h raw
 -- | Starts server.
 listen :: (Unpackable p (HeaderNNameData Empty), Unpackable p (HeaderNRawData Empty),
            MonadListener m, MonadDialog p m)
-       => Binding -> [Listener p m] -> m (m ())
+       => Binding -> [Listener p m] -> m (IO ())
 listen binding listeners =
     packingType >>= \p -> listenP p binding listeners
 
 listenH :: (Unpackable p (HeaderNNameData h), Unpackable p (HeaderNRawData h),
             MonadListener m, MonadDialog p m)
-        => Binding -> [ListenerH p h m] -> m (m ())
+        => Binding -> [ListenerH p h m] -> m (IO ())
 listenH binding listeners =
     packingType >>= \p -> listenHP p binding listeners
 
 listenR :: (Unpackable p (HeaderNNameData h), Unpackable p (HeaderNRawData h),
             MonadListener m, MonadDialog p m)
-        => Binding -> [ListenerH p h m] -> ListenerR h m -> m (m ())
+        => Binding -> [ListenerH p h m] -> ListenerR h m -> m (IO ())
 listenR binding listeners rawListener =
     packingType >>= \p -> listenRP p binding listeners rawListener
 
@@ -197,7 +197,7 @@ type MonadListener m =
 -- | Starts server.
 listenP :: (Unpackable p (HeaderNNameData Empty), Unpackable p (HeaderNRawData Empty),
             MonadListener m)
-        => p -> Binding -> [Listener p m] -> m (m ())
+        => p -> Binding -> [Listener p m] -> m (IO ())
 listenP packing binding listeners = listenHP packing binding $ convert <$> listeners
   where
     convert :: Listener p m -> ListenerH p Empty m
@@ -206,14 +206,14 @@ listenP packing binding listeners = listenHP packing binding $ convert <$> liste
 
 listenHP :: (Unpackable p (HeaderNNameData h), Unpackable p (HeaderNRawData h),
              MonadListener m)
-         => p -> Binding -> [ListenerH p h m] -> m (m ())
+         => p -> Binding -> [ListenerH p h m] -> m (IO ())
 listenHP packing binding listeners =
     listenRP packing binding listeners (const $ return True)
 
 
 listenRP :: (Unpackable p (HeaderNNameData h), Unpackable p (HeaderNRawData h),
              MonadListener m)
-         => p -> Binding -> [ListenerH p h m] -> ListenerR h m -> m (m ())
+         => p -> Binding -> [ListenerH p h m] -> ListenerR h m -> m (IO ())
 listenRP packing binding listeners rawListener = listenRaw binding loop
   where
     loop = do
@@ -341,7 +341,7 @@ type instance ThreadId (Dialog p m) = ThreadId m
 instance MonadTransfer m => MonadTransfer (Dialog p m) where
     sendRaw addr req = lift $ sendRaw addr req
     listenRaw binding sink =
-        fmap Dialog $ Dialog $ listenRaw binding $ hoistRespCond getDialog sink
+        Dialog $ listenRaw binding $ hoistRespCond getDialog sink
     close = lift . close
 
 instance MonadTransfer m => MonadDialog p (Dialog p m) where
