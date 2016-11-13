@@ -269,17 +269,16 @@ unlessInterrupted m a = isInterrupted m >>= flip unless a
 type PeerAddr = Text
 
 data OutputConnection = OutputConnection
-    { outConnSend     :: forall m . (MonadIO m, MonadMask m, WithNamedLogger m)
-                      => Source m BS.ByteString -> m ()
+    { outConnSend       :: forall m . (MonadIO m, MonadMask m, WithNamedLogger m)
+                        => Source m BS.ByteString -> m ()
       -- ^ Function to send all data produced by source
-    , outConnRec      :: forall m . (MonadIO m, MonadMask m, MonadTimed m,
-                                     WithNamedLogger m)
-                      => Sink BS.ByteString (ResponseT m) () -> m (m ())
+    , outConnRec        :: forall m . (MonadIO m, MonadMask m, MonadTimed m,
+                                       WithNamedLogger m)
+                        => Sink BS.ByteString (ResponseT m) () -> m ()
       -- ^ Function to stark sink-listener, returns synchronous closer
-    , outConnClose    :: IO ()
-      -- ^ Closes socket, prevent any further manupulations
-      -- with message queues
-    , outConnAddr     :: PeerAddr
+    , outConnJobManager :: JobManager
+      -- ^ Job manager for this connection
+    , outConnAddr       :: PeerAddr
       -- ^ Address of socket on other side of net
     }
 
@@ -371,7 +370,7 @@ sfSend SocketFrame{..} src = do
 -- `MonadTransfer`.
 -- Attempt to use this function twice will end with `AlreadyListeningOutbound` error.
 sfReceive :: (MonadIO m, MonadMask m, MonadTimed m, WithNamedLogger m)
-          => SocketFrame -> Sink BS.ByteString (ResponseT m) () -> m (m ())
+          => SocketFrame -> Sink BS.ByteString (ResponseT m) () -> m ()
 sfReceive sf@SocketFrame{..} sink = do
     busy <- liftIO . atomically $ TV.swapTVar sfInBusy True
     when busy $ throwM $ AlreadyListeningOutbound sfPeerAddr
@@ -386,8 +385,6 @@ sfReceive sf@SocketFrame{..} sink = do
                 sourceTBMChan sfInChan $$ sink
             commLog . logDebug $
                 sformat ("Listening on socket to "%stext%" happily stopped") sfPeerAddr
-
-    return $ stopAllJobs sfJobManager
   where
     logOnTimeout = commLog . logDebug $
         sformat ("While closing socket to "%stext%" listener "%
@@ -406,10 +403,10 @@ sfClose SocketFrame{..} = do
 sfOutputConn :: SocketFrame -> OutputConnection
 sfOutputConn sf =
     OutputConnection
-    { outConnSend  = sfSend sf
-    , outConnRec   = sfReceive sf
-    , outConnClose = sfClose sf
-    , outConnAddr  = sfPeerAddr sf
+    { outConnSend       = sfSend sf
+    , outConnRec        = sfReceive sf
+    , outConnJobManager = sfJobManager sf
+    , outConnAddr       = sfPeerAddr sf
     }
 
 sfResponseCtx :: SocketFrame -> ResponseContext
@@ -595,6 +592,7 @@ listenOutbound :: NetworkAddress
 listenOutbound addr sink = do
     conn <- getOutConnOrOpen addr
     outConnRec conn sink
+    return $ stopAllJobs $ outConnJobManager conn
 
 logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
 logOnErr = handleAll $ \e ->
@@ -676,7 +674,8 @@ instance MonadTransfer Transfer where
     -- closes asynchronuosly
     close addr = do
         maybeConn <- modifyManager . use $ outputConn . at addr
-        liftIO $ forM_ maybeConn outConnClose
+        forM_ maybeConn $
+            \conn -> interruptAllJobs (outConnJobManager conn) Plain
 
 
 -- * Instances
