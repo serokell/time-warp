@@ -248,7 +248,7 @@ addThreadJob manager action =
                 \markReady -> unmask action `finally` liftIO markReady
 
 -- | Adds job executing in another thread, interrupting does nothing.
--- Usefull then work stops intself on interrupt, and just need to wait till it fully
+-- Usefull then work stops itself on interrupt, and we just need to wait till it fully
 -- stops.
 addSafeThreadJob :: (MonadIO m,  MonadMask m, MonadTimed m) => JobManager -> m () -> m ()
 addSafeThreadJob manager action =
