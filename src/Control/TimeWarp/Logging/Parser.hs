@@ -24,6 +24,8 @@
 module Control.TimeWarp.Logging.Parser
        ( initLoggingFromYaml
        , initLoggingFromYamlWithMapper
+       , parseLoggerConfig
+       , traverseLoggerConfig
        ) where
 
 #if PatakDebugSkovorodaBARDAQ
@@ -77,11 +79,16 @@ traverseLoggerConfig logMapper = processLoggers
 
         processLoggers thisLogger lcSubloggers
 
+-- | Parses logger config from given file path.
+parseLoggerConfig :: MonadIO m => FilePath -> m LoggerMap
+parseLoggerConfig loggerConfigPath =
+    liftIO $ join $ either throwIO return <$> decodeFileEither loggerConfigPath
+
 -- | Initialize logger hierarchy from configuration file.
 -- See this module description.
 initLoggingFromYamlWithMapper :: MonadIO m => (LoggerName -> LoggerName) -> FilePath -> m ()
 initLoggingFromYamlWithMapper loggerMapper loggerConfigPath = do
-    loggerConfig <- liftIO $ join $ either throwIO return <$> decodeFileEither loggerConfigPath
+    loggerConfig <- parseLoggerConfig loggerConfigPath
 
 #if PatakDebugSkovorodaBARDAQ
     liftIO $ BS.putStrLn $ encodePretty defConfig loggerConfig
