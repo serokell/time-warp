@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE TypeFamilies          #-}
 
@@ -111,10 +112,10 @@ guysPort = (+10000)
 yohohoScenario :: IO ()
 yohohoScenario = runTimedIO $ do
     initLogging Debug
-    (saveWorker, killWorkers) <- runNode "-" workersManager
+    (saveWorker, killWorkers) <- workersManager
 
     -- guy 1
-    runNode "guy.1" . fork_ $ do
+    usingLoggerName "guy.1" . runTransfer . runDialog packing . fork_ $ do
         saveWorker $ listen (AtPort $ guysPort 1)
             [ Listener $ \Pong ->
               do logDebug "Got Pong!"
@@ -127,35 +128,36 @@ yohohoScenario = runTimedIO $ do
             logInfo "Sent"
 
     -- guy 2
-    runNode "guy.2" . fork_ $ do
+    usingLoggerName "guy.2" . runTransfer . runDialog packing . fork_ $ do
         saveWorker $ listen (AtPort $ guysPort 2)
             [ Listener $ \Ping ->
               do logDebug "Got Ping!"
                  send (guy 1) Pong
             ]
-        saveWorker $ listen (AtConnTo $ guy 1)
+        saveWorker $ listen (AtConnTo $ guy 1) $
             [ Listener $ \EpicRequest{..} ->
               do logDebug "Got EpicRequest!"
                  wait (for 0.1 sec')
                  logInfo $ sformat (shown%string) (num + 1) msg
             ]
     wait (till finish)
-    runNode "-" killWorkers
-    wait (for 120 ms)
+    killWorkers
+    wait (for 100 ms)
   where
     finish :: Second
     finish = 1
 
-    runNode name = usingLoggerName name . runTransfer . runDialog BinaryP
+    packing :: BinaryP
+    packing = BinaryP
 
 
 -- | Example of `Transfer` usage
 transferScenario :: IO ()
 transferScenario = runTimedIO $ do
     initLogging Debug
-    (saveWorker, killWorkers) <- runNode "-" workersManager
+    (saveWorker, killWorkers) <- workersManager
 
-    runNode "node.server" $
+    usingLoggerName "node.server" $ runTransfer $
         let listener req = do
                 logInfo $ sformat ("Got "%shown) req
                 replyRaw $ yield (put $ sformat "Ok!") =$= conduitPut
@@ -164,7 +166,7 @@ transferScenario = runTimedIO $ do
 
     wait (for 100 ms)
 
-    runNode "node.client-1" $
+    usingLoggerName "node.client-1" $ runTransfer $
         schedule (after 200 ms) $ do
             saveWorker $ listenRaw (AtConnTo (localhost, 1234)) $
                     conduitGet get =$= CL.mapM_ logInfo
@@ -175,7 +177,7 @@ transferScenario = runTimedIO $ do
                                          =$= conduitPut
 --                                     =$= awaitForever (\m -> yield "trash" >> yield m)
 
-    runNode "node.client-2" $
+    usingLoggerName "node.client-2" $ runTransfer $
         schedule (after 200 ms) $ do
             sendRaw (localhost, 1234) $  CL.sourceList ([1..5] :: [Int])
                                      =$= CL.map (, -1)
@@ -186,11 +188,9 @@ transferScenario = runTimedIO $ do
                 conduitGet get =$= CL.mapM_ logInfo
 
     wait (for 1000 ms)
-    runNode "-" killWorkers
-    wait (for 110 ms)
+    killWorkers
+    wait (for 100 ms)
   where
-    runNode name = usingLoggerName name . runTransfer
-
     decoder :: Get (Either Int (Int, Int))
     decoder = do
         magic <- get
@@ -233,27 +233,27 @@ rpcScenario = runTimedIO $ do
 proxyScenario :: IO ()
 proxyScenario = runTimedIO $ do
     liftIO $ initLogging Debug
-    (saveWorker, killWorkers) <- runNode "-" workersManager
+    (saveWorker, killWorkers) <- workersManager
 
     lock <- liftIO newEmptyMVar
     let sync act = liftIO (putMVar lock ()) >> act >> liftIO (takeMVar lock)
 
     -- server
-    runNode "server" . fork_ $
-        saveWorker $ listenH (AtPort 5678)
+    usingLoggerName "server" . runTransfer . runDialog packing . fork_ $ do
+        saveWorker $ listenH (AtPort $ 5678)
             [ ListenerH $ \(h, EpicRequest{..}) -> sync . logInfo $
                 sformat ("Got request!: "%shown%" "%shown%"; h = "%shown)
                 num msg (int h)
             ]
 
     -- proxy
-    runNode "proxy" . fork_ $
+    usingLoggerName "proxy" . runTransfer . runDialog packing . fork_ $ do
         saveWorker $ listenR (AtPort 1234)
             [ ListenerH $ \(h, EpicRequest _ _) -> sync . logInfo $
                 sformat ("Proxy! h = "%shown) h
             ]
             $ \(h, raw) -> do
-                when (int h < 5) $ do
+                when ((int h) < 5) $ do
                     sendR (localhost, 5678) (int h) raw
                     sync $ logInfo $ sformat ("Resend "%shown) h
                 return $ even h
@@ -262,18 +262,19 @@ proxyScenario = runTimedIO $ do
     wait (for 100 ms)
 
     -- client
-    runNode "client" . fork_  $
+    usingLoggerName "client" . runTransfer . runDialog packing . fork_  $ do
         forM_ [1..10] $
             \i -> sendH (localhost, 1234) (int i) $ EpicRequest 34 "lol"
 
     wait (till finish)
-    runNode "-" killWorkers
-    wait (for 90 ms)
+    killWorkers
+    wait (for 100 ms)
   where
     finish :: Second
     finish = 1
 
-    runNode name = usingLoggerName name . runTransfer . runDialog BinaryP
+    packing :: BinaryP
+    packing = BinaryP
 
     int :: Int -> Int
     int = id
@@ -283,26 +284,27 @@ proxyScenario = runTimedIO $ do
 slowpokeScenario :: IO ()
 slowpokeScenario = runTimedIO $ do
     initLogging Debug
-    (saveWorker, killWorkers) <- runNode "-" workersManager
+    (saveWorker, killWorkers) <- workersManager
 
-    runNode "server" . fork_ $ do
+    usingLoggerName "server" . runTransfer . runDialog packing . fork_ $ do
         wait (for 3 sec)
         saveWorker $ listen (AtPort 1234)
             [ Listener $ \Ping -> logDebug "Got Ping!"
             ]
 
-    runNode "client" . fork_ $ do
+    usingLoggerName "client" . runTransferS settings . runDialog packing . fork_ $ do
         wait (for 100 ms)
         replicateM_ 3 $ send (localhost, 1234) Ping
 
     wait (till finish)
-    runNode "-" killWorkers
+    killWorkers
     wait (for 100 ms)
   where
-    runNode name = usingLoggerName name . runTransferS settings . runDialog BinaryP
-
     finish :: Second
     finish = 5
+
+    packing :: BinaryP
+    packing = BinaryP
 
     settings = transferSettings
         { _reconnectPolicy = return (Just $ interval 1 sec)
@@ -311,34 +313,37 @@ slowpokeScenario = runTimedIO $ do
 closingServerScenario :: IO ()
 closingServerScenario = runTimedIO $ do
     initLogging Debug
-    (saveWorker, killWorkers) <- runNode "-" workersManager
+    (saveWorker, killWorkers) <- workersManager
 
-    runNode "server" . fork_ $
+    usingLoggerName "server" . runTransfer . runDialog packing . fork_ $ do
         saveWorker $ listen (AtPort 1234) []
 
     wait (for 100 ms)
 
-    runNode "client" $
+    usingLoggerName "client" . runTransfer . runDialog packing $ do
         replicateM_ 3 $ do
             closer <- listen (AtConnTo (localhost, 1234)) []
             wait (for 500 ms)
-            closer
+            liftIO closer
 
     wait (till finish)
-    runNode "-" killWorkers
+    killWorkers
     wait (for 100 ms)
   where
-    runNode name = usingLoggerName name . runTransfer . runDialog BinaryP
-
     finish :: Second
     finish = 3
 
+    packing :: BinaryP
+    packing = BinaryP
 
-workersManager :: MonadIO m => m (m (m ()) -> m (), m ())
+
+workersManager :: (MonadIO m, MonadIO m1, MonadIO m2)
+               => m (m1 (IO ()) -> m1 (), m2 ())
 workersManager = do
     t <- liftIO . atomically $ newTVar []
     let saveWorker action = do
             closer <- action
             liftIO . atomically $ modifyTVar t (closer:)
-        killWorkers = sequence_ =<< liftIO (atomically $ readTVar t)
+        killWorkers = liftIO $ sequence_ =<< atomically (readTVar t)
+
     return (saveWorker, killWorkers)
