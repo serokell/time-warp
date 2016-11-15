@@ -1,5 +1,4 @@
-{-# LANGUAGE CPP          #-}
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE CPP #-}
 
 -- |
 -- Module      : Control.TimeWarp.Logging.Parser
@@ -49,37 +48,35 @@ import           System.Log.Handler.Simple             (fileHandler)
 import           System.Log.Logger                     (addHandler, updateGlobalLogger)
 
 import           Control.TimeWarp.Logging.Formatter    (setStdoutFormatter)
-import           Control.TimeWarp.Logging.LoggerConfig (LoggerConfig (..), LoggerMap,
-                                                        commLoggerName, commLoggerTag)
+import           Control.TimeWarp.Logging.LoggerConfig (LoggerConfig (..))
 import           Control.TimeWarp.Logging.Wrapper      (LoggerName (..),
                                                         Severity (Debug, Warning),
                                                         convertSeverity, initLogging,
-                                                        setSeverity, setSeverityMaybe)
+                                                        setSeverityMaybe)
 
 traverseLoggerConfig
     :: MonadIO m
     => (LoggerName -> LoggerName)
     -> LoggerName
-    -> LoggerMap
+    -> LoggerConfig
     -> m ()
 traverseLoggerConfig logMapper = processLoggers
   where
-    processLoggers:: MonadIO m => LoggerName -> LoggerMap -> m ()
-    processLoggers parent (HM.toList -> loggers) = for_ loggers $ \(name, LoggerConfig{..}) -> do
-        let curLoggerName  = if name == commLoggerTag then commLoggerName else name
-        let thisLoggerName = LoggerName $ unpack curLoggerName
-        let thisLogger     = parent <> logMapper thisLoggerName
-        setSeverityMaybe thisLogger lcSeverity
-
+    processLoggers:: MonadIO m => LoggerName -> LoggerConfig -> m ()
+    processLoggers parent LoggerConfig{..} = do
+        setSeverityMaybe parent lcSeverity
         whenJust lcFile $ \fileName -> liftIO $ do
             let fileSeverity   = convertSeverity $ lcSeverity ?: Debug
             thisLoggerHandler <- setStdoutFormatter True <$> fileHandler fileName fileSeverity
-            updateGlobalLogger (loggerName thisLogger) $ addHandler thisLoggerHandler
+            updateGlobalLogger (loggerName parent) $ addHandler thisLoggerHandler
 
-        processLoggers thisLogger lcSubloggers
+        for_ (HM.toList lcSubloggers) $ \(name, loggerConfig) -> do
+            let thisLoggerName = LoggerName $ unpack name
+            let thisLogger     = parent <> logMapper thisLoggerName
+            processLoggers thisLogger loggerConfig
 
 -- | Parses logger config from given file path.
-parseLoggerConfig :: MonadIO m => FilePath -> m LoggerMap
+parseLoggerConfig :: MonadIO m => FilePath -> m LoggerConfig
 parseLoggerConfig loggerConfigPath =
     liftIO $ join $ either throwIO return <$> decodeFileEither loggerConfigPath
 
@@ -89,10 +86,8 @@ initLoggingFromYamlWithMapper
     :: MonadIO m
     => (LoggerName -> LoggerName)
     -> FilePath
-    -> LoggerName
-    -> Severity
     -> m ()
-initLoggingFromYamlWithMapper loggerMapper loggerConfigPath rootLogger rootSeverity = do
+initLoggingFromYamlWithMapper loggerMapper loggerConfigPath = do
     loggerConfig <- parseLoggerConfig loggerConfigPath
 
 #if PatakDebugSkovorodaBARDAQ
@@ -100,13 +95,7 @@ initLoggingFromYamlWithMapper loggerMapper loggerConfigPath rootLogger rootSever
 #endif
 
     initLogging Warning
-    setSeverity rootLogger rootSeverity
-    traverseLoggerConfig loggerMapper rootLogger loggerConfig
+    traverseLoggerConfig loggerMapper mempty loggerConfig
 
-initLoggingFromYaml
-    :: MonadIO m
-    => FilePath
-    -> LoggerName
-    -> Severity
-    -> m ()
+initLoggingFromYaml :: MonadIO m => FilePath -> m ()
 initLoggingFromYaml = initLoggingFromYamlWithMapper id
