@@ -393,6 +393,11 @@ sfReceive sf@SocketFrame{..} sink = do
         sformat ("While closing socket to "%stext%" listener "%
                  "worked for too long, closing with no regard to it") sfPeerAddr
 
+    logOnErr = handleAll $ \e -> do
+        commLog . logWarning $ sformat ("Server error: "%shown) e
+        interruptAllJobs sfJobManager Plain
+
+
 sfClose :: SocketFrame -> IO ()
 sfClose SocketFrame{..} = do
     interruptAllJobs sfJobManager Plain
@@ -597,10 +602,6 @@ listenOutbound addr sink = do
     conn <- getOutConnOrOpen addr
     outConnRec conn sink
     return $ stopAllJobs $ outConnJobManager conn
-
-logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
-logOnErr = handleAll $ \e ->
-    commLog . logDebug $ sformat ("Server error: "%shown) e
 
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
