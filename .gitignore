@@ -25,5 +25,4 @@ flycheck_*
 .DS_Store
 
 # test logging files
-patak.log
-skovoroda.log
+*.log

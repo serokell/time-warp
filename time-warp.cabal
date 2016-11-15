@@ -14,6 +14,8 @@ description:
     be launched as either real program or fast emulation without need to wait
     for delays and with network nastiness manually controlled.
 
+extra-source-files:    bench/Network/Common/Bench/Network/Commons.hs
+
 Flag PatakDebugSkovorodaBARDAQ
     default:     False
     description: Enable debug support
@@ -70,6 +72,7 @@ library
                      , QuickCheck >= 2.8.1
                      , quickcheck-instances
                      , random >= 1.1
+                     , regex-tdfa >= 1.2.2
                      , safe
                      , serokell-util
                      , semigroups
@@ -160,6 +163,49 @@ executable playground
   hs-source-dirs:      examples/playground
   default-language:    Haskell2010
   ghc-options:         -threaded -Wall -fno-warn-orphans
+  default-extensions:  OverloadedStrings
+                     , RecordWildCards
+                     , DeriveDataTypeable
+                     , GeneralizedNewtypeDeriving
+
+executable bench-sender
+  main-is:             Main.hs
+  build-depends:       base == 4.*
+                     , binary >= 0.8.3
+                     , data-msgpack >= 0.0.8
+                     , directory >= 1.2.6
+                     , exceptions >= 0.8.2.1
+                     , extra >= 1.4
+                     , formatting
+                     , hslogger
+                     , mtl
+                     , time-units >= 1.0.0
+                     , time-warp
+  hs-source-dirs:      bench/Network/Sender
+                     , bench/Network/Common
+  default-language:    Haskell2010
+  ghc-options:         -threaded -Wall
+  default-extensions:  OverloadedStrings
+                     , RecordWildCards
+                     , DeriveDataTypeable
+                     , GeneralizedNewtypeDeriving
+
+executable bench-receiver
+  main-is:             Main.hs
+  build-depends:       base == 4.*
+                     , binary >= 0.8.3
+                     , data-msgpack >= 0.0.8
+                     , directory >= 1.2.6
+                     , exceptions >= 0.8.2.1
+                     , formatting
+                     , hslogger
+                     , mtl
+                     , time-units >= 1.0.0
+                     , time-warp
+  hs-source-dirs:      bench/Network/Receiver
+                     , bench/Network/Common
+  default-language:    Haskell2010
+  ghc-options:         -threaded -Wall
   default-extensions:  OverloadedStrings
                      , RecordWildCards
                      , DeriveDataTypeable
