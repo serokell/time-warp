@@ -1,0 +1,12 @@
+severity: Warning
+sender:
+    severity: Info
+    file: sender.log
+    comm:
+        severity: Error
+receiver:
+    severity: Info
+    file: receiver.log
+    comm:
+        severity: Error
+
