@@ -1,6 +1,7 @@
+severity: Warning        # severity for «root» logger
 node:                    # logger named «node»
     severity: Debug      # severity for logger «node»
     file: skovoroda.log  # messages for «node» will be sent to skovoroda.log
     comm:                # logger named «node.comm»
-        severity: Info   # severity for logger «node.comm» 
+        severity: Info   # severity for logger «node.comm»
                          # messages won't be printed to any file

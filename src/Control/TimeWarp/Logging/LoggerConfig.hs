@@ -11,8 +11,6 @@
 module Control.TimeWarp.Logging.LoggerConfig
        ( LoggerConfig (..)
        , LoggerMap
-       , commLoggerName
-       , commLoggerTag
        ) where
 
 import           Data.Aeson                       (withObject)
@@ -47,12 +45,3 @@ instance FromJSON LoggerConfig where
         lcSeverity   <- o .:? "severity"
         lcSubloggers <- for (selectLoggers o) parseJSON
         return LoggerConfig{..}
-
--- | Tag for 'LoggerName'. Will be mapped to 'commLoggerName' if met in config.
-commLoggerTag :: Text
-commLoggerTag = "comm"
-
--- | 'LoggerName' for communication logger. It equals to 'commLoggerTag' now
--- but in future this may change.
-commLoggerName :: Text
-commLoggerName = "comm"
