@@ -1,6 +1,6 @@
 import           Control.Monad            (forM_)
 import           Data.List.Extra          (chunksOf)
-import           Formatting               (build, sformat, shown, (%))
+import           Formatting               (build, sformat, (%))
 
 import           Bench.Network.Commons    (Ping (..), removeFileIfExists,
                                            useBenchAsWorkingDirNotifier)

@@ -44,6 +44,7 @@ library
                      Control.TimeWarp.Logging.Wrapper
   build-depends:       aeson
                      , ansi-terminal
+                     , array
                      , base == 4.*
                      , binary >= 0.8.3
                      , binary-conduit >= 1.2.4.1

@@ -1,7 +1,8 @@
 import           Data.Monoid              ((<>))
 import           Formatting               (build, sformat, (%))
 
-import           Bench.Network.Commons    (Ping (..), removeFileIfExists, useBenchAsWorkingDirNotifier)
+import           Bench.Network.Commons    (Ping (..), removeFileIfExists,
+                                           useBenchAsWorkingDirNotifier)
 import           Control.TimeWarp.Logging (initLoggingFromYaml, logInfo, modifyLoggerName,
                                            usingLoggerName)
 import           Control.TimeWarp.Rpc     (BinaryP (..), Binding (AtPort), Listener (..),
@@ -17,8 +18,8 @@ main = runNode "receiver" $ do
     stopper <- listen (AtPort 3456)
         [ justLogListener
         ]
-    system $ logInfo "Launching server for 10 sec..."
-    wait (for 10 sec)
+    system $ logInfo "Launching server for 5 sec..."
+    wait (for 5 sec)
     stopper
 
   where
