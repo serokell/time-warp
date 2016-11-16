@@ -64,14 +64,13 @@ import           Control.TimeWarp.Logging.Wrapper      (LoggerName (..),
 traverseLoggerConfig
     :: MonadIO m
     => (LoggerName -> LoggerName)  -- ^ mapper to transform logger names during traversal
-    -> LoggerName                  -- ^ root 'LoggerName'
     -> LoggerConfig                -- ^ given LoggerConfig to traverse
     -> Maybe FilePath              -- ^ prefix for file handlers
     -> m ()
-traverseLoggerConfig logMapper rootLogger config (fromMaybe "." -> handlerPrefix) = do
+traverseLoggerConfig logMapper config (fromMaybe "." -> handlerPrefix) = do
     liftIO $ createDirectoryIfMissing True handlerPrefix
     initLogging Warning
-    processLoggers rootLogger config
+    processLoggers mempty config
   where
     processLoggers:: MonadIO m => LoggerName -> LoggerConfig -> m ()
     processLoggers parent LoggerConfig{..} = do
@@ -108,7 +107,7 @@ initLoggingFromYamlWithMapper loggerMapper loggerConfigPath handlerPrefix = do
     liftIO $ BS.putStrLn $ encodePretty defConfig loggerConfig
 #endif
 
-    traverseLoggerConfig loggerMapper mempty loggerConfig handlerPrefix
+    traverseLoggerConfig loggerMapper loggerConfig handlerPrefix
 
 initLoggingFromYaml :: MonadIO m => FilePath -> Maybe FilePath -> m ()
 initLoggingFromYaml = initLoggingFromYamlWithMapper id
