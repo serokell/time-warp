@@ -1,7 +1,7 @@
 import           Data.Monoid              ((<>))
-import           Formatting               (build, sformat, (%))
 
-import           Bench.Network.Commons    (Ping (..), removeFileIfExists,
+import           Bench.Network.Commons    (MeasureEvent (..), Ping (..), logMeasure,
+                                           removeFileIfExists,
                                            useBenchAsWorkingDirNotifier)
 import           Control.TimeWarp.Logging (initLoggingFromYaml, logInfo, modifyLoggerName,
                                            usingLoggerName)
@@ -16,7 +16,8 @@ main = runNode "receiver" $ do
         initLoggingFromYaml "logging.yaml"
 
     stopper <- listen (AtPort 3456)
-        [ justLogListener
+        [ Listener $
+            \(Ping mid) -> logMeasure PingReceived mid
         ]
     system $ logInfo "Launching server for 5 sec..."
     wait (for 5 sec)
@@ -26,6 +27,3 @@ main = runNode "receiver" $ do
     runNode name = runTimedIO . usingLoggerName name . runTransfer . runDialog BinaryP
 
     system = modifyLoggerName (<> "system")
-
-    justLogListener = Listener $ \(Ping mid) -> logInfo $
-        sformat ("Got message with id = "%build) mid
