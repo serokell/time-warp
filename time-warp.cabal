@@ -64,7 +64,7 @@ library
                      , random >= 1.1
                      , regex-tdfa >= 1.2.2
                      , safe
-                     , serokell-util
+                     , serokell-util >= 0.1.1.1
                      , semigroups
                      , slave-thread >= 1.0
                      , stm >= 2.4.4
@@ -108,7 +108,7 @@ test-suite time-warp-test
                      , data-msgpack >= 0.0.8
                      , mtl
                      , QuickCheck >= 2.8.1
-                     , serokell-util
+                     , serokell-util >= 0.1.1.1
                      , stm >= 2.4.4.1
                      , text >= 1.2.2.0
                      , text-format
@@ -141,7 +141,7 @@ executable playground
                      , data-msgpack >= 0.0.8
                      , mtl
                      , QuickCheck >= 2.8.1
-                     , serokell-util
+                     , serokell-util >= 0.1.1.1
                      , stm >= 2.4.4.1
                      , text >= 1.2.2.0
                      , text-format
