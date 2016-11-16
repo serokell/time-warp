@@ -248,7 +248,7 @@ addThreadJob manager action =
                 \markReady -> unmask action `finally` liftIO markReady
 
 -- | Adds job executing in another thread, interrupting does nothing.
--- Usefull then work stops intself on interrupt, and just need to wait till it fully
+-- Usefull then work stops itself on interrupt, and we just need to wait till it fully
 -- stops.
 addSafeThreadJob :: (MonadIO m,  MonadMask m, MonadTimed m) => JobManager -> m () -> m ()
 addSafeThreadJob manager action =
@@ -392,6 +392,11 @@ sfReceive sf@SocketFrame{..} sink = do
     logOnTimeout = commLog . logDebug $
         sformat ("While closing socket to "%stext%" listener "%
                  "worked for too long, closing with no regard to it") sfPeerAddr
+
+    logOnErr = handleAll $ \e -> do
+        commLog . logWarning $ sformat ("Server error: "%shown) e
+        interruptAllJobs sfJobManager Plain
+
 
 sfClose :: SocketFrame -> IO ()
 sfClose SocketFrame{..} = do
@@ -597,10 +602,6 @@ listenOutbound addr sink = do
     conn <- getOutConnOrOpen addr
     outConnRec conn sink
     return $ stopAllJobs $ outConnJobManager conn
-
-logOnErr :: (WithNamedLogger m, MonadIO m, MonadCatch m) => m () -> m ()
-logOnErr = handleAll $ \e ->
-    commLog . logDebug $ sformat ("Server error: "%shown) e
 
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection

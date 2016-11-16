@@ -1,4 +1,5 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP          #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- |
 -- Module      : Control.TimeWarp.Logging.Parser
@@ -40,10 +41,13 @@ import           Control.Monad.IO.Class                (MonadIO (liftIO))
 
 import           Data.Foldable                         (for_)
 import qualified Data.HashMap.Strict                   as HM hiding (HashMap)
+import           Data.Maybe                            (fromMaybe)
 import           Data.Monoid                           ((<>))
 import           Data.Text                             (unpack)
 import           Data.Yaml                             (decodeFileEither)
 
+import           System.Directory                      (createDirectoryIfMissing)
+import           System.FilePath                       ((</>))
 import           System.Log.Handler.Simple             (fileHandler)
 import           System.Log.Logger                     (addHandler, updateGlobalLogger)
 
@@ -54,20 +58,28 @@ import           Control.TimeWarp.Logging.Wrapper      (LoggerName (..),
                                                         convertSeverity, initLogging,
                                                         setSeverityMaybe)
 
+-- | This function traverses 'LoggerConfig' initializing all subloggers
+-- with 'Severity' and redirecting output in file handlers. Also takes
+-- 'FilePath' prefix to create directory for file handlers output.
 traverseLoggerConfig
     :: MonadIO m
-    => (LoggerName -> LoggerName)
-    -> LoggerName
-    -> LoggerConfig
+    => (LoggerName -> LoggerName)  -- ^ mapper to transform logger names during traversal
+    -> LoggerConfig                -- ^ given LoggerConfig to traverse
+    -> Maybe FilePath              -- ^ prefix for file handlers
     -> m ()
-traverseLoggerConfig logMapper = processLoggers
+traverseLoggerConfig logMapper config (fromMaybe "." -> handlerPrefix) = do
+    liftIO $ createDirectoryIfMissing True handlerPrefix
+    initLogging Warning
+    processLoggers mempty config
   where
     processLoggers:: MonadIO m => LoggerName -> LoggerConfig -> m ()
     processLoggers parent LoggerConfig{..} = do
         setSeverityMaybe parent lcSeverity
+
         whenJust lcFile $ \fileName -> liftIO $ do
             let fileSeverity   = convertSeverity $ lcSeverity ?: Debug
-            thisLoggerHandler <- setStdoutFormatter True <$> fileHandler fileName fileSeverity
+            let handlerPath    = handlerPrefix </> fileName
+            thisLoggerHandler <- setStdoutFormatter True <$> fileHandler handlerPath fileSeverity
             updateGlobalLogger (loggerName parent) $ addHandler thisLoggerHandler
 
         for_ (HM.toList lcSubloggers) $ \(name, loggerConfig) -> do
@@ -86,16 +98,16 @@ initLoggingFromYamlWithMapper
     :: MonadIO m
     => (LoggerName -> LoggerName)
     -> FilePath
+    -> Maybe FilePath
     -> m ()
-initLoggingFromYamlWithMapper loggerMapper loggerConfigPath = do
+initLoggingFromYamlWithMapper loggerMapper loggerConfigPath handlerPrefix = do
     loggerConfig <- parseLoggerConfig loggerConfigPath
 
 #if PatakDebugSkovorodaBARDAQ
     liftIO $ BS.putStrLn $ encodePretty defConfig loggerConfig
 #endif
 
-    initLogging Warning
-    traverseLoggerConfig loggerMapper mempty loggerConfig
+    traverseLoggerConfig loggerMapper loggerConfig handlerPrefix
 
-initLoggingFromYaml :: MonadIO m => FilePath -> m ()
+initLoggingFromYaml :: MonadIO m => FilePath -> Maybe FilePath -> m ()
 initLoggingFromYaml = initLoggingFromYamlWithMapper id
