@@ -1,5 +1,5 @@
 name:                time-warp
-version:             0.1.1.1
+version:             0.1.1.2
 synopsis:            distributed systems execution emulation
 homepage:            https://github.com/serokell/time-warp
 bug-reports:         https://github.com/serokell/time-warp/issues
@@ -52,7 +52,7 @@ library
                      , quickcheck-instances
                      , random >= 1.1
                      , safe
-                     , serokell-util
+                     , serokell-util >= 0.1.1.1
                      , stm >= 2.4.4
                      , template-haskell
                      , text >= 1.2.2.0
@@ -90,7 +90,7 @@ test-suite time-warp-test
                      , mtl
                      , network-msgpack-rpc == 0.0.1
                      , QuickCheck >= 2.8.1
-                     , serokell-util
+                     , serokell-util >= 0.1.1.1
                      , stm >= 2.4.4.1
                      , text >= 1.2.2.0
                      , text-format
@@ -120,7 +120,7 @@ executable token-ring
                      , MonadRandom
                      , mtl
                      , QuickCheck >= 2.8.1
-                     , serokell-util
+                     , serokell-util >= 0.1.1.1
                      , stm >= 2.4.4.1
                      , text >= 1.2.2.0
                      , text-format
