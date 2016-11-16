@@ -14,6 +14,7 @@ module Control.TimeWarp.Logging.LoggerConfig
        ) where
 
 import           Data.Aeson                       (withObject)
+import           Data.Default                     (Default (def))
 import           Data.HashMap.Strict              (HashMap)
 import qualified Data.HashMap.Strict              as HM hiding (HashMap)
 import           Data.Text                        (Text)
@@ -32,6 +33,13 @@ data LoggerConfig = LoggerConfig
     } deriving (Generic, Show)
 
 instance ToJSON LoggerConfig
+
+instance Default LoggerConfig where
+    def = LoggerConfig
+          { lcFile       = Nothing
+          , lcSeverity   = Nothing
+          , lcSubloggers = mempty
+          }
 
 nonLoggers :: [Text]
 nonLoggers = ["file", "severity"]
