@@ -26,3 +26,6 @@ flycheck_*
 
 # logging files
 *.log
+
+# measurement results
+*.csv

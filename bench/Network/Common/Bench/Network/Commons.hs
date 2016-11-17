@@ -10,6 +10,7 @@ module Bench.Network.Commons
     , curTimeMcs
     , logMeasure
 
+    , Timestamp
     , MeasureEvent (..)
     , MeasureInfo (..)
     , LogMessage (..)
@@ -30,9 +31,10 @@ import           Data.Text.Buildable      (Buildable, build)
 import           Data.Time.Clock.POSIX    (getPOSIXTime)
 import qualified Formatting               as F
 import           GHC.Generics             (Generic)
+import           Prelude                  hiding (takeWhile)
 import           System.Directory         (doesFileExist, removeFile)
 
-import           Data.Attoparsec.Text     (Parser, decimal, skip, string)
+import           Data.Attoparsec.Text     (Parser, decimal, string, takeWhile)
 
 import           Control.TimeWarp.Logging (WithNamedLogger, logInfo, logWarning)
 import           Control.TimeWarp.Rpc     (Message)
@@ -52,6 +54,8 @@ instance Message Pong
 
 -- * Util
 
+type Timestamp = Integer
+
 removeFileIfExists :: MonadIO m => FilePath -> m ()
 removeFileIfExists path = liftIO $ do
     exists <- doesFileExist path
@@ -62,7 +66,7 @@ useBenchAsWorkingDirNotifier
 useBenchAsWorkingDirNotifier = flip onException $
     logWarning "Ensure you run benchmarking with working directory = bench"
 
-curTimeMcs :: MonadIO m => m Integer
+curTimeMcs :: MonadIO m => m Timestamp
 curTimeMcs = liftIO $ round . ( * 1000000) <$> getPOSIXTime
 
 logMeasure :: (MonadIO m, WithNamedLogger m) => MeasureEvent -> MsgId -> m ()
@@ -80,6 +84,7 @@ data MeasureEvent
     | PingReceived
     | PongSent
     | PongReceived
+    deriving (Show, Eq, Ord, Enum, Bounded)
 
 instance Buildable MeasureEvent where
     build PingSent     = "• → "
@@ -100,8 +105,8 @@ measureEventParser = string "• → " $> PingSent
 data MeasureInfo = MeasureInfo
     { miId    :: MsgId
     , miEvent :: MeasureEvent
-    , miTime  :: Integer
-    }
+    , miTime  :: Timestamp
+    } deriving (Show)
 
 instance Buildable MeasureInfo where
     build MeasureInfo{..} = mconcat
@@ -133,5 +138,5 @@ instance Buildable a => Buildable (LogMessage a) where
 
 logMessageParser :: Parser a -> Parser (LogMessage a)
 logMessageParser p = do
-    skip (/= '#')
+    _ <- takeWhile (/= '#')
     LogMessage <$> p

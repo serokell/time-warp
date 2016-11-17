@@ -1,4 +1,6 @@
+import           Control.Monad.Trans      (liftIO)
 import           Data.Monoid              ((<>))
+import           GHC.IO.Encoding          (setLocaleEncoding, utf8)
 
 import           Bench.Network.Commons    (MeasureEvent (..), Ping (..), logMeasure,
                                            removeFileIfExists,
@@ -14,6 +16,7 @@ main = runNode "receiver" $ do
     removeFileIfExists "receiver.log"
     useBenchAsWorkingDirNotifier $
         initLoggingFromYaml "logging.yaml"
+    liftIO $ setLocaleEncoding utf8
 
     stopper <- listen (AtPort 3456)
         [ Listener $
