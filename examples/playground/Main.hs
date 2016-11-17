@@ -19,7 +19,6 @@ module Main
 
 import           Control.Concurrent.MVar           (newEmptyMVar, putMVar, takeMVar)
 import           Control.Concurrent.STM.TVar       (modifyTVar, newTVar, readTVar)
-import           Control.Exception                 (bracket_)
 import           Control.Monad                     (forM_, replicateM_, when)
 import           Control.Monad.STM                 (atomically)
 import           Control.Monad.Trans               (MonadIO (liftIO))
@@ -35,12 +34,10 @@ import           Data.Word                         (Word16)
 import           Formatting                        (sformat, shown, string, (%))
 import           GHC.Generics                      (Generic)
 
-import           System.Log.Logger                 (removeAllHandlers)
+import           System.Wlog                       (LoggerName, Severity (Debug),
+                                                    initLogging, logDebug, logError,
+                                                    logInfo, usingLoggerName)
 
-import           Control.TimeWarp.Logging          (LoggerName, Severity (Debug),
-                                                    initLogging, initLoggingFromYaml,
-                                                    logDebug, logError, logInfo,
-                                                    usingLoggerName)
 import           Control.TimeWarp.Rpc              (BinaryP (..), Binding (..),
                                                     Listener (..), ListenerH (..),
                                                     Message, MonadTransfer (..),
@@ -55,15 +52,7 @@ import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, a
 
 -- use ghci; this is only for logger debugging
 main :: IO ()
-main = bracket_ (initLoggingFromYaml "logger-config-example.yaml" $ Just "logs")
-                removeAllHandlers
-                testLogging
-  where
-    testLogging = usingLoggerName "node" $ do
-        logInfo  "patak"
-        logDebug "skovoroda"
-        logError "BARDAQ"
-
+main = return ()
 
 {-
 runReal :: MsgPackRpc a -> IO a
