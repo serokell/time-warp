@@ -4,7 +4,6 @@
 {-# LANGUAGE StandaloneDeriving    #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE ViewPatterns          #-}
 
 -- |
 -- Module      : Control.TimeWarp.Timed.MonadTimed
@@ -48,21 +47,20 @@ module Control.TimeWarp.Timed.MonadTimed
     , MonadTimedError (..)
     ) where
 
-import           Control.Exception        (AsyncException (ThreadKilled), Exception (..))
-import           Control.Monad            (void)
-import           Control.Monad.Catch      (MonadThrow)
-import           Control.Monad.Reader     (ReaderT (..), ask, runReaderT)
-import           Control.Monad.State      (StateT, evalStateT, get)
-import           Control.Monad.Trans      (MonadIO, lift, liftIO)
+import           Control.Exception    (AsyncException (ThreadKilled), Exception (..))
+import           Control.Monad        (void)
+import           Control.Monad.Catch  (MonadThrow)
+import           Control.Monad.Reader (ReaderT (..), ask, runReaderT)
+import           Control.Monad.State  (StateT, evalStateT, get)
+import           Control.Monad.Trans  (MonadIO, lift, liftIO)
 
-import           Data.Monoid              ((<>))
-import           Data.Text                (Text)
-import           Data.Text.Buildable      (Buildable (build))
-import           Data.Time.Units          (Microsecond, Millisecond, Minute, Second,
-                                           TimeUnit (..), convertUnit)
-import           Data.Typeable            (Typeable)
-
-import           Control.TimeWarp.Logging (LoggerNameBox (..))
+import           Data.Monoid          ((<>))
+import           Data.Text            (Text)
+import           Data.Text.Buildable  (Buildable (build))
+import           Data.Time.Units      (Microsecond, Millisecond, Minute, Second,
+                                       TimeUnit (..), convertUnit)
+import           Data.Typeable        (Typeable)
+import           System.Wlog          (LoggerNameBox (..))
 
 -- | Defines some time point basing on current virtual time.
 type RelativeToNow = Microsecond -> Microsecond
