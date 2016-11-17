@@ -6,25 +6,24 @@ module Test.Control.TimeWarp.Timed.ExceptionSpec
        ) where
 
 import           Control.Concurrent.STM       (atomically)
-import           Control.Concurrent.STM.TVar  (TVar, modifyTVar, newTVarIO,
-                                               readTVarIO)
+import           Control.Concurrent.STM.TVar  (TVar, modifyTVar, newTVarIO, readTVarIO)
 import           Control.Exception.Base       (ArithException (Overflow),
                                                AsyncException (ThreadKilled),
                                                SomeException (..))
 import           Control.Monad.Catch          (catch, catchAll, throwM)
 import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans          (MonadIO)
+import           System.Wlog                  (Severity (Error), initLogging)
 import           Test.Hspec                   (Spec, before, describe)
 import           Test.Hspec.QuickCheck        (prop)
 import           Test.QuickCheck              (NonNegative (..), Property)
 import           Test.QuickCheck.Monadic      (monadicIO)
-import           Test.QuickCheck.Property     (Result (reason), failed,
-                                               ioProperty, succeeded)
+import           Test.QuickCheck.Property     (Result (reason), failed, ioProperty,
+                                               succeeded)
 
-import           Control.TimeWarp.Logging     (Severity (Error), initLogging)
-import           Control.TimeWarp.Timed       (Microsecond, TimedT, after,
-                                               fork_, fork, invoke, runTimedT,
-                                               sec, wait, for, throwTo)
+import           Control.TimeWarp.Timed       (Microsecond, TimedT, after, for, fork,
+                                               fork_, invoke, runTimedT, sec, throwTo,
+                                               wait)
 
 import           Test.Control.TimeWarp.Common ()
 

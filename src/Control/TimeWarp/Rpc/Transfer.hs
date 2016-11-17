@@ -85,10 +85,10 @@ import           Formatting                         (bprint, builder, int, sform
                                                      stext, string, (%))
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
 import qualified Network.Socket                     as NS
-
-import           Control.TimeWarp.Logging           (LoggerNameBox, WithNamedLogger,
+import           System.Wlog                        (LoggerNameBox, WithNamedLogger,
                                                      logDebug, logError, logInfo,
                                                      logWarning)
+
 import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer (..),
                                                      NetworkAddress, Port,
                                                      ResponseContext (..), ResponseT,
