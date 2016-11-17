@@ -95,7 +95,7 @@ printMeasures file measures = runResourceT $
     eventsUniverse = [minBound .. maxBound]
 
     alignColumns = map (\(s, m) -> bprint (right s ' ') m)
-                 . zip (5 : (20 <$ eventsUniverse))
+                 . zip (7 : (20 <$ eventsUniverse))
 
 main :: IO ()
 main = usingLoggerName mempty $ do
