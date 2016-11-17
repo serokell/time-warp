@@ -12,7 +12,7 @@ import           Control.TimeWarp.Rpc     (BinaryP (..), localhost, runDialog,
 import           Control.TimeWarp.Timed   (for, fork_, runTimedIO, runTimedIO, sec, wait)
 
 main :: IO ()
-main = runNode "sender" $ do
+main = runTimedIO . usingLoggerName "sender" $ do
     removeFileIfExists "sender.log"
     useBenchAsWorkingDirNotifier $
         initLoggingFromYaml "logging.yaml"
@@ -22,11 +22,11 @@ main = runNode "sender" $ do
     let msgNum    = 10
     let taskIds   = chunksOf (msgNum `div` threadNum) [1..msgNum]
     forM_ taskIds $
-        \msgIds -> fork_ . forM_ msgIds $
+        \msgIds -> fork_ . runNetworking . forM_ msgIds $
             \msgId -> do
                 logMeasure PingSent msgId
                 send (localhost, 3456) $ Ping msgId
     wait (for 2 sec)
 
   where
-    runNode name = runTimedIO . usingLoggerName name . runTransfer . runDialog BinaryP
+    runNetworking = runTransfer . runDialog BinaryP
