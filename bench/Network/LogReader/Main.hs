@@ -5,7 +5,8 @@ import           Control.Exception            (Exception)
 import           Control.Lens                 (at, singular, (%=), (<<.=), _Just, (^.))
 import           Control.Monad                (forM_)
 import           Control.Monad.Catch          (handle, throwM)
-import           Control.Monad.State          (StateT (..), execStateT)
+import           Control.Monad.State          (StateT (..), execStateT, evalStateT,
+                                               modify, get)
 import           Control.Monad.Trans          (lift)
 import           Control.Monad.Trans.Resource (runResourceT)
 import           Data.Conduit                 (Source, ($$), (=$=), yield)
@@ -47,15 +48,24 @@ instance Buildable MeasureInfoDuplicateError where
 
 instance Exception MeasureInfoDuplicateError
 
+
+type RowId = Int
+
 analyze :: FilePath -> StateT Measures (LoggerNameBox IO) ()
-analyze file = catchE . runResourceT $
-    sourceFile file =$= CB.lines =$= decode utf8 $$ CL.mapM_ (lift . saveMeasure)
+analyze file =
+    catchE . flip evalStateT 0 . runResourceT $
+        sourceFile file =$= CB.lines =$= CL.iterM (const $ modify succ)
+            =$= decode utf8 $$ CL.mapM_ (lift . saveMeasure)
   where
-    saveMeasure :: Text -> StateT Measures (LoggerNameBox IO) ()
+    saveMeasure :: Text -> StateT RowId (StateT Measures (LoggerNameBox IO)) ()
     saveMeasure row = do
         case parseOnly (logMessageParser measureInfoParser) row of
-            Left err -> logWarning $ sformat ("Some error occured: "%F.build) err
-            Right (LogMessage mi@MeasureInfo{..}) -> do
+            Left err -> do
+                rowNo <- get
+                logWarning $
+                    sformat ("Parse error at file "%F.build%" (line "%F.int%"): "%F.build)
+                    file rowNo err
+            Right (LogMessage mi@MeasureInfo{..}) -> lift $ do
                 at miId %= (<|> Just M.empty)
                 mwas <- singular (at miId . _Just) . at miEvent <<.= Just miTime
                 forM_ mwas $ \was -> throwM $ MeasureInfoDuplicateError (was, mi)
@@ -74,7 +84,7 @@ printMeasures file measures = runResourceT $
              . sformat (F.build%"\n")
              . mconcat
              . intersperse ","
-             . map (bprint $ right 10 ' ')
+             . alignColumns
 
     printHeader = printRow $ "MsgId" : map (sformat F.build) eventsUniverse
 
@@ -84,6 +94,8 @@ printMeasures file measures = runResourceT $
 
     eventsUniverse = [minBound .. maxBound]
 
+    alignColumns = map (\(s, m) -> bprint (right s ' ') m)
+                 . zip (5 : (20 <$ eventsUniverse))
 
 main :: IO ()
 main = usingLoggerName mempty $ do

@@ -34,7 +34,7 @@ import           GHC.Generics             (Generic)
 import           Prelude                  hiding (takeWhile)
 import           System.Directory         (doesFileExist, removeFile)
 
-import           Data.Attoparsec.Text     (Parser, decimal, string, takeWhile)
+import           Data.Attoparsec.Text     (Parser, char, decimal, string, takeWhile)
 
 import           Control.TimeWarp.Logging (WithNamedLogger, logInfo, logWarning)
 import           Control.TimeWarp.Rpc     (Message)
@@ -111,18 +111,18 @@ data MeasureInfo = MeasureInfo
 instance Buildable MeasureInfo where
     build MeasureInfo{..} = mconcat
         [ build miId
-        , ", "
+        , " "
         , build miEvent
-        , ", "
+        , " "
         , build miTime
         ]
 
 measureInfoParser :: Parser MeasureInfo
 measureInfoParser = do
     miId <- decimal
-    _ <- string ", "
+    _ <- string " "
     miEvent <- measureEventParser
-    _ <- string ", "
+    _ <- string " "
     miTime <- decimal
     return MeasureInfo{..}
 
@@ -138,5 +138,5 @@ instance Buildable a => Buildable (LogMessage a) where
 
 logMessageParser :: Parser a -> Parser (LogMessage a)
 logMessageParser p = do
-    _ <- takeWhile (/= '#')
+    _ <- takeWhile (/= '#') >> char '#'
     LogMessage <$> p
