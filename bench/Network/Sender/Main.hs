@@ -1,5 +1,7 @@
 import           Control.Monad            (forM_)
+import           Control.Monad.Trans      (liftIO)
 import           Data.List.Extra          (chunksOf)
+import           GHC.IO.Encoding          (setLocaleEncoding, utf8)
 
 import           Bench.Network.Commons    (MeasureEvent (..), Ping (..), logMeasure,
                                            removeFileIfExists,
@@ -14,6 +16,7 @@ main = runNode "sender" $ do
     removeFileIfExists "sender.log"
     useBenchAsWorkingDirNotifier $
         initLoggingFromYaml "logging.yaml"
+    liftIO $ setLocaleEncoding utf8
 
     let threadNum = 2
     let msgNum    = 10
