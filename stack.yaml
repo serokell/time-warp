@@ -1,5 +1,5 @@
 # Specifies the GHC version and set of packages available (e.g., lts-3.5, nightly-2015-09-21, ghc-7.10.2)
-resolver: lts-7.1
+resolver: lts-7.9
 
 # Local packages, usually specified by relative directory name
 packages:
@@ -7,6 +7,9 @@ packages:
 - location:
     git: https://github.com/serokell/serokell-util.git
     commit: dbdea0cecc280d1703279c94646be013845b1b7c
+- location:
+    git: https://github.com/serokell/log-warper.git
+    commit: 5de577c3ab25e6f9a4350a9646050a88b2b8996e
   extra-dep: true
 
 nix:

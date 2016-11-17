@@ -53,10 +53,10 @@ import           Data.Monoid                 ((<>))
 import           Data.Text                   (Text)
 import           Data.Text.Buildable         (Buildable (..))
 import           Data.Word                   (Word16)
-
-import           Control.TimeWarp.Logging    (LoggerName, LoggerNameBox (..),
+import           System.Wlog                 (LoggerName, LoggerNameBox (..),
                                               WithNamedLogger, getLoggerName,
                                               modifyLoggerName, usingLoggerName)
+
 import           Control.TimeWarp.Timed      (MonadTimed, ThreadId)
 
 
