@@ -80,9 +80,9 @@ import           Data.Conduit.List                  as CL
 import           Data.Map                           as M
 import           Data.Proxy                         (Proxy (..))
 import           Formatting                         (sformat, shown, stext, (%))
-
-import           Control.TimeWarp.Logging           (LoggerNameBox (..), WithNamedLogger,
+import           System.Wlog                        (LoggerNameBox (..), WithNamedLogger,
                                                      logDebug, logError, logWarning)
+
 import           Control.TimeWarp.Rpc.Message       (Empty (..), HeaderNContentData (..),
                                                      HeaderNNameData (..),
                                                      HeaderNRawData (..), Message (..),
