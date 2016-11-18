@@ -167,7 +167,6 @@ executable bench-sender
                      , extra >= 1.4
                      , formatting
                      , hslogger
-                     , lens >= 4.14
                      , log-warper
                      , monad-control >= 1.0.1
                      , mtl

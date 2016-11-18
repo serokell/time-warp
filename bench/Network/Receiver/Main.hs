@@ -1,6 +1,7 @@
 module Main where
 
-import           Control.Monad              (when)
+import           Control.Applicative        (empty)
+import           Control.Monad              (forM_, when)
 import           Control.Monad.Trans        (liftIO)
 import           GHC.IO.Encoding            (setLocaleEncoding, utf8)
 
@@ -24,12 +25,11 @@ main = do
             "PoS prototype node"
             "Use it!"
             argsParser
-            (return ())
+            empty
+
     runNode "receiver" $ do
-        case logConfig of
-          Just config -> do
-            loggerConfig <- parseLoggerConfig config
-            traverseLoggerConfig id loggerConfig logsPrefix
+        loggerConfig <- parseLoggerConfig logConfig
+        traverseLoggerConfig id loggerConfig logsPrefix
         liftIO $ setLocaleEncoding utf8
 
         stopper <- listen (AtPort port)

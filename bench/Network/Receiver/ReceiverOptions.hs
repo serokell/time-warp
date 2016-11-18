@@ -14,7 +14,7 @@ import           Options.Applicative.Simple (Parser, auto, help, long, many, met
                                              strOption, switch, value)
 
 data Args = Args
-    { logConfig  :: !(Maybe FilePath)
+    { logConfig  :: !FilePath
     , logsPrefix :: !(Maybe FilePath)
     , port       :: !Word16
     , noPong     :: !Bool
@@ -26,9 +26,12 @@ data Args = Args
 argsParser :: Parser Args
 argsParser =
     Args <$>
-    optional
-        (strOption $
-         long "log-config" <> metavar "FILEPATH" <> help "Path to logger configuration")
+    strOption
+         (long "log-config"
+          <> metavar "FILEPATH"
+          <> value "logging.yaml"
+          <> showDefault <>
+         help "Path to logger configuration")
     <*>
     optional
         (strOption $
