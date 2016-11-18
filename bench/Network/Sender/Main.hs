@@ -2,12 +2,13 @@
 
 module Main where
 
+import           Control.Applicative         (empty)
 import           Control.Concurrent.Async    (forConcurrently)
-import           Control.Lens                ((<&>))
 import           Control.Monad               (forM, forM_, unless, void)
 import           Control.Monad.Trans         (liftIO)
 import           Control.Monad.Trans.Control (liftBaseWith)
 import           Data.List.Extra             (chunksOf)
+import           Formatting                  (sformat, shown)
 import           GHC.IO.Encoding             (setLocaleEncoding, utf8)
 
 import           Bench.Network.Commons       (MeasureEvent (..), Ping (..), Pong (..),
@@ -31,19 +32,16 @@ main = do
             "PoS prototype node"
             "Use it!"
             argsParser
-            (return ())
+            empty
 
     runNode "sender" $ do
-        case logConfig of
-          Just config -> do
-            loggerConfig <- parseLoggerConfig config
-            traverseLoggerConfig id loggerConfig logsPrefix
+        loggerConfig <- parseLoggerConfig logConfig
+        traverseLoggerConfig id loggerConfig logsPrefix
         liftIO $ setLocaleEncoding utf8
 
         let sendDelay :: Microsecond
             sendDelay = maybe 0 (\r -> interval ((1000000 :: Int) `div` r) mcs) msgRate
-        let tasksIds  = [1..threadNum] <&>
-                                \tid -> [tid, tid + threadNum .. msgNum]
+        let tasksIds  = [[tid, tid + threadNum .. msgNum] | tid <- [1..threadNum]]
         runConcurrently tasksIds $
             \msgIds -> runNetworking $ do
                 closeConns <- forM recipients $
