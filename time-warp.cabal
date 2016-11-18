@@ -157,6 +157,7 @@ executable playground
 executable bench-sender
   main-is:             Main.hs
   other-modules:       Bench.Network.Commons
+                       SenderOptions
   build-depends:       async >= 2.1
                      , attoparsec >= 0.13.1
                      , base == 4.*
@@ -188,6 +189,7 @@ executable bench-sender
 executable bench-receiver
   main-is:             Main.hs
   other-modules:       Bench.Network.Commons
+                       ReceiverOptions
   build-depends:       attoparsec >= 0.13.1
                      , base == 4.*
                      , binary >= 0.8.3
