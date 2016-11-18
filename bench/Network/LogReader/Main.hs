@@ -2,24 +2,24 @@
 
 import           Control.Applicative          ((<|>))
 import           Control.Exception            (Exception)
-import           Control.Lens                 (at, singular, (%=), (<<.=), _Just, (^.))
+import           Control.Lens                 (at, singular, (%=), (<<.=), (^.), _Just)
 import           Control.Monad                (forM_)
 import           Control.Monad.Catch          (handle, throwM)
-import           Control.Monad.State          (StateT (..), execStateT, evalStateT,
-                                               modify, get)
+import           Control.Monad.State          (StateT (..), evalStateT, execStateT, get,
+                                               modify)
 import           Control.Monad.Trans          (lift)
 import           Control.Monad.Trans.Resource (runResourceT)
-import           Data.Conduit                 (Source, ($$), (=$=), yield)
-import           Data.Conduit.Binary          (sourceFile, sinkFile)
+import           Data.Conduit                 (Source, yield, ($$), (=$=))
+import           Data.Conduit.Binary          (sinkFile, sourceFile)
 import qualified Data.Conduit.Binary          as CB
 import qualified Data.Conduit.List            as CL
-import           Data.Conduit.Text            (decode, utf8, encode)
+import           Data.Conduit.Text            (decode, encode, utf8)
+import           Data.List                    (intersperse)
 import qualified Data.Map                     as M
 import           Data.Text                    (Text)
 import           Data.Text.Buildable          (Buildable (..))
 import           Data.Typeable                (Typeable)
-import           Data.List (intersperse)
-import           Formatting                   (sformat, (%), bprint, right, int)
+import           Formatting                   (bprint, int, right, sformat, (%))
 import qualified Formatting                   as F
 import           System.IO                    (FilePath)
 
@@ -28,7 +28,7 @@ import           Data.Attoparsec.Text         (parseOnly)
 import           Bench.Network.Commons        (LogMessage (..), MeasureEvent (..),
                                                MeasureInfo (..), MsgId, Timestamp,
                                                logMessageParser, measureInfoParser)
-import           Control.TimeWarp.Logging     (LoggerNameBox, Severity (Info),
+import           System.Wlog                  (LoggerNameBox, Severity (Info),
                                                initLogging, logError, logWarning,
                                                usingLoggerName, usingLoggerName)
 
