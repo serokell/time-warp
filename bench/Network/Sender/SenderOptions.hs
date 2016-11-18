@@ -23,6 +23,7 @@ data Args = Args
     , recipients :: ![NetworkAddress]
     , threadNum  :: !Int
     , msgNum     :: !Int
+    , msgRate    :: !(Maybe Int)
     , duration   :: !Int
     }
   deriving Show
@@ -60,6 +61,15 @@ argsParser =
           <> value 1000
           <> showDefault <>
          help "Number of messages to send")
+    <*>
+    optional
+        (option
+            auto
+            (short 'r'
+              <> long "msg-rate"
+              <> metavar "INTEGER" <>
+             help "Number of messages to send per second")
+        )
     <*>
     option
         auto
