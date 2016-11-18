@@ -157,7 +157,8 @@ executable playground
 executable bench-sender
   main-is:             Main.hs
   other-modules:       Bench.Network.Commons
-  build-depends:       attoparsec >= 0.13.1
+  build-depends:       async >= 2.1
+                     , attoparsec >= 0.13.1
                      , base == 4.*
                      , binary >= 0.8.3
                      , data-msgpack >= 0.0.8
@@ -166,7 +167,9 @@ executable bench-sender
                      , extra >= 1.4
                      , formatting
                      , hslogger
+                     , monad-control >= 1.0.1
                      , mtl
+                     , lens >= 4.14
                      , text-format >= 0.3.1
                      , time >= 1.6
                      , time-units >= 1.0.0
