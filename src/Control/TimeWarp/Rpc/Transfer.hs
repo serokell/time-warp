@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE Rank2Types            #-}
@@ -155,12 +156,12 @@ modifyTVarS t st = do
     TV.writeTVar t s'
     return a
 
--- | Hack to convert one monad to another, executes action no more than once.
-convertMonad :: (MonadIO m, MonadTimed m, MonadIO n) => m () -> m (n ())
-convertMonad action = do
-    m <- liftIO newEmptyMVar
-    fork_ $ liftIO (takeMVar m) >> action
-    return $ liftIO $ putMVar m ()
+-- | Remembers monadic context of an action and transforms it to `IO`.
+-- Note that any changes in context would be lost.
+-- NOTE: interesting, why `monad-control` package lacks of this function, it seems cool
+inCurrentContext :: (MonadBaseControl IO m, MonadIO n) => m () -> m (n ())
+inCurrentContext action =
+    liftBaseWith $ \runInIO -> return . liftIO . void $ runInIO action
 
 mkJobManager :: MonadIO m => m JobManager
 mkJobManager = liftIO . TV.newTVarIO $
@@ -230,20 +231,21 @@ stopAllJobs :: MonadIO m => JobManager -> m ()
 stopAllJobs m = interruptAllJobs m Plain >> awaitAllJobs m
 
 -- | Add second manager as a job to first manager.
-addManagerAsJob :: (MonadIO m, MonadTimed m)
+addManagerAsJob :: (MonadIO m, MonadTimed m, MonadBaseControl IO m)
                 => JobManager -> InterruptType -> JobManager -> m ()
 addManagerAsJob manager intType managerJob = do
-    interrupter <- convertMonad $ interruptAllJobs managerJob intType
+    interrupter <- inCurrentContext $ interruptAllJobs managerJob intType
     addJob manager interrupter $
         \ready -> fork_ $ awaitAllJobs managerJob >> liftIO ready
 
 -- | Adds job executing in another thread, where interrupting kills the thread.
-addThreadJob :: (MonadIO m,  MonadMask m, MonadTimed m) => JobManager -> m () -> m ()
+addThreadJob :: (MonadIO m,  MonadMask m, MonadTimed m, MonadBaseControl IO m)
+             => JobManager -> m () -> m ()
 addThreadJob manager action =
     mask $
         \unmask -> fork_ $ do
             tid <- myThreadId
-            killer <- convertMonad $ killThread tid
+            killer <- inCurrentContext $ killThread tid
             addJob manager killer $
                 \markReady -> unmask action `finally` liftIO markReady
 
@@ -273,7 +275,7 @@ data OutputConnection = OutputConnection
                         => Source m BS.ByteString -> m ()
       -- ^ Function to send all data produced by source
     , outConnRec        :: forall m . (MonadIO m, MonadMask m, MonadTimed m,
-                                       WithNamedLogger m)
+                                       WithNamedLogger m, MonadBaseControl IO m)
                         => Sink BS.ByteString (ResponseT m) () -> m ()
       -- ^ Function to stark sink-listener, returns synchronous closer
     , outConnJobManager :: JobManager
@@ -372,14 +374,15 @@ sfSend SocketFrame{..} src = do
 -- | Constructs function which allows infinitelly listens on given `SocketFrame` in terms of
 -- `MonadTransfer`.
 -- Attempt to use this function twice will end with `AlreadyListeningOutbound` error.
-sfReceive :: (MonadIO m, MonadMask m, MonadTimed m, WithNamedLogger m)
+sfReceive :: (MonadIO m, MonadMask m, MonadTimed m, WithNamedLogger m,
+              MonadBaseControl IO m)
           => SocketFrame -> Sink BS.ByteString (ResponseT m) () -> m ()
 sfReceive sf@SocketFrame{..} sink = do
     busy <- liftIO . atomically $ TV.swapTVar sfInBusy True
     when busy $ throwM $ AlreadyListeningOutbound sfPeerAddr
 
     liManager <- mkJobManager
-    onTimeout <- convertMonad logOnTimeout
+    onTimeout <- inCurrentContext logOnTimeout
     let interruptType = WithTimeout (interval 3 sec) onTimeout
     mask $ \unmask -> do
         addManagerAsJob sfJobManager interruptType liManager
@@ -542,7 +545,7 @@ listenInbound (fromIntegral -> port) sink = do
                         serve lsocket jobManager
 
     -- return closer
-    convertMonad $ do
+    inCurrentContext $ do
         commLog . logDebug $
             sformat ("Stopping server at "%int) port
         stopAllJobs jobManager
