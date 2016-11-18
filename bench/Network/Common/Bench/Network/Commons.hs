@@ -5,8 +5,6 @@ module Bench.Network.Commons
     ( MsgId
     , Ping (..)
     , Pong (..)
-    , removeFileIfExists
-    , useBenchAsWorkingDirNotifier
     , curTimeMcs
     , logMeasure
 
@@ -18,26 +16,25 @@ module Bench.Network.Commons
     , logMessageParser
     ) where
 
-import           Control.Applicative      ((<|>))
-import           Control.Monad            (when)
-import           Control.Monad.Catch      (MonadCatch, onException)
-import           Control.Monad.Trans      (MonadIO (..))
-import           Data.Binary              (Binary)
-import           Data.Data                (Data)
-import           Data.Functor             (($>))
-import           Data.MessagePack         (MessagePack)
-import           Data.Monoid              ((<>))
-import           Data.Text.Buildable      (Buildable, build)
-import           Data.Time.Clock.POSIX    (getPOSIXTime)
-import qualified Formatting               as F
-import           GHC.Generics             (Generic)
-import           Prelude                  hiding (takeWhile)
-import           System.Directory         (doesFileExist, removeFile)
+import           Control.Applicative   ((<|>))
+import           Control.Monad         (when)
+import           Control.Monad.Catch   (MonadCatch, onException)
+import           Control.Monad.Trans   (MonadIO (..))
+import           Data.Binary           (Binary)
+import           Data.Data             (Data)
+import           Data.Functor          (($>))
+import           Data.MessagePack      (MessagePack)
+import           Data.Monoid           ((<>))
+import           Data.Text.Buildable   (Buildable, build)
+import           Data.Time.Clock.POSIX (getPOSIXTime)
+import qualified Formatting            as F
+import           GHC.Generics          (Generic)
+import           Prelude               hiding (takeWhile)
 
-import           Data.Attoparsec.Text     (Parser, char, decimal, string, takeWhile)
+import           Data.Attoparsec.Text  (Parser, char, decimal, string, takeWhile)
 
-import           Control.TimeWarp.Logging (WithNamedLogger, logInfo, logWarning)
-import           Control.TimeWarp.Rpc     (Message)
+import           Control.TimeWarp.Rpc  (Message)
+import           System.Wlog           (WithNamedLogger, logInfo, logWarning)
 
 
 type MsgId = Int
@@ -55,16 +52,6 @@ instance Message Pong
 -- * Util
 
 type Timestamp = Integer
-
-removeFileIfExists :: MonadIO m => FilePath -> m ()
-removeFileIfExists path = liftIO $ do
-    exists <- doesFileExist path
-    when exists $ removeFile path
-
-useBenchAsWorkingDirNotifier
-    :: (MonadIO m, MonadCatch m , WithNamedLogger m) => m () -> m ()
-useBenchAsWorkingDirNotifier = flip onException $
-    logWarning "Ensure you run benchmarking with working directory = bench"
 
 curTimeMcs :: MonadIO m => m Timestamp
 curTimeMcs = liftIO $ round . ( * 1000000) <$> getPOSIXTime
