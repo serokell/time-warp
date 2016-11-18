@@ -15,7 +15,7 @@ import           Bench.Network.Commons       (MeasureEvent (..), Ping (..), Pong
 import           Control.TimeWarp.Rpc        (BinaryP (..), Binding (AtConnTo),
                                               Listener (..), listen, localhost, runDialog,
                                               runTransfer, send)
-import           Control.TimeWarp.Timed      (Millisecond, for, fork_, interval,
+import           Control.TimeWarp.Timed      (Microsecond, for, fork_, interval, mcs,
                                               runTimedIO, runTimedIO, sec, startTimer,
                                               wait)
 import           Options.Applicative.Simple  (simpleOptions)
@@ -40,8 +40,9 @@ main = do
             traverseLoggerConfig id loggerConfig logsPrefix
         liftIO $ setLocaleEncoding utf8
 
-        let sendDelay   = 5 :: Millisecond
-        let tasksIds    = [1..threadNum] <&>
+        let sendDelay :: Microsecond
+            sendDelay = maybe 0 (\r -> interval ((1000000 :: Int) `div` r) mcs) msgRate
+        let tasksIds  = [1..threadNum] <&>
                                 \tid -> [tid, tid + threadNum .. msgNum]
         runConcurrently tasksIds $
             \msgIds -> runNetworking $ do
