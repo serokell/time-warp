@@ -41,8 +41,7 @@ module Control.TimeWarp.Rpc.Transfer
        ) where
 
 import qualified Control.Concurrent                 as C
-import           Control.Concurrent.MVar            (MVar, modifyMVar, newEmptyMVar,
-                                                     newMVar, putMVar, takeMVar)
+import           Control.Concurrent.MVar            (MVar, modifyMVar, newMVar)
 import           Control.Concurrent.STM             (STM, atomically, check)
 import qualified Control.Concurrent.STM.TBMChan     as TBM
 import qualified Control.Concurrent.STM.TChan       as TC

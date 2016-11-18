@@ -10,10 +10,9 @@ module SenderOptions
 import           Control.TimeWarp.Rpc       (NetworkAddress)
 import           Data.Monoid                ((<>))
 import           Data.String                (fromString)
-import           Data.Word                  (Word16)
 import           Options.Applicative.Simple (Parser, auto, help, long, many, metavar,
                                              option, optional, short, showDefault,
-                                             strOption, switch, value)
+                                             strOption, value)
 import           Serokell.Util.OptParse     (fromParsec)
 import           Serokell.Util.Parse        (connection)
 

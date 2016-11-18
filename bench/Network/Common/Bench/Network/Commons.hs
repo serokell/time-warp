@@ -17,8 +17,6 @@ module Bench.Network.Commons
     ) where
 
 import           Control.Applicative   ((<|>))
-import           Control.Monad         (when)
-import           Control.Monad.Catch   (MonadCatch, onException)
 import           Control.Monad.Trans   (MonadIO (..))
 import           Data.Binary           (Binary)
 import           Data.Data             (Data)
@@ -34,7 +32,7 @@ import           Prelude               hiding (takeWhile)
 import           Data.Attoparsec.Text  (Parser, char, decimal, string, takeWhile)
 
 import           Control.TimeWarp.Rpc  (Message)
-import           System.Wlog           (WithNamedLogger, logInfo, logWarning)
+import           System.Wlog           (WithNamedLogger, logInfo)
 
 
 type MsgId = Int
