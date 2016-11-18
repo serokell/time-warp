@@ -167,9 +167,12 @@ executable bench-sender
                      , extra >= 1.4
                      , formatting
                      , hslogger
+                     , lens >= 4.14
+                     , log-warper
                      , monad-control >= 1.0.1
                      , mtl
-                     , lens >= 4.14
+                     , optparse-simple
+                     , serokell-util
                      , text-format >= 0.3.1
                      , time >= 1.6
                      , time-units >= 1.0.0
@@ -194,7 +197,10 @@ executable bench-receiver
                      , exceptions >= 0.8.2.1
                      , formatting
                      , hslogger
+                     , log-warper
                      , mtl
+                     , optparse-simple
+                     , serokell-util
                      , text-format >= 0.3.1
                      , time >= 1.6
                      , time-units >= 1.0.0
@@ -222,6 +228,7 @@ executable bench-log-reader
                      , exceptions >= 0.8.2.1
                      , formatting
                      , hslogger
+                     , log-warper
                      , lens >= 4.14
                      , mtl
                      , resourcet >= 1.1.7
