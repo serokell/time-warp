@@ -21,8 +21,8 @@ main :: IO ()
 main = do
     (Args {..}, ()) <-
         simpleOptions
-            "cardano-node"
-            "PoS prototype node"
+            "bench-receiver"
+            "Server utility for benches"
             "Use it!"
             argsParser
             empty

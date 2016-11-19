@@ -1,13 +1,13 @@
 {-# LANGUAGE TypeApplications #-}
 
-import           Control.Applicative          ((<|>))
+import           Control.Applicative          (empty, (<|>))
 import           Control.Exception            (Exception)
 import           Control.Lens                 (at, singular, (%=), (<<.=), (^.), _Just)
 import           Control.Monad                (forM_)
 import           Control.Monad.Catch          (handle, throwM)
 import           Control.Monad.State          (StateT (..), evalStateT, execStateT, get,
                                                modify)
-import           Control.Monad.Trans          (lift)
+import           Control.Monad.Trans          (lift, liftIO)
 import           Control.Monad.Trans.Resource (runResourceT)
 import           Data.Conduit                 (Source, yield, ($$), (=$=))
 import           Data.Conduit.Binary          (sinkFile, sourceFile)
@@ -23,6 +23,7 @@ import           Formatting                   (bprint, int, right, sformat, (%))
 import qualified Formatting                   as F
 import           System.IO                    (FilePath)
 
+import           Options.Applicative.Simple   (simpleOptions)
 import           Data.Attoparsec.Text         (parseOnly)
 
 import           Bench.Network.Commons        (LogMessage (..), MeasureEvent (..),
@@ -31,7 +32,7 @@ import           Bench.Network.Commons        (LogMessage (..), MeasureEvent (..
 import           System.Wlog                  (LoggerNameBox, Severity (Info),
                                                initLogging, logError, logWarning,
                                                usingLoggerName, usingLoggerName)
-
+import           LogReaderOptions             (Args (..), argsParser)
 
 type Measures = M.Map MsgId (M.Map MeasureEvent Timestamp)
 
@@ -79,6 +80,12 @@ printMeasures file measures = runResourceT $
   where
     source = printHeader >> mapM_ printMeasure (M.toList measures)
 
+    printHeader = printRow $ "MsgId" : map (sformat F.build) eventsUniverse
+
+    printMeasure :: Monad m => (MsgId, M.Map MeasureEvent Timestamp) -> Source m Text
+    printMeasure (mid, mm) = printRow $
+        sformat int mid : map (\e -> maybe "-" (sformat int) $ mm ^. at e) eventsUniverse
+
     printRow :: Monad m => [Text] -> Source m Text
     printRow = yield
              . sformat (F.build%"\n")
@@ -86,26 +93,23 @@ printMeasures file measures = runResourceT $
              . intersperse ","
              . alignColumns
 
-    printHeader = printRow $ "MsgId" : map (sformat F.build) eventsUniverse
-
-    printMeasure :: Monad m => (MsgId, M.Map MeasureEvent Timestamp) -> Source m Text
-    printMeasure (mid, mm) = printRow $
-        sformat int mid : map (\e -> maybe "-" (sformat int) $ mm ^. at e) eventsUniverse
+    alignColumns = map (\(s, m) -> bprint (right s ' ') m)
+                  . zip (7 : (20 <$ eventsUniverse))
 
     eventsUniverse = [minBound .. maxBound]
 
-    alignColumns = map (\(s, m) -> bprint (right s ' ') m)
-                 . zip (7 : (20 <$ eventsUniverse))
+getOptions :: IO Args
+getOptions = (\(a, ()) -> a) <$> simpleOptions
+    "bench-log-reader"
+    "Utility to extract measures from logs into csv file"
+    "Use it!"
+    argsParser
+    empty
 
 main :: IO ()
 main = usingLoggerName mempty $ do
     initLogging Info
+    Args{..} <- liftIO getOptions
     measures <- flip execStateT M.empty $
-        forM_ logFiles analyze
-    printMeasures "measures.csv" measures
-  where
-    logFiles :: [FilePath]
-    logFiles =
-        [ "sender.log"
-        , "receiver.log"
-        ]
+        forM_ inputFiles analyze
+    printMeasures resultFile measures

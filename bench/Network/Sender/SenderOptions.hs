@@ -10,8 +10,8 @@ module SenderOptions
 import           Control.TimeWarp.Rpc       (NetworkAddress)
 import           Data.Monoid                ((<>))
 import           Data.String                (fromString)
-import           Options.Applicative.Simple (Parser, auto, help, long, many, metavar,
-                                             option, optional, short, showDefault,
+import           Options.Applicative.Simple (Parser, auto, help, long, metavar, option,
+                                             optional, short, showDefault, some,
                                              strOption, value)
 import           Serokell.Util.OptParse     (fromParsec)
 import           Serokell.Util.Parse        (connection)
@@ -42,7 +42,7 @@ argsParser =
         (strOption $
          long "logs-prefix" <> metavar "FILEPATH" <> help "Prefix to logger output path")
     <*>
-    many
+    some
         (option (fromParsec recipient) $
          long "peer" <> metavar "HOST:PORT" <> help "Recipient's ip:port")
     <*>

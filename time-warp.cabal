@@ -171,7 +171,7 @@ executable bench-sender
                      , log-warper
                      , monad-control >= 1.0.1
                      , mtl
-                     , optparse-simple
+                     , optparse-simple >= 0.0.3
                      , serokell-util
                      , text-format >= 0.3.1
                      , time >= 1.6
@@ -201,7 +201,7 @@ executable bench-receiver
                      , hslogger
                      , log-warper
                      , mtl
-                     , optparse-simple
+                     , optparse-simple >= 0.0.3
                      , serokell-util
                      , text-format >= 0.3.1
                      , time >= 1.6
@@ -233,6 +233,7 @@ executable bench-log-reader
                      , log-warper
                      , lens >= 4.14
                      , mtl
+                     , optparse-simple >= 0.0.3
                      , resourcet >= 1.1.7
                      , text >= 1.2.2
                      , text-format >= 0.3.1
