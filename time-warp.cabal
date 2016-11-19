@@ -219,6 +219,7 @@ executable bench-receiver
 executable bench-log-reader
   main-is:             Main.hs
   other-modules:       Bench.Network.Commons
+                       LogReaderOptions
   build-depends:       attoparsec >= 0.13.1
                      , base == 4.*
                      , binary >= 0.8.3
