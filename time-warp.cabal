@@ -177,6 +177,7 @@ executable bench-sender
                      , time >= 1.6
                      , time-units >= 1.0.0
                      , time-warp
+                     , transformers >= 0.5.2
   hs-source-dirs:      bench/Network/Sender
                      , bench/Network/Common
   default-language:    Haskell2010
