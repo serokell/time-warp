@@ -94,7 +94,7 @@ printMeasures file measures = runResourceT $
              . alignColumns
 
     alignColumns = map (\(s, m) -> bprint (right s ' ') m)
-                  . zip (7 : (20 <$ eventsUniverse))
+                  . zip (7 : (18 <$ eventsUniverse))
 
     eventsUniverse = [minBound .. maxBound]
 
