@@ -14,7 +14,7 @@ import           GHC.IO.Encoding             (setLocaleEncoding, utf8)
 import           System.Random               (randomRIO)
 
 import           Bench.Network.Commons       (MeasureEvent (..), Payload (..), Ping (..),
-                                              Pong (..), logMeasure)
+                                              Pong (..), loadLogConfig, logMeasure)
 import           Control.TimeWarp.Rpc        (BinaryP (..), Binding (AtConnTo),
                                               Listener (..), listen, localhost, runDialog,
                                               runTransfer, send)
@@ -23,8 +23,7 @@ import           Control.TimeWarp.Timed      (Microsecond, for, fork_, interval,
                                               wait)
 import           Options.Applicative.Simple  (simpleOptions)
 import           SenderOptions               (Args (..), argsParser)
-import           System.Wlog                 (parseLoggerConfig, traverseLoggerConfig,
-                                              usingLoggerName)
+import           System.Wlog                 (usingLoggerName)
 
 main :: IO ()
 main = do
@@ -37,8 +36,7 @@ main = do
             empty
 
     runNode "sender" $ do
-        loggerConfig <- parseLoggerConfig logConfig
-        traverseLoggerConfig id loggerConfig logsPrefix
+        loadLogConfig logsPrefix logConfig
         liftIO $ setLocaleEncoding utf8
 
         let sendDelay :: Microsecond

@@ -6,14 +6,13 @@ import           Control.Monad.Trans        (liftIO)
 import           GHC.IO.Encoding            (setLocaleEncoding, utf8)
 
 import           Bench.Network.Commons      (MeasureEvent (..), Ping (..), Pong (..),
-                                             logMeasure)
+                                             loadLogConfig, logMeasure)
 import           Control.TimeWarp.Rpc       (BinaryP (..), Binding (AtPort),
                                              Listener (..), listen, reply, runDialog,
                                              runTransfer)
 import           Control.TimeWarp.Timed     (for, runTimedIO, sec, wait)
 import           Options.Applicative.Simple (simpleOptions)
-import           System.Wlog                (parseLoggerConfig, traverseLoggerConfig,
-                                             usingLoggerName)
+import           System.Wlog                (usingLoggerName)
 
 import           ReceiverOptions            (Args (..), argsParser)
 
@@ -28,8 +27,7 @@ main = do
             empty
 
     runNode "receiver" $ do
-        loggerConfig <- parseLoggerConfig logConfig
-        traverseLoggerConfig id loggerConfig logsPrefix
+        loadLogConfig logsPrefix logConfig
         liftIO $ setLocaleEncoding utf8
 
         stopper <- listen (AtPort port)

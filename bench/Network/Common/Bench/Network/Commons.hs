@@ -9,6 +9,8 @@ module Bench.Network.Commons
     , curTimeMcs
     , logMeasure
 
+    , loadLogConfig
+
     , Timestamp
     , MeasureEvent (..)
     , MeasureInfo (..)
@@ -23,7 +25,9 @@ import           Data.Binary           (Binary)
 import           Data.Binary           (Binary (..))
 import qualified Data.ByteString.Lazy  as BL
 import           Data.Data             (Data)
+import           Data.Default          (def)
 import           Data.Functor          (($>))
+import qualified Data.HashMap.Strict   as M
 import           Data.Int              (Int64)
 import           Data.Monoid           ((<>))
 import           Data.Text.Buildable   (Buildable, build)
@@ -35,7 +39,8 @@ import           Prelude               hiding (takeWhile)
 import           Data.Attoparsec.Text  (Parser, char, decimal, string, takeWhile)
 
 import           Control.TimeWarp.Rpc  (Message)
-import           System.Wlog           (WithNamedLogger, logInfo)
+import           System.Wlog           (LoggerConfig (..), Severity (..), WithNamedLogger,
+                                        logInfo, parseLoggerConfig, traverseLoggerConfig)
 
 
 -- * Transfered data types
@@ -72,6 +77,36 @@ logMeasure :: (MonadIO m, WithNamedLogger m) => MeasureEvent -> MsgId -> Payload
 logMeasure miEvent miId miPayload = do
     miTime <- curTimeMcs
     logInfo $ F.sformat F.build $ LogMessage MeasureInfo{..}
+
+defaultLogConfig :: LoggerConfig
+defaultLogConfig = def
+    { lcSeverity   = Just Warning
+    , lcSubloggers = M.fromList
+        [ withName "sender" def
+            { lcSeverity = Just Info
+            , lcSubloggers = M.fromList
+                [ withName "comm" def
+                    { lcSeverity = Just Error
+                    }
+                ]
+            }
+        , withName "receiver" def
+            { lcSeverity = Just Info
+            , lcSubloggers = M.fromList
+                [ withName "comm" def
+                    { lcSeverity = Just Error
+                    }
+                ]
+            }
+        ]
+    }
+  where
+    withName = (,)
+
+loadLogConfig :: MonadIO m => Maybe FilePath -> Maybe FilePath -> m ()
+loadLogConfig logsPrefix configFile = do
+    loggerConfig <- maybe (return defaultLogConfig) parseLoggerConfig configFile
+    traverseLoggerConfig id loggerConfig logsPrefix
 
 
 -- * Logging & parsing
