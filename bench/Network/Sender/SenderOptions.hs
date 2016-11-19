@@ -18,13 +18,13 @@ import           Serokell.Util.OptParse     (fromParsec)
 import           Serokell.Util.Parse        (connection)
 
 data Args = Args
-    { logConfig   :: !FilePath
-    , logsPrefix  :: !(Maybe FilePath)
-    , recipients  :: ![NetworkAddress]
-    , threadNum   :: !Int
-    , msgNum      :: !Int
-    , msgRate     :: !(Maybe Int)
-    , duration    :: !Int
+    { logConfig    :: !(Maybe FilePath)
+    , logsPrefix   :: !(Maybe FilePath)
+    , recipients   :: ![NetworkAddress]
+    , threadNum    :: !Int
+    , msgNum       :: !Int
+    , msgRate      :: !(Maybe Int)
+    , duration     :: !Int
     , payloadBound :: !Int64
     }
   deriving Show
@@ -33,12 +33,12 @@ data Args = Args
 argsParser :: Parser Args
 argsParser =
     Args <$>
-    strOption
-         (long "log-config"
-          <> metavar "FILEPATH"
-          <> value "logging.yaml"
-          <> showDefault <>
-         help "Path to logger configuration")
+    optional
+        (strOption
+            (long "log-config"
+              <> metavar "FILEPATH" <>
+             help "Path to logger configuration")
+        )
     <*>
     optional
         (strOption $

@@ -75,6 +75,7 @@ library
                      , time-units >= 1.0.0
                      , transformers >= 0.4.2.0
                      , transformers-base
+                     , unordered-containers >= 0.2.7
 
   hs-source-dirs:      src
   default-language:    Haskell2010
@@ -163,6 +164,7 @@ executable bench-sender
                      , base == 4.*
                      , binary >= 0.8.3
                      , bytestring >= 0.10.6.0
+                     , data-default >= 0.7
                      , data-msgpack >= 0.0.8
                      , directory >= 1.2.6
                      , exceptions >= 0.8.2.1
@@ -180,6 +182,7 @@ executable bench-sender
                      , time-units >= 1.0.0
                      , time-warp
                      , transformers >= 0.5.2
+                     , unordered-containers >= 0.2.7
   hs-source-dirs:      bench/Network/Sender
                      , bench/Network/Common
   default-language:    Haskell2010
@@ -197,6 +200,7 @@ executable bench-receiver
                      , base == 4.*
                      , binary >= 0.8.3
                      , bytestring >= 0.10.6.0
+                     , data-default >= 0.7
                      , data-msgpack >= 0.0.8
                      , directory >= 1.2.6
                      , exceptions >= 0.8.2.1
@@ -210,6 +214,7 @@ executable bench-receiver
                      , time >= 1.6
                      , time-units >= 1.0.0
                      , time-warp
+                     , unordered-containers >= 0.2.7
   hs-source-dirs:      bench/Network/Receiver
                      , bench/Network/Common
   default-language:    Haskell2010
@@ -230,6 +235,7 @@ executable bench-log-reader
                      , conduit >= 1.2.7
                      , conduit-extra >= 1.1.13
                      , containers >= 0.5.7
+                     , data-default >= 0.7
                      , data-msgpack >= 0.0.8
                      , directory >= 1.2.6
                      , exceptions >= 0.8.2.1
@@ -245,6 +251,7 @@ executable bench-log-reader
                      , time >= 1.6
                      , time-units >= 1.0.0
                      , time-warp
+                     , unordered-containers >= 0.2.7
   hs-source-dirs:      bench/Network/LogReader
                      , bench/Network/Common
   default-language:    Haskell2010
