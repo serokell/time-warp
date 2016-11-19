@@ -1,7 +1,7 @@
 module Main where
 
 import           Control.Applicative        (empty)
-import           Control.Monad              (forM_, when)
+import           Control.Monad              (when)
 import           Control.Monad.Trans        (liftIO)
 import           GHC.IO.Encoding            (setLocaleEncoding, utf8)
 
@@ -34,11 +34,11 @@ main = do
 
         stopper <- listen (AtPort port)
             [ Listener $
-                \(Ping mid) -> do
-                    logMeasure PingReceived mid
+                \(Ping mid payload) -> do
+                    logMeasure PingReceived mid payload
                     when (not noPong) $ do
-                        logMeasure PongSent mid
-                        reply $ Pong mid
+                        logMeasure PongSent mid payload
+                        reply $ Pong mid payload
             ]
         wait (for duration sec)
         stopper

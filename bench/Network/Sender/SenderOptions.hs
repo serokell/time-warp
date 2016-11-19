@@ -8,6 +8,7 @@ module SenderOptions
        ) where
 
 import           Control.TimeWarp.Rpc       (NetworkAddress)
+import           Data.Int                   (Int64)
 import           Data.Monoid                ((<>))
 import           Data.String                (fromString)
 import           Options.Applicative.Simple (Parser, auto, help, long, metavar, option,
@@ -17,13 +18,14 @@ import           Serokell.Util.OptParse     (fromParsec)
 import           Serokell.Util.Parse        (connection)
 
 data Args = Args
-    { logConfig  :: !FilePath
-    , logsPrefix :: !(Maybe FilePath)
-    , recipients :: ![NetworkAddress]
-    , threadNum  :: !Int
-    , msgNum     :: !Int
-    , msgRate    :: !(Maybe Int)
-    , duration   :: !Int
+    { logConfig   :: !FilePath
+    , logsPrefix  :: !(Maybe FilePath)
+    , recipients  :: ![NetworkAddress]
+    , threadNum   :: !Int
+    , msgNum      :: !Int
+    , msgRate     :: !(Maybe Int)
+    , duration    :: !Int
+    , payloadBound :: !Int64
     }
   deriving Show
 
@@ -81,6 +83,15 @@ argsParser =
           <> value 10
           <> showDefault <>
          help "Time to run before stopping, seconds")
+     <*>
+    option
+        auto
+        (short 'p'
+          <> long "payload"
+          <> metavar "INTEGER"
+          <> value 0
+          <> showDefault <>
+         help "Defines upper bound on sent message size")
   where
     recipient = connection >>= \(h, mp) ->
         case mp of

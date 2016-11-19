@@ -5,6 +5,7 @@ module Bench.Network.Commons
     ( MsgId
     , Ping (..)
     , Pong (..)
+    , Payload (..)
     , curTimeMcs
     , logMeasure
 
@@ -19,9 +20,11 @@ module Bench.Network.Commons
 import           Control.Applicative   ((<|>))
 import           Control.Monad.Trans   (MonadIO (..))
 import           Data.Binary           (Binary)
+import           Data.Binary           (Binary (..))
+import qualified Data.ByteString.Lazy  as BL
 import           Data.Data             (Data)
 import           Data.Functor          (($>))
-import           Data.MessagePack      (MessagePack)
+import           Data.Int              (Int64)
 import           Data.Monoid           ((<>))
 import           Data.Text.Buildable   (Buildable, build)
 import           Data.Time.Clock.POSIX (getPOSIXTime)
@@ -35,16 +38,27 @@ import           Control.TimeWarp.Rpc  (Message)
 import           System.Wlog           (WithNamedLogger, logInfo)
 
 
+-- * Transfered data types
+
 type MsgId = Int
 
-data Ping = Ping MsgId
-    deriving (Generic, Data, Binary, MessagePack)
+-- | Serializes into message of (given size + const)
+data Payload = Payload
+    { getPayload :: Int64
+    } deriving (Generic, Data)
 
-data Pong = Pong MsgId
-    deriving (Generic, Data, Binary, MessagePack)
+data Ping = Ping MsgId Payload
+    deriving (Generic, Data, Binary)
+
+data Pong = Pong MsgId Payload
+    deriving (Generic, Data, Binary)
 
 instance Message Ping
 instance Message Pong
+
+instance Binary Payload where
+    get = Payload . BL.length <$> get
+    put (Payload l) = put $ BL.replicate l 42
 
 
 -- * Util
@@ -54,10 +68,11 @@ type Timestamp = Integer
 curTimeMcs :: MonadIO m => m Timestamp
 curTimeMcs = liftIO $ round . ( * 1000000) <$> getPOSIXTime
 
-logMeasure :: (MonadIO m, WithNamedLogger m) => MeasureEvent -> MsgId -> m ()
-logMeasure miEvent miId = do
+logMeasure :: (MonadIO m, WithNamedLogger m) => MeasureEvent -> MsgId -> Payload -> m ()
+logMeasure miEvent miId miPayload = do
     miTime <- curTimeMcs
     logInfo $ F.sformat F.build $ LogMessage MeasureInfo{..}
+
 
 -- * Logging & parsing
 
@@ -88,17 +103,20 @@ measureEventParser = string "• → " $> PingSent
 
 -- | Single event in measurement.
 data MeasureInfo = MeasureInfo
-    { miId    :: MsgId
-    , miEvent :: MeasureEvent
-    , miTime  :: Timestamp
-    } deriving (Show)
+    { miId      :: MsgId
+    , miEvent   :: MeasureEvent
+    , miTime    :: Timestamp
+    , miPayload :: Payload
+    }
 
 instance Buildable MeasureInfo where
     build MeasureInfo{..} = mconcat
         [ build miId
         , " "
         , build miEvent
-        , " "
+        , " ("
+        , build $ getPayload miPayload
+        , ") "
         , build miTime
         ]
 
@@ -107,7 +125,9 @@ measureInfoParser = do
     miId <- decimal
     _ <- string " "
     miEvent <- measureEventParser
-    _ <- string " "
+    _ <- string " ("
+    miPayload <- Payload <$> decimal
+    _ <- string ") "
     miTime <- decimal
     return MeasureInfo{..}
 
