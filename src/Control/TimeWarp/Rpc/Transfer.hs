@@ -344,7 +344,7 @@ mkSocketFrame settings sfPeerAddr = liftIO $ do
 -- | Makes sender function in terms of @MonadTransfer@ for given `SocketFrame`.
 -- This first extracts ready `Lazy.ByteString` from given source, and then passes it to
 -- sending queue.
-sfSend :: (MonadIO m, WithNamedLogger m)
+sfSend :: (MonadIO m, WithNamedLogger m, MonadCatch m)
        => SocketFrame -> Source m BS.ByteString -> m ()
 sfSend SocketFrame{..} src = do
     lbs <- src $$ sinkLbs
@@ -355,6 +355,7 @@ sfSend SocketFrame{..} src = do
         commLog . logWarning $
             sformat ("Send channel for "%shown%" is closed, message wouldn't be sent")
                 sfPeerAddr
+
     (notifier, awaiter) <- mkMonitor
     liftIO . atomically . TBM.writeTBMChan sfOutChan $ (lbs, atomically notifier)
 
@@ -396,8 +397,9 @@ sfReceive sf@SocketFrame{..} sink = do
                  "worked for too long, closing with no regard to it") sfPeerAddr
 
     logOnErr = handleAll $ \e -> do
-        commLog . logWarning $ sformat ("Server error: "%shown) e
-        interruptAllJobs sfJobManager Plain
+        unlessInterrupted sfJobManager $ do
+            commLog . logWarning $ sformat ("Server error: "%shown) e
+            interruptAllJobs sfJobManager Plain
 
 
 sfClose :: SocketFrame -> IO ()
@@ -458,15 +460,15 @@ sfProcessSocket SocketFrame{..} sock = do
     -- at this point workers are stopped
   where
     foreverSend = do
-        datm <- liftIO . atomically $ TBM.readTBMChan sfOutChan
-        forM_ datm $
-            \dat@(bs, notif) -> do
-                mask $ \unmask -> do
+        mask $ \unmask -> do
+            datm <- liftIO . atomically $ TBM.readTBMChan sfOutChan
+            forM_ datm $
+                \dat@(bs, notif) -> do
                     let pushback = liftIO . atomically $ TBM.unGetTBMChan sfOutChan dat
                     unmask (sourceLbs bs $$ sinkSocket sock) `onException` pushback
                     -- TODO: if get async exception here   ^, will send msg twice
                     liftIO notif
-                foreverSend
+                    unmask foreverSend
 
     foreverRec = do
         hoist liftIO (sourceSocket sock) $$ sinkTBMChan sfInChan False
@@ -613,7 +615,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
             (conn, sfm) <- ensureConnExist
             forM_ sfm $
                 \sf -> addSafeThreadJob (sfJobManager sf) $
-                    unmask (startWorker sf) `finally` releaseConn
+                    unmask (startWorker sf) `finally` releaseConn sf
             return conn
   where
     addrName = buildNetworkAddress addr
@@ -664,7 +666,8 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
                     wait (for delay)
                     withRecovery sf failsInRow action
 
-    releaseConn = do
+    releaseConn sf = do
+        interruptAllJobs (sfJobManager sf) Plain
         modifyManager $ outputConn . at addr .= Nothing
         commLog . logDebug $
             sformat ("Socket to "%stext%" closed") addrName
