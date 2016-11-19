@@ -4,9 +4,10 @@ module Main where
 
 import           Control.Applicative         (empty)
 import           Control.Concurrent.Async    (forConcurrently)
-import           Control.Monad               (forM, forM_, unless, void)
-import           Control.Monad.Trans         (liftIO)
+import           Control.Monad               (forM, forM_, mzero, void, when)
+import           Control.Monad.Trans         (lift, liftIO)
 import           Control.Monad.Trans.Control (liftBaseWith)
+import           Control.Monad.Trans.Maybe   (runMaybeT)
 import           Data.List.Extra             (chunksOf)
 import           Formatting                  (sformat, shown)
 import           GHC.IO.Encoding             (setLocaleEncoding, utf8)
@@ -50,16 +51,17 @@ main = do
                             \(Pong mid) -> logMeasure PongReceived mid
                         ]
                 workTimer <- startTimer
-                forM_ msgIds $
+                void . runMaybeT . forM msgIds $
                     \msgId -> do
-                        wait (for sendDelay)
-                        working <- workTimer
-                        unless (working > interval duration sec) $
-                            runConcurrently (zip [0..] recipients) $
-                                \(no, addr) -> do
-                                    let sMsgId = no * msgNum + msgId
-                                    logMeasure PingSent sMsgId
-                                    send addr $ Ping sMsgId
+                        lift $ wait (for sendDelay)
+                        working <- lift workTimer
+                        when (working > interval duration sec) mzero
+
+                        lift $ runConcurrently (zip [0..] recipients) $
+                            \(no, addr) -> do
+                                let sMsgId = no * msgNum + msgId
+                                logMeasure PingSent sMsgId
+                                send addr $ Ping sMsgId
                 -- wait for responses
                 wait (for 1 sec)
                 sequence_ closeConns
