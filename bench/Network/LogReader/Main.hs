@@ -2,7 +2,7 @@
 
 import           Control.Applicative          (empty, (<|>))
 import           Control.Exception            (Exception)
-import           Control.Lens                 (at, singular, (%=), (<<.=), (^.), _Just)
+import           Control.Lens                 (at, singular, (%=), (<<.=), (^.), _Just, _2)
 import           Control.Monad                (forM_)
 import           Control.Monad.Catch          (handle, throwM)
 import           Control.Monad.State          (StateT (..), evalStateT, execStateT, get,
@@ -28,16 +28,21 @@ import           Data.Attoparsec.Text         (parseOnly)
 
 import           Bench.Network.Commons        (LogMessage (..), MeasureEvent (..),
                                                MeasureInfo (..), MsgId, Timestamp,
+                                               Payload(..),
                                                logMessageParser, measureInfoParser)
 import           System.Wlog                  (LoggerNameBox, Severity (Info),
                                                initLogging, logError, logWarning,
                                                usingLoggerName, usingLoggerName)
 import           LogReaderOptions             (Args (..), argsParser)
 
-type Measures = M.Map MsgId (M.Map MeasureEvent Timestamp)
+
+type Measures = M.Map MsgId (Payload, M.Map MeasureEvent Timestamp)
 
 newtype MeasureInfoDuplicateError = MeasureInfoDuplicateError (Timestamp, MeasureInfo)
-    deriving (Show, Typeable)
+    deriving (Typeable)
+
+instance Show MeasureInfoDuplicateError where
+    show = F.formatToString F.build . build
 
 instance Buildable MeasureInfoDuplicateError where
     build (MeasureInfoDuplicateError (was, new)) = mconcat
@@ -67,8 +72,8 @@ analyze file =
                     sformat ("Parse error at file "%F.build%" (line "%F.int%"): "%F.build)
                     file rowNo err
             Right (LogMessage mi@MeasureInfo{..}) -> lift $ do
-                at miId %= (<|> Just M.empty)
-                mwas <- singular (at miId . _Just) . at miEvent <<.= Just miTime
+                at miId %= (<|> Just (miPayload, M.empty))
+                mwas <- singular (at miId . _Just . _2) . at miEvent <<.= Just miTime
                 forM_ mwas $ \was -> throwM $ MeasureInfoDuplicateError (was, mi)
 
     catchE = handle @_ @MeasureInfoDuplicateError $ logError . sformat F.build
@@ -80,11 +85,14 @@ printMeasures file measures = runResourceT $
   where
     source = printHeader >> mapM_ printMeasure (M.toList measures)
 
-    printHeader = printRow $ "MsgId" : map (sformat F.build) eventsUniverse
+    printHeader = printRow $ "MsgId" : "Size" : map (sformat F.build) eventsUniverse
 
-    printMeasure :: Monad m => (MsgId, M.Map MeasureEvent Timestamp) -> Source m Text
-    printMeasure (mid, mm) = printRow $
-        sformat int mid : map (\e -> maybe "-" (sformat int) $ mm ^. at e) eventsUniverse
+    printMeasure :: Monad m
+                 => (MsgId, (Payload, M.Map MeasureEvent Timestamp)) -> Source m Text
+    printMeasure (mid, (Payload p, mm)) =
+        printRow $ sformat int mid
+                 : sformat int p
+                 : [ maybe "-" (sformat int) $ mm ^. at ev | ev <- eventsUniverse ]
 
     printRow :: Monad m => [Text] -> Source m Text
     printRow = yield
@@ -94,7 +102,7 @@ printMeasures file measures = runResourceT $
              . alignColumns
 
     alignColumns = map (\(s, m) -> bprint (right s ' ') m)
-                  . zip (7 : (18 <$ eventsUniverse))
+                  . zip (7 : 7 : (18 <$ eventsUniverse))
 
     eventsUniverse = [minBound .. maxBound]
 

@@ -11,9 +11,10 @@ import           Control.Monad.Trans.Maybe   (runMaybeT)
 import           Data.List.Extra             (chunksOf)
 import           Formatting                  (sformat, shown)
 import           GHC.IO.Encoding             (setLocaleEncoding, utf8)
+import           System.Random               (randomRIO)
 
-import           Bench.Network.Commons       (MeasureEvent (..), Ping (..), Pong (..),
-                                              logMeasure)
+import           Bench.Network.Commons       (MeasureEvent (..), Payload (..), Ping (..),
+                                              Pong (..), logMeasure)
 import           Control.TimeWarp.Rpc        (BinaryP (..), Binding (AtConnTo),
                                               Listener (..), listen, localhost, runDialog,
                                               runTransfer, send)
@@ -48,7 +49,7 @@ main = do
                 closeConns <- forM recipients $
                     \addr -> listen (AtConnTo addr)
                         [ Listener $
-                            \(Pong mid) -> logMeasure PongReceived mid
+                            \(Pong mid payload) -> logMeasure PongReceived mid payload
                         ]
                 workTimer <- startTimer
                 void . runMaybeT . forM msgIds $
@@ -59,9 +60,11 @@ main = do
 
                         lift $ runConcurrently (zip [0..] recipients) $
                             \(no, addr) -> do
-                                let sMsgId = no * msgNum + msgId
-                                logMeasure PingSent sMsgId
-                                send addr $ Ping sMsgId
+                                let sMsgId  = no * msgNum + msgId
+                                payload <- liftIO $
+                                    Payload <$> randomRIO (0, payloadBound)
+                                logMeasure PingSent sMsgId payload
+                                send addr $ Ping sMsgId payload
                 -- wait for responses
                 wait (for 1 sec)
                 sequence_ closeConns
