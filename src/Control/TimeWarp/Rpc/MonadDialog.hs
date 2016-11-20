@@ -62,7 +62,7 @@ module Control.TimeWarp.Rpc.MonadDialog
        ) where
 
 import           Control.Lens                       (at, (^.))
-import           Control.Monad                      (forM, forM_)
+import           Control.Monad                      (forM, forM_, void, when)
 import           Control.Monad.Base                 (MonadBase (..))
 import           Control.Monad.Catch                (MonadCatch, MonadMask, MonadThrow,
                                                      handleAll)
@@ -94,7 +94,7 @@ import           Control.TimeWarp.Rpc.MonadTransfer (Binding, Host,
                                                      MonadTransfer (..), NetworkAddress,
                                                      Port, ResponseT (..), RpcError (..),
                                                      commLog, hoistRespCond, localhost)
-import           Control.TimeWarp.Timed             (MonadTimed, ThreadId)
+import           Control.TimeWarp.Timed             (MonadTimed, ThreadId, fork_)
 
 
 -- * MonadRpc
@@ -192,6 +192,7 @@ type MonadListener m =
     ( MonadTransfer m
     , MonadIO m
     , MonadCatch m
+    , MonadTimed m
     , WithNamedLogger m
     )
 
@@ -220,17 +221,9 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
     loop = do
         hrM <- intangibleSink $ unpackMsg packing
         forM_ hrM $
-            \(HeaderNRawData h raw) -> do
-                peer <- lift peerAddr
-                lift . commLog . logDebug $
-                    sformat ("Received message from "%stext%", applying raw listener")
-                        peer
-                cont <- lift . invokeRawListenerSafe $ rawListener (h, raw)
-                if cont
-                    then processContent h
-                    else skipMsgAndGo h
+            \(HeaderNRawData h raw) -> processContent h raw
 
-    processContent header = do
+    processContent header raw = do
         nameM <- selector header
         case nameM of
             Nothing ->
@@ -238,6 +231,7 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
                     sformat "Unexpected end of incoming message"
                 -- TODO: throw!
             Just (name, Nothing) -> do
+                lift . fork_ . void $ invokeRawListenerSafe $ rawListener (header, raw)
                 lift . commLog . logWarning $
                     sformat ("No listener with name "%stext%" defined") name
                 skipMsgAndGo header
@@ -248,8 +242,12 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
                         sformat "Unexpected end of incoming message"
                     Just (HeaderNContentData h r) ->
                         let _ = [h, header]  -- constraint on h type
-                        in  do lift . invokeListenerSafe name $ f (header, r)
-                               loop
+                        in do
+                          lift . fork_ $ do
+                              cont <- invokeRawListenerSafe $ rawListener (header, raw)
+                              when cont $
+                                  invokeListenerSafe name $ f (header, r)
+                          loop
 
     selector header = chooseListener packing header getListenerNameH listeners
 

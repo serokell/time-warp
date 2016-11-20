@@ -30,6 +30,8 @@ library
                      , Control.TimeWarp.Timed.TimedIO
                      , Control.TimeWarp.Timed.TimedT
   build-depends:       aeson
+                     , ansi-terminal
+                     , array
                      , base == 4.*
                      , binary >= 0.8.3
                      , binary-conduit >= 1.2.4.1
@@ -52,10 +54,12 @@ library
                      , mmorph >= 1.0
                      , data-msgpack >= 0.0.8
                      , network >= 2.6
+                     , attoparsec >= 0.13
                      , pqueue
                      , QuickCheck >= 2.8.1
                      , quickcheck-instances
                      , random >= 1.1
+                     , regex-tdfa >= 1.2.2
                      , safe
                      , serokell-util
                      , semigroups
@@ -71,6 +75,7 @@ library
                      , time-units >= 1.0.0
                      , transformers >= 0.4.2.0
                      , transformers-base
+                     , unordered-containers >= 0.2.7
 
   hs-source-dirs:      src
   default-language:    Haskell2010
@@ -145,6 +150,112 @@ executable playground
   hs-source-dirs:      examples/playground
   default-language:    Haskell2010
   ghc-options:         -threaded -Wall -fno-warn-orphans
+  default-extensions:  OverloadedStrings
+                     , RecordWildCards
+                     , DeriveDataTypeable
+                     , GeneralizedNewtypeDeriving
+
+executable bench-sender
+  main-is:             Main.hs
+  other-modules:       Bench.Network.Commons
+                       SenderOptions
+  build-depends:       async >= 2.1
+                     , attoparsec >= 0.13.1
+                     , base == 4.*
+                     , binary >= 0.8.3
+                     , bytestring >= 0.10.6.0
+                     , data-default >= 0.7
+                     , data-msgpack >= 0.0.8
+                     , directory >= 1.2.6
+                     , exceptions >= 0.8.2.1
+                     , extra >= 1.4
+                     , formatting
+                     , hslogger
+                     , log-warper
+                     , monad-control >= 1.0.1
+                     , mtl
+                     , optparse-simple >= 0.0.3
+                     , serokell-util
+                     , random >= 1.1
+                     , text-format >= 0.3.1
+                     , time >= 1.6
+                     , time-units >= 1.0.0
+                     , time-warp
+                     , transformers >= 0.5.2
+                     , unordered-containers >= 0.2.7
+  hs-source-dirs:      bench/Network/Sender
+                     , bench/Network/Common
+  default-language:    Haskell2010
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
+  default-extensions:  OverloadedStrings
+                     , RecordWildCards
+                     , DeriveDataTypeable
+                     , GeneralizedNewtypeDeriving
+
+executable bench-receiver
+  main-is:             Main.hs
+  other-modules:       Bench.Network.Commons
+                       ReceiverOptions
+  build-depends:       attoparsec >= 0.13.1
+                     , base == 4.*
+                     , binary >= 0.8.3
+                     , bytestring >= 0.10.6.0
+                     , data-default >= 0.7
+                     , data-msgpack >= 0.0.8
+                     , directory >= 1.2.6
+                     , exceptions >= 0.8.2.1
+                     , formatting
+                     , hslogger
+                     , log-warper
+                     , mtl
+                     , optparse-simple >= 0.0.3
+                     , serokell-util
+                     , text-format >= 0.3.1
+                     , time >= 1.6
+                     , time-units >= 1.0.0
+                     , time-warp
+                     , unordered-containers >= 0.2.7
+  hs-source-dirs:      bench/Network/Receiver
+                     , bench/Network/Common
+  default-language:    Haskell2010
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
+  default-extensions:  OverloadedStrings
+                     , RecordWildCards
+                     , DeriveDataTypeable
+                     , GeneralizedNewtypeDeriving
+
+executable bench-log-reader
+  main-is:             Main.hs
+  other-modules:       Bench.Network.Commons
+                       LogReaderOptions
+  build-depends:       attoparsec >= 0.13.1
+                     , base == 4.*
+                     , binary >= 0.8.3
+                     , bytestring >= 0.10.6.0
+                     , conduit >= 1.2.7
+                     , conduit-extra >= 1.1.13
+                     , containers >= 0.5.7
+                     , data-default >= 0.7
+                     , data-msgpack >= 0.0.8
+                     , directory >= 1.2.6
+                     , exceptions >= 0.8.2.1
+                     , formatting
+                     , hslogger
+                     , log-warper
+                     , lens >= 4.14
+                     , mtl
+                     , optparse-simple >= 0.0.3
+                     , resourcet >= 1.1.7
+                     , text >= 1.2.2
+                     , text-format >= 0.3.1
+                     , time >= 1.6
+                     , time-units >= 1.0.0
+                     , time-warp
+                     , unordered-containers >= 0.2.7
+  hs-source-dirs:      bench/Network/LogReader
+                     , bench/Network/Common
+  default-language:    Haskell2010
+  ghc-options:         -threaded -Wall
   default-extensions:  OverloadedStrings
                      , RecordWildCards
                      , DeriveDataTypeable

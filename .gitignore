@@ -24,6 +24,8 @@ flycheck_*
 # MAC OS X
 .DS_Store
 
-# test logging files
-patak.log
-skovoroda.log
+# logging files
+*.log
+
+# measurement results
+*.csv
