@@ -72,11 +72,12 @@ analyze file =
                 logWarning $
                     sformat ("Parse error at file "%F.build%" (line "%F.int%"): "%F.build)
                     file rowNo err
-            Right (LogMessage mi@MeasureInfo{..}) -> lift $ do
+            Right (Just (LogMessage mi@MeasureInfo{..})) -> lift $ do
                 at miId %= (<|> Just (miPayload, mempty))
                 at miId . _Just . _2 %= ((miEvent, miTime):)
                 --mwas <- singular (at miId . _Just . _2) . at miEvent <<.= Just miTime
                 --forM_ mwas $ \was -> throwM $ MeasureInfoDuplicateError (was, mi)
+            Right _ -> return ()
 
     catchE = handle @_ @MeasureInfoDuplicateError $ logError . sformat F.build
 
