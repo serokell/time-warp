@@ -2,7 +2,8 @@
 
 import           Control.Applicative          (empty, (<|>))
 import           Control.Exception            (Exception)
-import           Control.Lens                 (at, singular, (%=), (<<.=), (^.), _Just, _2)
+import           Control.Lens                 (at, singular, (%=), (<<.=), (^.), _2,
+                                               _Just)
 import           Control.Monad                (forM_)
 import           Control.Monad.Catch          (handle, throwM)
 import           Control.Monad.State          (StateT (..), evalStateT, execStateT, get,
@@ -23,20 +24,20 @@ import           Formatting                   (bprint, int, right, sformat, (%))
 import qualified Formatting                   as F
 import           System.IO                    (FilePath)
 
-import           Options.Applicative.Simple   (simpleOptions)
 import           Data.Attoparsec.Text         (parseOnly)
+import           Options.Applicative.Simple   (simpleOptions)
 
 import           Bench.Network.Commons        (LogMessage (..), MeasureEvent (..),
-                                               MeasureInfo (..), MsgId, Timestamp,
-                                               Payload(..),
-                                               logMessageParser, measureInfoParser)
+                                               MeasureInfo (..), MsgId, Payload (..),
+                                               Timestamp, logMessageParser,
+                                               measureInfoParser)
+import           LogReaderOptions             (Args (..), argsParser)
 import           System.Wlog                  (LoggerNameBox, Severity (Info),
                                                initLogging, logError, logWarning,
                                                usingLoggerName, usingLoggerName)
-import           LogReaderOptions             (Args (..), argsParser)
 
 
-type Measures = M.Map MsgId (Payload, M.Map MeasureEvent Timestamp)
+type Measures = M.Map MsgId (Payload, [(MeasureEvent, Timestamp)])
 
 newtype MeasureInfoDuplicateError = MeasureInfoDuplicateError (Timestamp, MeasureInfo)
     deriving (Typeable)
@@ -72,9 +73,10 @@ analyze file =
                     sformat ("Parse error at file "%F.build%" (line "%F.int%"): "%F.build)
                     file rowNo err
             Right (LogMessage mi@MeasureInfo{..}) -> lift $ do
-                at miId %= (<|> Just (miPayload, M.empty))
-                mwas <- singular (at miId . _Just . _2) . at miEvent <<.= Just miTime
-                forM_ mwas $ \was -> throwM $ MeasureInfoDuplicateError (was, mi)
+                at miId %= (<|> Just (miPayload, mempty))
+                at miId . _Just . _2 %= ((miEvent, miTime):)
+                --mwas <- singular (at miId . _Just . _2) . at miEvent <<.= Just miTime
+                --forM_ mwas $ \was -> throwM $ MeasureInfoDuplicateError (was, mi)
 
     catchE = handle @_ @MeasureInfoDuplicateError $ logError . sformat F.build
 
@@ -88,11 +90,13 @@ printMeasures file measures = runResourceT $
     printHeader = printRow $ "MsgId" : "Size" : map (sformat F.build) eventsUniverse
 
     printMeasure :: Monad m
-                 => (MsgId, (Payload, M.Map MeasureEvent Timestamp)) -> Source m Text
-    printMeasure (mid, (Payload p, mm)) =
-        printRow $ sformat int mid
-                 : sformat int p
-                 : [ maybe "-" (sformat int) $ mm ^. at ev | ev <- eventsUniverse ]
+                 => (MsgId, (Payload, [(MeasureEvent, Timestamp)])) -> Source m Text
+    printMeasure (mid, (Payload p, mm)) = do
+        case uniqMap mm of
+            Just mm' -> printRow $ sformat int mid
+                          : sformat int p
+                          : [ maybe "-" (sformat int) $ mm' ^. at ev | ev <- eventsUniverse ]
+            _ -> return ()
 
     printRow :: Monad m => [Text] -> Source m Text
     printRow = yield
@@ -100,6 +104,13 @@ printMeasures file measures = runResourceT $
              . mconcat
              . intersperse ","
              . alignColumns
+
+    uniqMap = foldl upd (Just mempty)
+      where
+        upd m (ev, ts) = m >>= \m' ->
+            case ev `M.lookup` m' of
+              Nothing -> return $ M.insert ev ts m'
+              _       -> fail ""
 
     alignColumns = map (\(s, m) -> bprint (right s ' ') m)
                   . zip (7 : 7 : (18 <$ eventsUniverse))
