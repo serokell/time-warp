@@ -20,6 +20,7 @@ module Bench.Network.Commons
     ) where
 
 import           Control.Applicative   ((<|>))
+import           Control.Monad         (join)
 import           Control.Monad.Trans   (MonadIO (..))
 import           Data.Binary           (Binary)
 import           Data.Binary           (Binary (..))
@@ -36,7 +37,7 @@ import qualified Formatting            as F
 import           GHC.Generics          (Generic)
 import           Prelude               hiding (takeWhile)
 
-import           Data.Attoparsec.Text  (Parser, char, decimal, string, takeWhile, try)
+import           Data.Attoparsec.Text  (Parser, char, decimal, string, takeWhile)
 
 import           Control.TimeWarp.Rpc  (Message)
 import           System.Wlog           (LoggerConfig (..), Severity (..), WithNamedLogger,
@@ -177,8 +178,6 @@ instance Buildable a => Buildable (LogMessage a) where
     build (LogMessage a) = "#" <> build a
 
 logMessageParser :: Parser a -> Parser (Maybe (LogMessage a))
-logMessageParser p =
-        try (takeWhile (/= '#')
-            >> char '#'
-            >> Just . LogMessage <$> p)
-    <|> pure Nothing
+logMessageParser p = (takeWhile (/= '#') >>) . join $ do
+        (char '#' *> pure (Just . LogMessage <$> p))
+    <|> pure (pure Nothing)
