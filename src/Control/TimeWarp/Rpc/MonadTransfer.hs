@@ -21,15 +21,18 @@
 -- UPGRAGE-NOTE (TW-47):
 -- We'd like to have another interface for `listenRaw` function.
 -- Currently it allows only single listener for given connection.
--- It's difficult to define, for example, a listener for all outbound connections,
+-- It makes difficult to define, for example, a listener for all outbound connections,
 -- which is likely to have.
 -- There is a proposal to have subscriptions-based interface:
+--
 --   * `listenRaw` is in some sense automatically applied when connection is created
+--
 --   * At `Dialog` layer, add `subscribe` function which allows to listen for messages at
 --       specified port / specified outbound connection / sum of them.
 
 module Control.TimeWarp.Rpc.MonadTransfer
-       ( Port
+       ( -- * Related datatypes
+         Port
        , Host
        , NetworkAddress
        , Binding (..)
@@ -37,20 +40,18 @@ module Control.TimeWarp.Rpc.MonadTransfer
        , commLoggerName
        , commLog
 
+       -- * MonadTransfer
        , MonadTransfer (..)
 
+       -- * MonadResponse
        , MonadResponse (..)
        , ResponseContext (..)
        , ResponseT (..)
        , runResponseT
        , mapResponseT
-
        , hoistRespCond
-
-       , RpcError (..)
        ) where
 
-import           Control.Exception           (Exception)
 import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow)
 import           Control.Monad.Morph         (hoist)
 import           Control.Monad.Reader        (MonadReader (..), ReaderT (..), mapReaderT)
@@ -61,7 +62,6 @@ import           Data.ByteString             (ByteString)
 import           Data.Conduit                (ConduitM, Producer, Sink, Source)
 import           Data.Monoid                 ((<>))
 import           Data.Text                   (Text)
-import           Data.Text.Buildable         (Buildable (..))
 import           Data.Word                   (Word16)
 import           System.Wlog                 (LoggerName, LoggerNameBox (..),
                                               WithNamedLogger, getLoggerName,
@@ -70,10 +70,36 @@ import           System.Wlog                 (LoggerName, LoggerNameBox (..),
 import           Control.TimeWarp.Timed      (MonadTimed, ThreadId)
 
 
+-- * Related datatypes
+
+-- | Port number.
+type Port = Word16
+
+-- | Host address.
+type Host = ByteString
+
+-- | @"127.0.0.1"@.
+localhost :: Host
+localhost = "127.0.0.1"
+
+-- | Full node address.
+type NetworkAddress = (Host, Port)
+
+-- | Name of logger responsible for communication events - @comm@.
+-- TODO: Make non-hardcoded.
+commLoggerName :: LoggerName
+commLoggerName = "comm"
+
+-- | Appends `commLoggerName` as suffix to current logger name.
+commLog :: WithNamedLogger m => m a -> m a
+commLog = modifyLoggerName (<> commLoggerName)
+
+-- | Specifies type of `listen` binding.
+--
+-- UPGRADE-NOTE: adding /Loopback/ binding may be useful.
 data Binding
     = AtPort Port              -- ^ Listen at port
     | AtConnTo NetworkAddress  -- ^ Listen at connection established earlier
---    | Loopback                 -- ^ Listen at local pseudo-net (might be usefull)
     deriving (Eq, Ord, Show)
 
 
@@ -105,12 +131,16 @@ class Monad m => MonadTransfer m where
 -- | Provides operations related to /peer/ node. Peer is a node, which this node is
 -- currently communicating with.
 class Monad m => MonadResponse m where
+    -- | Sends data to peer.
     replyRaw :: Producer m ByteString -> m ()
 
+    -- | Closes connection with peer.
     closeR :: m ()
 
+    -- | Gets address of peer, for debugging purposes only.
     peerAddr :: m Text
 
+-- | Keeps information about peer.
 data ResponseContext = ResponseContext
     { respSend     :: forall m . (MonadIO m, MonadMask m, WithNamedLogger m)
                    => Source m ByteString -> m ()
@@ -118,6 +148,7 @@ data ResponseContext = ResponseContext
     , respPeerAddr :: Text
     }
 
+-- | Default implementation of `MonadResponse`.
 newtype ResponseT m a = ResponseT
     { getResponseT :: ReaderT ResponseContext m a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadTrans,
@@ -125,6 +156,7 @@ newtype ResponseT m a = ResponseT
                 MonadState s,
                 WithNamedLogger, MonadTimed)
 
+-- | Unwrappes `ResponseT`.
 runResponseT :: ResponseT m a -> ResponseContext -> m a
 runResponseT = runReaderT . getResponseT
 
@@ -149,53 +181,15 @@ instance (MonadTransfer m, MonadIO m, WithNamedLogger m, MonadMask m) => MonadRe
 
     peerAddr = respPeerAddr <$> ResponseT ask
 
+-- | Maps entry of `ResponseT`.
+-- TODO: implement `hoist` instead, it should be enough.
 mapResponseT :: (m a -> n b) -> ResponseT m a -> ResponseT n b
 mapResponseT how = ResponseT . mapReaderT how . getResponseT
-
--- * Related datatypes
-
--- | Port number.
-type Port = Word16
-
--- | Host address.
-type Host = ByteString
-
-localhost :: Host
-localhost = "127.0.0.1"
-
--- | Full node address.
-type NetworkAddress = (Host, Port)
-
--- | Name of logger responsible for communication events.
-commLoggerName :: LoggerName
-commLoggerName = "comm"
-
-commLog :: WithNamedLogger m => m a -> m a
-commLog = modifyLoggerName (<> commLoggerName)
-
-
--- * Exceptions
-
--- | Exception which can be thrown on `send` call.
-data RpcError = -- | Can't find remote method on server's side die to
-                -- network problems or lack of such service
-                NetworkProblem Text
-                -- | Error in RPC protocol with description, or server
-                -- threw unserializable error
-              | InternalError Text
-
-instance Buildable RpcError where
-    build (NetworkProblem msg) = "Network problem: " <> build msg
-    build (InternalError msg)  = "Internal error: " <> build msg
-
-instance Show RpcError where
-    show = show . build
-
-instance Exception RpcError
 
 
 -- * Instances
 
+-- | Allows to modify entry of @Conduit i o (ResponseT m) r@.
 hoistRespCond :: Monad m
               => (forall a . m a -> n a)
               -> ConduitM i o (ResponseT m) r

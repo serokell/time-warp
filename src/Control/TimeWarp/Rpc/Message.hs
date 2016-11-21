@@ -15,17 +15,27 @@
 -- Stability   : experimental
 -- Portability : POSIX, GHC
 --
--- This module defines `Message` type, which binds a name to request.
+-- This module defines typeclasses which allow to abstragate from concrete serialization
+-- strategy, and also `Message` type, which binds a name to request.
+--
+-- UPGRADE-NOTE: currently only `Binary` serialization is supported,
+-- need to add support for /MessagePack/, /aeson/, /cereal/ e.t.c.
 
 module Control.TimeWarp.Rpc.Message
-       ( MessageName
+       (
+       -- * Message
+         MessageName
        , Message (..)
 
+       -- * Serialization and deserialization
        , Packable (..)
        , Unpackable (..)
 
+       -- * Basic packing types
        , BinaryP (..)
 
+       -- * Parts of message
+       -- $message-parts
        , ContentData (..)
        , NameData (..)
        , NameNContentData (..)
@@ -36,10 +46,9 @@ module Control.TimeWarp.Rpc.Message
        , HeaderNContentData (..)
        , HeaderNNameNContentData (..)
 
+       -- * Util
        , intangibleSink
        , proxyOf
-
-       , Empty (..)
        ) where
 
 import           Control.Monad                     (forM, mapM_, when)
@@ -63,9 +72,12 @@ import qualified Data.Text                         as T
 import           Data.Typeable                     (Typeable)
 
 
+-- * Message
+
+-- | Message name, which is expected to uniquely define type of message.
 type MessageName = T.Text
 
--- | Defines type which has it's uniqie name.
+-- | Defines type with it's own `MessageName`.
 class Typeable m => Message m where
     -- | Uniquely identifies this type
     messageName :: Proxy m -> MessageName
@@ -75,6 +87,10 @@ class Typeable m => Message m where
 
 
 -- * Parts of message.
+-- $message-parts
+-- This part describes different parts of message. which are enought for serializing
+-- message / could be extracted on deserializing.
+
 data ContentData r = ContentData r
 
 -- | Designates data given from incoming message, but not deserialized to any specified
@@ -98,11 +114,12 @@ data HeaderNNameNContentData h r = HeaderNNameNContentData h MessageName r
 
 -- * Util
 
+-- | Constructs proxy of given type.
 proxyOf :: a -> Proxy a
 proxyOf _ = Proxy
 
--- | From given conduit constructs consumer of single value,
--- which doesn't affect source above.
+-- | From given conduit constructs a sink, which doesn't affect source above
+-- (all readen data would be `leftover`ed).
 intangibleSink :: MonadIO m => Conduit i m o -> Consumer i m (Maybe o)
 intangibleSink cond = do
     taken <- liftIO $ newIORef []
@@ -131,7 +148,7 @@ conduitGet' g = start
     go (Partial n)   = await >>= (go . n)
 
 
--- * Typeclasses
+-- * Serialization and deserialization
 
 -- | Defines a way to serialize object @r@ with given packing type @p@.
 class Packable p r where
@@ -139,18 +156,19 @@ class Packable p r where
     -- downstream, all unconsumed input should be `leftover`ed.
     packMsg :: MonadThrow m => p -> Conduit r m ByteString
 
+-- | Defines a way to deserealize data with given packing type @p@ and extract object @r@.
 class Unpackable p r where
     -- | Way of unpacking raw bytes to data.
     unpackMsg :: MonadThrow m => p -> Conduit ByteString m r
 
 
--- * Instances
+-- * Basic packing types
 
--- ** Basic
+-- ** Binary
 
 -- | Defines way to encode `Binary` instances into message of format
 -- (header, [[name], content]), where [x] = (length of x, x).
--- "P" here denotes to "packing".
+-- /P/ here denotes to "packing".
 data BinaryP = BinaryP
 
 instance (Binary h, Binary r, Message r)
@@ -196,15 +214,6 @@ instance (Binary h, Binary r)
     unpackMsg p = unpackMsg p =$= CL.map extract
       where
         extract (HeaderNNameNContentData h _ r) = HeaderNContentData h r
-
-
--- * Empty object
-
-data Empty = Empty
-
-instance Binary Empty where
-    get = return Empty
-    put _ = return ()
 
 
 -- * Misc

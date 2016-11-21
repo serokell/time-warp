@@ -22,35 +22,31 @@
 --
 -- It operates with so called /lively sockets/, so that, if error occured while sending
 -- or receiving, it would try to restore connection before reporting error.
--- (See more about lively-sockets: Transfer#lively-socket)
 --
 -- Then some data is sent for first time to given address, connection with single
 -- lively-socket is created; it would be reused for further sends until closed.
 --
 -- Then server is getting up at some port, it creates single thread to handle incoming
 -- connections, then for each input connection lively-socket is created.
+--
+-- About lively sockets:
+-- $lively-socket
+--
+-- TODO [TW-67]: close all connections upon quiting `Transfer` monad.
 
 
 module Control.TimeWarp.Rpc.Transfer
-       ( Transfer (..)
+       (
+       -- * Transfer
+         Transfer (..)
        , TransferException (..)
        , runTransfer
        , runTransferS
 
+       -- * Settings
+       , FailsInRow
        , Settings (..)
        , transferSettings
-       , queueSize
-       , reconnectPolicy
-
-       -- TODO: move to another module
-       , JobManager
-       , mkJobManager
-       , addJob
-       , interruptAllJobs
-       , awaitAllJobs
-       , stopAllJobs
-       , addManagerAsJob
-       , addThreadJob
        ) where
 
 import qualified Control.Concurrent                 as C
@@ -116,6 +112,7 @@ import           Control.TimeWarp.Timed             (Microsecond, MonadTimed, Th
 
 -- ** Exceptions
 
+-- | Error thrown if attempt to listen at already being listened connection is performed.
 data TransferException = AlreadyListeningOutbound Text
     deriving (Show, Typeable)
 
@@ -125,7 +122,7 @@ instance Buildable TransferException where
     build (AlreadyListeningOutbound addr) =
         bprint ("Already listening at outbound connection to "%stext) addr
 
-
+-- | Error thrown if peer was detected to close connection.
 data PeerClosedConnection = PeerClosedConnection
     deriving (Show, Typeable)
 
@@ -299,20 +296,21 @@ data OutputConnection = OutputConnection
 
 -- ** Settings
 
+-- | Number of consequent fails while trying to establish connection.
 type FailsInRow = Int
 
 data Settings = Settings
-    { _queueSize       :: Int
-    , _reconnectPolicy :: forall m . (WithNamedLogger m, MonadIO m)
+    { queueSize       :: Int
+    , reconnectPolicy :: forall m . (WithNamedLogger m, MonadIO m)
                        => FailsInRow -> m (Maybe Microsecond)
     }
 $(makeLenses ''Settings)
 
--- | Default settings, you can use it like @transferSettings { _queueSize = 1 }@
+-- | Default settings, you can use it like @transferSettings { queueSize = 1 }@
 transferSettings :: Settings
 transferSettings = Settings
-    { _queueSize = 100
-    , _reconnectPolicy =
+    { queueSize = 100
+    , reconnectPolicy =
         \failsInRow -> return $ guard (failsInRow < 3) >> Just (interval 3 sec)
     }
 
@@ -335,7 +333,7 @@ initManager =
 
 -- | Keeps data required to implement so-called /lively socket/.
 --
--- #lively-socket#
+-- $lively-socket
 -- Lively socket keeps queue of byte chunks inside.
 -- For given lively-socket, @send@ function just pushes chunks to send-queue, whenever
 -- @receive@ infinitelly acquires chunks from receive-queue.
@@ -355,7 +353,7 @@ initManager =
 -- in code, however), where it could be closed or provided with newly created plain socket
 -- to continue work with and thus become active again.
 --
--- UPGRADE-NOTE:
+-- UPGRADE-NOTE [TW-59]:
 -- Currently, if an error in listener occures (parse error), socket gets closed.
 -- Need to make it reconnect, if possible.
 data SocketFrame = SocketFrame
@@ -374,15 +372,15 @@ data SocketFrame = SocketFrame
 mkSocketFrame :: MonadIO m => Settings -> PeerAddr -> m SocketFrame
 mkSocketFrame settings sfPeerAddr = liftIO $ do
     sfInBusy     <- TV.newTVarIO False
-    sfInChan     <- TBM.newTBMChanIO (_queueSize settings)
-    sfOutChan    <- TBM.newTBMChanIO (_queueSize settings)
+    sfInChan     <- TBM.newTBMChanIO (queueSize settings)
+    sfOutChan    <- TBM.newTBMChanIO (queueSize settings)
     sfJobManager <- mkJobManager
     return SocketFrame{..}
 
 -- | Makes sender function in terms of @MonadTransfer@ for given `SocketFrame`.
 -- This first extracts ready `Lazy.ByteString` from given source, and then passes it to
 -- sending queue.
-sfSend :: (MonadIO m, WithNamedLogger m, MonadCatch m)
+sfSend :: (MonadIO m, WithNamedLogger m)
        => SocketFrame -> Source m BS.ByteString -> m ()
 sfSend SocketFrame{..} src = do
     lbs <- src $$ sinkLbs
@@ -536,7 +534,7 @@ newtype Transfer a = Transfer
 
 type instance ThreadId Transfer = C.ThreadId
 
--- | Run with specified settings
+-- | Run with specified settings.
 runTransferS :: Settings -> Transfer a -> LoggerNameBox TimedIO a
 runTransferS s t = do m <- liftIO (newMVar initManager)
                       flip runReaderT m $ flip runReaderT s $ getTransfer t
@@ -689,7 +687,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
             commLog . logWarning $
                 sformat ("Error while working with socket to "%stext%": "%shown)
                     addrName e
-            reconnect <- Transfer $ view reconnectPolicy
+            reconnect <- reconnectPolicy <$> Transfer ask
             fails <- liftIO $ succ <$> IR.readIORef failsInRow
             liftIO $ IR.writeIORef failsInRow fails
             maybeReconnect <- reconnect fails

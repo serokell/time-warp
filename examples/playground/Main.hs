@@ -42,10 +42,10 @@ import           Control.TimeWarp.Rpc              (BinaryP (..), Binding (..),
                                                     Listener (..), ListenerH (..),
                                                     Message, MonadTransfer (..),
                                                     NetworkAddress, Port, listen, listenH,
-                                                    listenR, localhost, reply, replyRaw,
-                                                    runDialog, runTransfer, runTransferS,
-                                                    send, sendH, sendR, transferSettings,
-                                                    _reconnectPolicy)
+                                                    listenR, localhost, reconnectPolicy,
+                                                    reply, replyRaw, runDialog,
+                                                    runTransfer, runTransferS, send,
+                                                    sendH, sendR, transferSettings)
 import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, after, for,
                                                     fork_, interval, ms, runTimedIO,
                                                     schedule, sec, sec', till)
@@ -301,7 +301,7 @@ slowpokeScenario = runTimedIO $ do
     newNode name = usingLoggerName name . runTransferS settings . runDialog BinaryP
 
     settings = transferSettings
-        { _reconnectPolicy = \failsInRow -> return $
+        { reconnectPolicy = \failsInRow -> return $
             if failsInRow < 5 then Just (interval 1 sec) else Nothing
         }
 
