@@ -29,10 +29,35 @@
 -- Then server is getting up at some port, it creates single thread to handle incoming
 -- connections, then for each input connection lively-socket is created.
 --
--- About lively sockets:
--- $lively-socket
---
 -- TODO [TW-67]: close all connections upon quiting `Transfer` monad.
+--
+--
+-- About lively sockets:
+--
+-- Lively socket keeps queue of byte chunks inside.
+-- For given lively-socket, @send@ function just pushes chunks to send-queue, whenever
+-- @receive@ infinitelly acquires chunks from receive-queue.
+-- Those queues are connected to plain socket behind the scene.
+--
+-- Let's say lively socket to be /active/ if it's successfully sends and receives
+-- required data at the moment.
+-- Upon becoming active, lively socket spawns `processor` thread, which itself
+-- spawns 3 threads: one pushes chunks from send-queue to socket, another one
+-- pulls chunks from socket to receive-queue, and the last tracks whether socket was
+-- closed.
+-- Processor thread finishes in one of the following cases:
+--
+--    * One of it's children threads threw an error
+--
+--    * Socket was closed
+--
+-- If some error occures, lively socket goes to exceptional state (which is not expressed
+-- in code, however), where it could be closed or provided with newly created plain socket
+-- to continue work with and thus become active again.
+--
+-- UPGRADE-NOTE [TW-59]:
+-- Currently, if an error in listener occures (parse error), socket gets closed.
+-- Need to make it reconnect, if possible.
 
 
 module Control.TimeWarp.Rpc.Transfer
@@ -332,30 +357,6 @@ initManager =
 -- ** SocketFrame
 
 -- | Keeps data required to implement so-called /lively socket/.
---
--- $lively-socket
--- Lively socket keeps queue of byte chunks inside.
--- For given lively-socket, @send@ function just pushes chunks to send-queue, whenever
--- @receive@ infinitelly acquires chunks from receive-queue.
--- Those queues are connected to plain socket behind the scene.
---
--- Let's say lively socket to be /active/ if it's successfully sends and receives
--- required data at the moment.
--- Upon becoming active, lively socket spawns `processor` thread, which itself
--- spawns 3 threads: one pushes chunks from send-queue to socket, another one
--- pulls chunks from socket to receive-queue, and the last tracks whether socket was
--- closed.
--- Processor thread finishes in one of the following cases:
---    * One of it's children threads threw an error
---    * Socket was closed
---
--- If some error occures, lively socket goes to exceptional state (which is not expressed
--- in code, however), where it could be closed or provided with newly created plain socket
--- to continue work with and thus become active again.
---
--- UPGRADE-NOTE [TW-59]:
--- Currently, if an error in listener occures (parse error), socket gets closed.
--- Need to make it reconnect, if possible.
 data SocketFrame = SocketFrame
     { sfPeerAddr   :: PeerAddr
     -- ^ Peer address, for debuging purposes only
