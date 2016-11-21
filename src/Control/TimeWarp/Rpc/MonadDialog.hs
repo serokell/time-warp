@@ -29,9 +29,7 @@
 --
 --
 -- Mainly, following structure of message is currently supported:
---
 -- [header, name, content]
---
 -- where /name/ uniquely defines type of message.
 --
 -- Given message could be deserealized as sum of header and raw data;

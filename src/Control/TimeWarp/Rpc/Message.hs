@@ -91,24 +91,32 @@ class Typeable m => Message m where
 -- This part describes different parts of message. which are enought for serializing
 -- message / could be extracted on deserializing.
 
+-- | Message's content.
 data ContentData r = ContentData r
 
 -- | Designates data given from incoming message, but not deserialized to any specified
 -- object.
 data RawData = RawData ByteString
 
+-- | Message's name.
 data NameData = NameData MessageName
 
+-- | Message's header.
 data HeaderData h = HeaderData h
 
+-- | Message's header & content.
 data HeaderNContentData h r = HeaderNContentData h r
 
+-- | Message's header & remaining part in raw form.
 data HeaderNRawData h = HeaderNRawData h RawData
 
+-- | Message's header & name.
 data HeaderNNameData h = HeaderNNameData h MessageName
 
+-- | Message's name & content.
 data NameNContentData r = NameNContentData MessageName r
 
+-- | Message's header, name & content.
 data HeaderNNameNContentData h r = HeaderNNameNContentData h MessageName r
 
 
