@@ -20,7 +20,22 @@
 -- Stability   : experimental
 -- Portability : POSIX, GHC
 --
--- This module allows to send/receive whole messages.
+-- This module defines `Dialog` monad, which is add-on over `Transfer` and allows to
+-- send/receive whole messages, where serialization strategy could be defined in
+-- arbitrary way
+--
+-- For `Dialog`, `send` function is trivial; `listen` function infinitelly captures
+-- messages from input stream, processing them in separate thread then.
+--
+-- Mainly, following structure of message is currently supported:
+-- [header, name, content]
+-- where /name/ defines type of message.
+--
+-- Given message could be deserealized as sum of header and raw data;
+-- then user can just send the message further, or deserialize and process
+-- message's content.
+--
+-- UPGRADE-NOTE: add support for /MessagePack/, /aeson/, /cereal/.
 
 module Control.TimeWarp.Rpc.MonadDialog
        ( Port
@@ -105,12 +120,18 @@ class MonadTransfer m => MonadDialog p m | m -> p where
     packingType :: m p
 
 -- * Communication methods
--- ** For MonadDialog
 
--- NOTE: those `Packable` and `Unpackable` constraints were expected to play nicely with
--- different kinds of `send`, `reply` and `listen` functions, but they weren't :(
+-- ** For MonadDialog
+-- Functions differ by suffix, meanings are following:
+--
+--  * /No suffix/ - operates with plain message.
+--
+--  * H - operates with message with header
+--
+--  * R - operates with message in raw form with header
 
 -- | Send a message.
+-- TODO: have `ContentData` in constraint here.
 send :: (Packable p (HeaderNContentData Empty r), MonadDialog p m, MonadThrow m)
      => NetworkAddress -> r -> m ()
 send addr msg = packingType >>= \p -> sendP p addr msg
@@ -157,6 +178,7 @@ listenR binding listeners rawListener =
 
 
 -- ** Packing type manually defined
+-- These functions have analogies without *P* suffix, applicable in `MonadDialog`.
 
 -- | Send a message.
 sendP :: (Packable p (HeaderNContentData Empty r), MonadTransfer m, MonadThrow m)
@@ -189,11 +211,11 @@ replyRP :: (Packable p (HeaderNRawData h), MonadResponse m, MonadThrow m)
 replyRP packing h raw = replyRaw $ yield (HeaderNRawData h raw) =$= packMsg packing
 
 type MonadListener m =
-    ( MonadTransfer m
-    , MonadIO m
+    ( MonadIO m
     , MonadCatch m
-    , MonadTimed m
     , WithNamedLogger m
+    , MonadTimed m
+    , MonadTransfer m
     )
 
 -- | Starts server.
@@ -229,7 +251,6 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
             Nothing ->
                 lift . commLog . logWarning $
                     sformat "Unexpected end of incoming message"
-                -- TODO: throw!
             Just (name, Nothing) -> do
                 lift . fork_ . void $ invokeRawListenerSafe $ rawListener (header, raw)
                 lift . commLog . logWarning $
@@ -243,11 +264,11 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
                     Just (HeaderNContentData h r) ->
                         let _ = [h, header]  -- constraint on h type
                         in do
-                          lift . fork_ $ do
-                              cont <- invokeRawListenerSafe $ rawListener (header, raw)
-                              when cont $
-                                  invokeListenerSafe name $ f (header, r)
-                          loop
+                            lift . fork_ $ do
+                                cont <- invokeRawListenerSafe $ rawListener (header, raw)
+                                when cont $
+                                    invokeListenerSafe name $ f (header, r)
+                            loop
 
     selector header = chooseListener packing header getListenerNameH listeners
 
@@ -341,7 +362,8 @@ instance MonadBaseControl IO m => MonadBaseControl IO (Dialog p m) where
 type instance ThreadId (Dialog p m) = ThreadId m
 
 instance MonadTransfer m => MonadTransfer (Dialog p m) where
-    sendRaw addr req = Dialog ask >>= \ctx -> lift $ sendRaw addr (hoist (runDialog ctx) req)
+    sendRaw addr req =
+        Dialog ask >>= \ctx -> lift $ sendRaw addr (hoist (runDialog ctx) req)
     listenRaw binding sink =
         fmap Dialog $ Dialog $ listenRaw binding $ hoistRespCond getDialog sink
     close = lift . close

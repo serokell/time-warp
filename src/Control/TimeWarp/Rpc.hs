@@ -6,9 +6,9 @@
 -- Stability   : experimental
 -- Portability : POSIX, GHC
 --
--- This module provides RPC capabilities. It allows to write scenarios over
--- distributed systems, which can then be launched as either real program or
--- emulation with network nastiness manually controlled.
+-- This module provides networking capabilities.
+-- Name `RPC` is outdated and is subject to change; this module does *not* provide
+-- RPC interface.
 
 module Control.TimeWarp.Rpc
        ( module Control.TimeWarp.Rpc.Message

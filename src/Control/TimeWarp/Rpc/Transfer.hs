@@ -17,6 +17,19 @@
 -- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
 -- Stability   : experimental
 -- Portability : POSIX, GHC
+--
+-- This module provides implementation of `MonadTransfer`.
+--
+-- It operates with so called /lively sockets/, so that, if error occured while sending
+-- or receiving, it would try to restore connection before reporting error.
+-- (See more about lively-sockets: Transfer#lively-socket)
+--
+-- Then some data is sent for first time to given address, connection with single
+-- lively-socket is created; it would be reused for further sends until closed.
+--
+-- Then server is getting up at some port, it creates single thread to handle incoming
+-- connections, then for each input connection lively-socket is created.
+
 
 module Control.TimeWarp.Rpc.Transfer
        ( Transfer (..)
@@ -29,7 +42,7 @@ module Control.TimeWarp.Rpc.Transfer
        , queueSize
        , reconnectPolicy
 
-       -- TODO: do smth with this
+       -- TODO: move to another module
        , JobManager
        , mkJobManager
        , addJob
@@ -320,7 +333,31 @@ initManager =
 
 -- ** SocketFrame
 
--- | Keeps data which helps to improve socket to smart socket.
+-- | Keeps data required to implement so-called /lively socket/.
+--
+-- #lively-socket#
+-- Lively socket keeps queue of byte chunks inside.
+-- For given lively-socket, @send@ function just pushes chunks to send-queue, whenever
+-- @receive@ infinitelly acquires chunks from receive-queue.
+-- Those queues are connected to plain socket behind the scene.
+--
+-- Let's say lively socket to be /active/ if it's successfully sends and receives
+-- required data at the moment.
+-- Upon becoming active, lively socket spawns `processor` thread, which itself
+-- spawns 3 threads: one pushes chunks from send-queue to socket, another one
+-- pulls chunks from socket to receive-queue, and the last tracks whether socket was
+-- closed.
+-- Processor thread finishes in one of the following cases:
+--    * One of it's children threads threw an error
+--    * Socket was closed
+--
+-- If some error occures, lively socket goes to exceptional state (which is not expressed
+-- in code, however), where it could be closed or provided with newly created plain socket
+-- to continue work with and thus become active again.
+--
+-- UPGRADE-NOTE:
+-- Currently, if an error in listener occures (parse error), socket gets closed.
+-- Need to make it reconnect, if possible.
 data SocketFrame = SocketFrame
     { sfPeerAddr   :: PeerAddr
     -- ^ Peer address, for debuging purposes only
@@ -329,8 +366,9 @@ data SocketFrame = SocketFrame
     , sfInChan     :: TBM.TBMChan BS.ByteString
     -- ^ For incoming packs of bytes
     , sfOutChan    :: TBM.TBMChan (BL.ByteString, IO ())
-     -- ^ For (packs of bytes to send, notification when bytes passed to socket)
+    -- ^ For (packs of bytes to send, notification when bytes passed to socket)
     , sfJobManager :: JobManager
+    -- ^ Job manager, tracks whether lively-socket wasn't closed.
     }
 
 mkSocketFrame :: MonadIO m => Settings -> PeerAddr -> m SocketFrame
@@ -371,8 +409,8 @@ sfSend SocketFrame{..} src = do
                )
     whenM condM action = condM >>= flip when action
 
--- | Constructs function which allows infinitelly listens on given `SocketFrame` in terms of
--- `MonadTransfer`.
+-- | Constructs function which allows infinitelly listens on given `SocketFrame` in terms
+-- of `MonadTransfer`.
 -- Attempt to use this function twice will end with `AlreadyListeningOutbound` error.
 sfReceive :: (MonadIO m, MonadMask m, MonadTimed m, WithNamedLogger m,
               MonadBaseControl IO m)
@@ -386,7 +424,7 @@ sfReceive sf@SocketFrame{..} sink = do
     let interruptType = WithTimeout (interval 3 sec) onTimeout
     mask $ \unmask -> do
         addManagerAsJob sfJobManager interruptType liManager
-        addThreadJob liManager $ unmask $ logOnErr $ do  -- TODO: disconnect / reconnect on error?
+        addThreadJob liManager $ unmask $ logOnErr $ do  -- TODO: reconnect on error?
             flip runResponseT (sfResponseCtx sf) $
                 sourceTBMChan sfInChan $$ sink
             commLog . logDebug $
@@ -596,9 +634,8 @@ listenInbound (fromIntegral -> port) sink = do
 
 
 -- | Listens for incoming bytes on outbound connection.
--- Listening would occur until sink gets closed. Killing this thread won't help here.
--- Attempt to listen on socket which is already being listened causes exception.
--- Subscribtions could be implemented at layer above, where we operate with messages.
+-- This thread doesn't block current thread. Use returned function to close relevant
+-- connection.
 listenOutbound :: NetworkAddress
                -> Sink BS.ByteString (ResponseT Transfer) ()
                -> Transfer (Transfer ())

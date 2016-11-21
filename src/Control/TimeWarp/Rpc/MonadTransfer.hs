@@ -16,7 +16,17 @@
 -- Stability   : experimental
 -- Portability : POSIX, GHC
 --
--- This module defines monad, which serves to sending and receiving raw `ByteString`s.
+-- This module defines monad, which serves for sending and receiving raw byte streams.
+--
+-- UPGRAGE-NOTE (TW-47):
+-- We'd like to have another interface for `listenRaw` function.
+-- Currently it allows only single listener for given connection.
+-- It's difficult to define, for example, a listener for all outbound connections,
+-- which is likely to have.
+-- There is a proposal to have subscriptions-based interface:
+--   * `listenRaw` is in some sense automatically applied when connection is created
+--   * At `Dialog` layer, add `subscribe` function which allows to listen for messages at
+--       specified port / specified outbound connection / sum of them.
 
 module Control.TimeWarp.Rpc.MonadTransfer
        ( Port
@@ -72,18 +82,21 @@ data Binding
 -- | Allows to send/receive raw byte sequences.
 class Monad m => MonadTransfer m where
     -- | Sends raw data.
-    -- TODO: NetworkAddress -> Consumer ByteString m ()
-    sendRaw :: NetworkAddress          -- ^ Destination address
-            -> Source m ByteString    -- ^ Data to send
+    sendRaw :: NetworkAddress       -- ^ Destination address
+            -> Source m ByteString  -- ^ Data to send
             -> m ()
 
     -- | Listens at specified input or output connection.
-    -- Resturns server stopper, which blocks until server is actually stopped.
+    -- Resturns server stopper, which blocks current thread until server is actually
+    -- stopped.
+    -- Calling this function in case there is defined listener already for this
+    -- connection should lead to error.
     listenRaw :: Binding                           -- ^ Port/address to listen to
               -> Sink ByteString (ResponseT m) ()  -- ^ Parser for input byte stream
               -> m (m ())                          -- ^ Server stopper
 
-    -- | Closes connection to specified node, if exists.
+    -- | Closes outbound connection to specified node, if exists.
+    -- To close inbound connections, use `closeR`.
     close :: NetworkAddress -> m ()
 
 
