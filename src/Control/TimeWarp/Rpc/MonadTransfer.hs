@@ -55,7 +55,7 @@ module Control.TimeWarp.Rpc.MonadTransfer
 import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow)
 import           Control.Monad.Morph         (hoist)
 import           Control.Monad.Reader        (MonadReader (..), ReaderT (..), mapReaderT)
-import           Control.Monad.State         (MonadState)
+import           Control.Monad.State         (MonadState (get), StateT, evalStateT)
 import           Control.Monad.Trans         (MonadIO (..), MonadTrans (..))
 import           Control.Monad.Trans.Control (MonadTransControl (..))
 import           Data.ByteString             (ByteString)
@@ -200,6 +200,12 @@ instance MonadTransfer m => MonadTransfer (ReaderT r m) where
     sendRaw addr req = ask >>= \ctx -> lift $ sendRaw addr (hoist (`runReaderT` ctx) req)
     listenRaw binding sink =
         fmap lift $ liftWith $ \run -> listenRaw binding $ hoistRespCond run sink
+    close = lift . close
+
+instance MonadTransfer m => MonadTransfer (StateT r m) where
+    sendRaw addr req = get >>= \ctx -> lift $ sendRaw addr (hoist (`evalStateT` ctx) req)
+    listenRaw binding sink =
+        fmap lift $ liftWith $ \run -> listenRaw binding $ hoistRespCond (fmap fst . run) sink
     close = lift . close
 
 instance MonadTransfer m => MonadTransfer (LoggerNameBox m) where
