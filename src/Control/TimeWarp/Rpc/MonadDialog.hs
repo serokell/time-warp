@@ -405,8 +405,8 @@ instance MonadTransfer m => MonadDialog p (Dialog p m) where
 instance MonadDialog p m => MonadDialog p (ReaderT r m) where
     packingType = lift packingType
 
-instance MonadDialog p m => MonadDialog p (StateT r m) where
-    packingType = lift packingType
+-- instance MonadDialog p m => MonadDialog p (StateT r m) where
+--     packingType = lift packingType
 
 deriving instance MonadDialog p m => MonadDialog p (LoggerNameBox m)
 

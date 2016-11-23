@@ -55,11 +55,14 @@ module Control.TimeWarp.Rpc.MonadTransfer
 import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow)
 import           Control.Monad.Morph         (hoist)
 import           Control.Monad.Reader        (MonadReader (..), ReaderT (..), mapReaderT)
-import           Control.Monad.State         (MonadState (get), StateT, evalStateT)
+import           Control.Monad.State         (MonadState)
+-- import qualified Control.Monad.State.Lazy    as SL
+-- import qualified Control.Monad.State.Strict  as SS
 import           Control.Monad.Trans         (MonadIO (..), MonadTrans (..))
 import           Control.Monad.Trans.Control (MonadTransControl (..))
 import           Data.ByteString             (ByteString)
 import           Data.Conduit                (ConduitM, Producer, Sink, Source)
+-- import           Data.Conduit.Lift           (evalStateC, evalStateLC)
 import           Data.Monoid                 ((<>))
 import           Data.Text                   (Text)
 import           Data.Word                   (Word16)
@@ -202,11 +205,17 @@ instance MonadTransfer m => MonadTransfer (ReaderT r m) where
         fmap lift $ liftWith $ \run -> listenRaw binding $ hoistRespCond run sink
     close = lift . close
 
-instance MonadTransfer m => MonadTransfer (StateT r m) where
-    sendRaw addr req = get >>= \ctx -> lift $ sendRaw addr (hoist (`evalStateT` ctx) req)
-    listenRaw binding sink =
-        fmap lift $ liftWith $ \run -> listenRaw binding $ hoistRespCond (fmap fst . run) sink
-    close = lift . close
+-- instance MonadTransfer m => MonadTransfer (SL.StateT r m) where
+--     sendRaw addr req = get >>= \ctx -> lift $ sendRaw addr (evalStateLC ctx req)
+--     listenRaw binding sink =
+--         fmap lift $ liftWith $ \run -> listenRaw binding $ hoistRespCond (fmap fst . run) sink
+--     close = lift . close
+
+-- instance MonadTransfer m => MonadTransfer (SS.StateT r m) where
+--     sendRaw addr req = get >>= \ctx -> lift $ sendRaw addr (evalStateC ctx req)
+--     listenRaw binding sink =
+--         fmap lift $ liftWith $ \run -> listenRaw binding $ hoistRespCond (fmap fst . run) sink
+--     close = lift . close
 
 instance MonadTransfer m => MonadTransfer (LoggerNameBox m) where
     sendRaw addr req = getLoggerName >>=
