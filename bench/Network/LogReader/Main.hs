@@ -2,10 +2,10 @@
 
 import           Control.Applicative          (empty, (<|>))
 import           Control.Exception            (Exception)
-import           Control.Lens                 (at, singular, (%=), (<<.=), (^.), _2,
+import           Control.Lens                 (at, (%=), (^.), _2,
                                                _Just)
 import           Control.Monad                (forM_)
-import           Control.Monad.Catch          (handle, throwM)
+import           Control.Monad.Catch          (handle)
 import           Control.Monad.State          (StateT (..), evalStateT, execStateT, get,
                                                modify)
 import           Control.Monad.Trans          (lift, liftIO)
@@ -72,7 +72,7 @@ analyze file =
                 logWarning $
                     sformat ("Parse error at file "%F.build%" (line "%F.int%"): "%F.build)
                     file rowNo err
-            Right (Just (LogMessage mi@MeasureInfo{..})) -> lift $ do
+            Right (Just (LogMessage MeasureInfo{..})) -> lift $ do
                 at miId %= (<|> Just (miPayload, mempty))
                 at miId . _Just . _2 %= ((miEvent, miTime):)
                 --mwas <- singular (at miId . _Just . _2) . at miEvent <<.= Just miTime

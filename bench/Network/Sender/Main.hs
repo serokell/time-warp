@@ -4,21 +4,19 @@ module Main where
 
 import           Control.Applicative         (empty)
 import           Control.Concurrent.Async    (forConcurrently)
-import           Control.Monad               (forM, forM_, mzero, void, when)
+import           Control.Monad               (forM, mzero, void, when)
 import           Control.Monad.Trans         (lift, liftIO)
 import           Control.Monad.Trans.Control (liftBaseWith)
 import           Control.Monad.Trans.Maybe   (runMaybeT)
-import           Data.List.Extra             (chunksOf)
-import           Formatting                  (sformat, shown)
 import           GHC.IO.Encoding             (setLocaleEncoding, utf8)
 import           System.Random               (randomRIO)
 
 import           Bench.Network.Commons       (MeasureEvent (..), Payload (..), Ping (..),
                                               Pong (..), loadLogConfig, logMeasure)
 import           Control.TimeWarp.Rpc        (BinaryP (..), Binding (AtConnTo),
-                                              Listener (..), listen, localhost, runDialog,
+                                              Listener (..), listen, runDialog,
                                               runTransfer, send)
-import           Control.TimeWarp.Timed      (Microsecond, for, fork_, interval, mcs,
+import           Control.TimeWarp.Timed      (Microsecond, for, interval, mcs,
                                               runTimedIO, runTimedIO, sec, startTimer,
                                               wait)
 import           Options.Applicative.Simple  (simpleOptions)

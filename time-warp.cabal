@@ -124,7 +124,7 @@ test-suite time-warp-test
                      , DeriveDataTypeable
                      , GeneralizedNewtypeDeriving
 
-executable playground
+executable net-playground
   main-is:             Main.hs
   build-depends:       async >= 2.0.1
                      , base >= 4.8 && < 5

@@ -35,8 +35,8 @@ import           Formatting                        (sformat, shown, string, (%))
 import           GHC.Generics                      (Generic)
 
 import           System.Wlog                       (LoggerName, Severity (Debug),
-                                                    initLogging, logDebug, logError,
-                                                    logInfo, usingLoggerName)
+                                                    initLogging, logDebug, logInfo,
+                                                    usingLoggerName)
 
 import           Control.TimeWarp.Rpc              (BinaryP (..), Binding (..),
                                                     Listener (..), ListenerH (..),
