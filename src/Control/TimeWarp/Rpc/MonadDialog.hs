@@ -88,7 +88,7 @@ import           Control.Monad.Catch                (MonadCatch, MonadMask, Mona
                                                      handleAll)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (MonadReader (ask), ReaderT (..))
-import           Control.Monad.State                (MonadState, StateT)
+import           Control.Monad.State                (MonadState)
 import           Control.Monad.Trans                (MonadIO, MonadTrans (..))
 import           Control.Monad.Trans.Control        (ComposeSt, MonadBaseControl (..),
                                                      MonadTransControl (..), StM,
@@ -404,9 +404,6 @@ instance MonadTransfer m => MonadDialog p (Dialog p m) where
 
 instance MonadDialog p m => MonadDialog p (ReaderT r m) where
     packingType = lift packingType
-
--- instance MonadDialog p m => MonadDialog p (StateT r m) where
---     packingType = lift packingType
 
 deriving instance MonadDialog p m => MonadDialog p (LoggerNameBox m)
 
