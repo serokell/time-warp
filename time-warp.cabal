@@ -49,7 +49,7 @@ library
                      , formatting
                      , lens
                      , lifted-base >= 0.2.3
-                     , log-warper  >= 0.1.0
+                     , log-warper  >= 0.2.0
                      , mtl
                      , MonadRandom
                      , monad-loops
@@ -104,7 +104,7 @@ test-suite time-warp-test
                      , exceptions >= 0.8.2.1
                      , hspec >= 2.1.10
                      , lens >= 4.13
-                     , log-warper >= 0.1.0
+                     , log-warper >= 0.2.0
                      , data-msgpack >= 0.0.8
                      , mtl
                      , QuickCheck >= 2.8.1
@@ -136,7 +136,7 @@ executable net-playground
                      , formatting
                      , hspec >= 2.1.10
                      , lens >= 4.13
-                     , log-warper >= 0.1.0
+                     , log-warper >= 0.2.0
                      , MonadRandom
                      , data-msgpack >= 0.0.8
                      , mtl
@@ -173,7 +173,7 @@ executable bench-sender
                      , extra >= 1.4
                      , formatting
                      , hslogger
-                     , log-warper
+                     , log-warper >= 0.2.0
                      , monad-control >= 1.0.1
                      , mtl
                      , optparse-simple >= 0.0.3
@@ -208,7 +208,7 @@ executable bench-receiver
                      , exceptions >= 0.8.2.1
                      , formatting
                      , hslogger
-                     , log-warper
+                     , log-warper >= 0.2.0
                      , mtl
                      , optparse-simple >= 0.0.3
                      , serokell-util
@@ -243,7 +243,7 @@ executable bench-log-reader
                      , exceptions >= 0.8.2.1
                      , formatting
                      , hslogger
-                     , log-warper
+                     , log-warper >= 0.2.0
                      , lens >= 4.14
                      , mtl
                      , optparse-simple >= 0.0.3
