@@ -7,13 +7,13 @@ module Test.Control.TimeWarp.Common
 import           Data.Time.Units                   (TimeUnit, convertUnit,
                                                     fromMicroseconds)
 import           System.Random                     (StdGen, mkStdGen)
-import           System.Wlog                       (WithNamedLogger (..))
+import           System.Wlog                       (HasLoggerName (..))
 import           Test.QuickCheck                   (Arbitrary (arbitrary), choose)
 
 import qualified Control.TimeWarp.Timed.MonadTimed as T
 
 
-instance WithNamedLogger IO where
+instance HasLoggerName IO where
     getLoggerName = pure "TimeWarp tests"
 
     modifyLoggerName = const id
