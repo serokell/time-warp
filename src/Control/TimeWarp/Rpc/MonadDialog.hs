@@ -100,7 +100,8 @@ import           Data.Conduit.List                  as CL
 import           Data.Map                           as M
 import           Data.Proxy                         (Proxy (..))
 import           Formatting                         (sformat, shown, stext, (%))
-import           System.Wlog                        (LoggerNameBox (..), WithNamedLogger,
+import           System.Wlog                        (CanLog, HasLoggerName,
+                                                     LoggerNameBox (..), WithLogger,
                                                      logDebug, logError, logWarning)
 
 import           Control.TimeWarp.Rpc.Message       (HeaderNContentData (..),
@@ -232,12 +233,13 @@ replyRP :: (Packable p (HeaderNRawData h), MonadResponse m, MonadThrow m)
        => p -> h -> RawData -> m ()
 replyRP packing h raw = replyRaw $ yield (HeaderNRawData h raw) =$= packMsg packing
 
-type MonadListener m =
-    ( MonadIO m
-    , MonadMask m
-    , WithNamedLogger m
-    , MonadTimed m
+-- Those @m@ looks like waterfall :3
+type MonadListener  m =
+    ( MonadIO       m
+    , MonadMask     m
+    , MonadTimed    m
     , MonadTransfer m
+    , WithLogger    m
     )
 
 -- | Similar to `listen`.
@@ -311,7 +313,7 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
     invokeListenerSafe name = handleAll $
         commLog . logError . sformat ("Uncaught error in listener "%shown%": "%shown) name
 
-chooseListener :: (MonadListener m, Unpackable p (HeaderNNameData h))
+chooseListener :: (CanLog m, MonadListener m, Unpackable p (HeaderNNameData h))
                => p -> h -> (l m -> MessageName) -> [l m]
                -> Consumer ByteString (ResponseT m) (Maybe (MessageName, Maybe (l m)))
 chooseListener packing h getName listeners = do
@@ -367,8 +369,7 @@ newtype Dialog p m a = Dialog
     { getDialog :: ReaderT p m a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadTrans,
                 MonadThrow, MonadCatch, MonadMask,
-                MonadState s,
-                WithNamedLogger, MonadTimed)
+                MonadState s, CanLog, HasLoggerName, MonadTimed)
 
 -- | Runs given `Dialog`.
 runDialog :: p -> Dialog p m a -> m a

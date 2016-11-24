@@ -119,9 +119,9 @@ import           Formatting                         (bprint, builder, int, sform
                                                      stext, string, (%))
 -- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
 import qualified Network.Socket                     as NS
-import           System.Wlog                        (LoggerNameBox, WithNamedLogger,
-                                                     logDebug, logError, logInfo,
-                                                     logWarning)
+import           System.Wlog                        (CanLog, HasLoggerName, LoggerNameBox,
+                                                     WithLogger, logDebug, logError,
+                                                     logInfo, logWarning)
 
 import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer (..),
                                                      NetworkAddress, Port,
@@ -273,7 +273,7 @@ addManagerAsJob manager intType managerJob = do
         \ready -> fork_ $ awaitAllJobs managerJob >> liftIO ready
 
 -- | Adds job executing in another thread, where interrupting kills the thread.
-addThreadJob :: (MonadIO m,  MonadMask m, MonadTimed m, MonadBaseControl IO m)
+addThreadJob :: (CanLog m, MonadIO m,  MonadMask m, MonadTimed m, MonadBaseControl IO m)
              => JobManager -> m () -> m ()
 addThreadJob manager action =
     mask $
@@ -305,11 +305,11 @@ unlessInterrupted m a = isInterrupted m >>= flip unless a
 type PeerAddr = Text
 
 data OutputConnection = OutputConnection
-    { outConnSend       :: forall m . (MonadIO m, MonadMask m, WithNamedLogger m)
+    { outConnSend       :: forall m . (MonadIO m, MonadMask m, WithLogger m)
                         => Source m BS.ByteString -> m ()
       -- ^ Function to send all data produced by source
     , outConnRec        :: forall m . (MonadIO m, MonadMask m, MonadTimed m,
-                                       WithNamedLogger m, MonadBaseControl IO m)
+                                       MonadBaseControl IO m, WithLogger m)
                         => Sink BS.ByteString (ResponseT m) () -> m ()
       -- ^ Function to stark sink-listener, returns synchronous closer
     , outConnJobManager :: JobManager
@@ -326,8 +326,8 @@ type FailsInRow = Int
 
 data Settings = Settings
     { queueSize       :: Int
-    , reconnectPolicy :: forall m . (WithNamedLogger m, MonadIO m)
-                       => FailsInRow -> m (Maybe Microsecond)
+    , reconnectPolicy :: forall m . (HasLoggerName m, MonadIO m)
+                      => FailsInRow -> m (Maybe Microsecond)
     }
 $(makeLenses ''Settings)
 
@@ -381,7 +381,7 @@ mkSocketFrame settings sfPeerAddr = liftIO $ do
 -- | Makes sender function in terms of @MonadTransfer@ for given `SocketFrame`.
 -- This first extracts ready `Lazy.ByteString` from given source, and then passes it to
 -- sending queue.
-sfSend :: (MonadIO m, WithNamedLogger m)
+sfSend :: (MonadIO m, WithLogger m)
        => SocketFrame -> Source m BS.ByteString -> m ()
 sfSend SocketFrame{..} src = do
     lbs <- src $$ sinkLbs
@@ -411,7 +411,7 @@ sfSend SocketFrame{..} src = do
 -- | Constructs function which allows infinitelly listens on given `SocketFrame` in terms
 -- of `MonadTransfer`.
 -- Attempt to use this function twice will end with `AlreadyListeningOutbound` error.
-sfReceive :: (MonadIO m, MonadMask m, MonadTimed m, WithNamedLogger m,
+sfReceive :: (MonadIO m, MonadMask m, MonadTimed m, WithLogger m,
               MonadBaseControl IO m)
           => SocketFrame -> Sink BS.ByteString (ResponseT m) () -> m ()
 sfReceive sf@SocketFrame{..} sink = do
@@ -468,7 +468,7 @@ sfResponseCtx sf =
 
 -- | Starts workers, which connect channels in `SocketFrame` with real `NS.Socket`.
 -- If error in any worker occured, it's propagaded.
-sfProcessSocket :: (MonadIO m, MonadMask m, MonadTimed m, WithNamedLogger m)
+sfProcessSocket :: (MonadIO m, MonadMask m, MonadTimed m, WithLogger m)
                 => SocketFrame -> NS.Socket -> m ()
 sfProcessSocket SocketFrame{..} sock = do
     -- TODO: rewrite to async when MonadTimed supports it
@@ -531,7 +531,7 @@ sfProcessSocket SocketFrame{..} sock = do
 newtype Transfer a = Transfer
     { getTransfer :: ReaderT Settings (ReaderT (MVar Manager) (LoggerNameBox TimedIO)) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadBase IO,
-                MonadThrow, MonadCatch, MonadMask, MonadTimed, WithNamedLogger)
+                MonadThrow, MonadCatch, MonadMask, MonadTimed, CanLog, HasLoggerName)
 
 type instance ThreadId Transfer = C.ThreadId
 
