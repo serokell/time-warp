@@ -40,7 +40,7 @@ import           Prelude               hiding (takeWhile)
 import           Data.Attoparsec.Text  (Parser, char, decimal, string, takeWhile)
 
 import           Control.TimeWarp.Rpc  (Message)
-import           System.Wlog           (LoggerConfig (..), Severity (..), WithNamedLogger,
+import           System.Wlog           (LoggerConfig (..), Severity (..), WithLogger,
                                         logInfo, parseLoggerConfig, traverseLoggerConfig)
 
 
@@ -74,7 +74,7 @@ type Timestamp = Integer
 curTimeMcs :: MonadIO m => m Timestamp
 curTimeMcs = liftIO $ round . ( * 1000000) <$> getPOSIXTime
 
-logMeasure :: (MonadIO m, WithNamedLogger m) => MeasureEvent -> MsgId -> Payload -> m ()
+logMeasure :: (MonadIO m, WithLogger m) => MeasureEvent -> MsgId -> Payload -> m ()
 logMeasure miEvent miId miPayload = do
     miTime <- curTimeMcs
     logInfo $ F.sformat F.build $ LogMessage MeasureInfo{..}

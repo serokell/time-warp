@@ -52,8 +52,9 @@ import           Formatting                        (sformat, shown, (%))
 import qualified Data.Map                          as M
 import qualified Data.PQueue.Min                   as PQ
 import           Safe                              (fromJustNote)
-import           System.Wlog                       (LoggerName, WithNamedLogger (..),
-                                                    logDebug, logWarning)
+import           System.Wlog                       (CanLog, HasLoggerName (..),
+                                                    LoggerName, WithLogger, logDebug,
+                                                    logWarning)
 
 import           Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimed (..),
                                                     MonadTimedError (MTTimeoutError),
@@ -167,10 +168,12 @@ instance MonadState s m => MonadState s (TimedT m) where
     put = lift . put
     state = lift . state
 
-instance WithNamedLogger (TimedT m) where
+instance HasLoggerName (TimedT m) where
     getLoggerName = TimedT $ view loggerName
 
     modifyLoggerName how = TimedT . local (loggerName %~ how) . unwrapTimedT
+
+instance CanLog m => CanLog (TimedT m) where
 
 newtype ContException = ContException SomeException
     deriving (Show)
@@ -304,7 +307,7 @@ isThreadKilled :: SomeException -> Bool
 isThreadKilled = maybe False (== ThreadKilled) . fromException
 
 threadKilledNotifier
-    :: (MonadIO m, WithNamedLogger m)
+    :: WithLogger m
     => SomeException -> m ()
 threadKilledNotifier e
     | isThreadKilled e = logDebug msg
@@ -314,7 +317,7 @@ threadKilledNotifier e
 
 type instance ThreadId (TimedT m) = PureThreadId
 
-instance (MonadIO m, MonadThrow m, MonadCatch m) =>
+instance (CanLog m, MonadIO m, MonadThrow m, MonadCatch m) =>
          MonadTimed (TimedT m) where
     virtualTime = TimedT $ use curTime
     currentTime = virtualTime

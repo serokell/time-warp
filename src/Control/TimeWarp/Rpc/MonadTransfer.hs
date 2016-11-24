@@ -63,9 +63,10 @@ import           Data.Conduit                (ConduitM, Producer, Sink, Source)
 import           Data.Monoid                 ((<>))
 import           Data.Text                   (Text)
 import           Data.Word                   (Word16)
-import           System.Wlog                 (LoggerName, LoggerNameBox (..),
-                                              WithNamedLogger, getLoggerName,
-                                              modifyLoggerName, usingLoggerName)
+import           System.Wlog                 (CanLog, HasLoggerName, LoggerName,
+                                              LoggerNameBox (..), WithLogger,
+                                              getLoggerName, modifyLoggerName,
+                                              usingLoggerName)
 
 import           Control.TimeWarp.Timed      (MonadTimed, ThreadId)
 
@@ -91,7 +92,7 @@ commLoggerName :: LoggerName
 commLoggerName = "comm"
 
 -- | Appends `commLoggerName` as suffix to current logger name.
-commLog :: WithNamedLogger m => m a -> m a
+commLog :: HasLoggerName m => m a -> m a
 commLog = modifyLoggerName (<> commLoggerName)
 
 -- | Specifies type of `listen` binding.
@@ -142,7 +143,7 @@ class Monad m => MonadResponse m where
 
 -- | Keeps information about peer.
 data ResponseContext = ResponseContext
-    { respSend     :: forall m . (MonadIO m, MonadMask m, WithNamedLogger m)
+    { respSend     :: forall m . (MonadIO m, MonadMask m, WithLogger m)
                    => Source m ByteString -> m ()
     , respClose    :: IO ()
     , respPeerAddr :: Text
@@ -153,8 +154,8 @@ newtype ResponseT m a = ResponseT
     { getResponseT :: ReaderT ResponseContext m a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadTrans,
                 MonadThrow, MonadCatch, MonadMask,
-                MonadState s,
-                WithNamedLogger, MonadTimed)
+                MonadState s, CanLog,
+                HasLoggerName, MonadTimed)
 
 -- | Unwrappes `ResponseT`.
 runResponseT :: ResponseT m a -> ResponseContext -> m a
@@ -174,7 +175,8 @@ instance MonadTransfer m => MonadTransfer (ResponseT m) where
         fmap ResponseT $ ResponseT $ listenRaw binding $ hoistRespCond getResponseT sink
     close addr = lift $ close addr
 
-instance (MonadTransfer m, MonadIO m, WithNamedLogger m, MonadMask m) => MonadResponse (ResponseT m) where
+instance (MonadIO m, MonadMask m, WithLogger m)
+         => MonadResponse (ResponseT m) where
     replyRaw dat = ResponseT ask >>= \ctx -> respSend ctx dat
 
     closeR = ResponseT $ ask >>= liftIO . respClose

@@ -23,23 +23,21 @@ module Control.TimeWarp.Timed.TimedIO
 
 import qualified Control.Concurrent                as C
 import           Control.Monad.Base                (MonadBase)
-import           Control.Monad.Catch               (MonadCatch, MonadMask,
-                                                    MonadThrow, throwM)
-import           Control.Monad.Reader              (ReaderT (..), ask,
-                                                    runReaderT)
+import           Control.Monad.Catch               (MonadCatch, MonadMask, MonadThrow,
+                                                    throwM)
+import           Control.Monad.Reader              (ReaderT (..), ask, runReaderT)
 import           Control.Monad.Trans               (MonadIO, lift, liftIO)
-import           Control.Monad.Trans.Control       (MonadBaseControl, StM,
-                                                    liftBaseWith, restoreM)
+import           Control.Monad.Trans.Control       (MonadBaseControl, StM, liftBaseWith,
+                                                    restoreM)
 import           Data.Time.Clock.POSIX             (getPOSIXTime)
 import           Data.Time.Units                   (toMicroseconds)
-import qualified System.Timeout                    as T
 import           SlaveThread                       as ST
+import qualified System.Timeout                    as T
+import           System.Wlog                       (CanLog)
 
-import           Control.TimeWarp.Timed.MonadTimed (Microsecond,
-                                                    MonadTimed (..),
-                                                    ThreadId,
-                                                    MonadTimedError
-                                                    (MTTimeoutError))
+import           Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimed (..),
+                                                    MonadTimedError (MTTimeoutError),
+                                                    ThreadId)
 
 -- | Default implementation for `IO`, i.e. real mode.
 -- `wait` refers to `Control.Concurrent.threadDelay`,
@@ -49,7 +47,7 @@ newtype TimedIO a = TimedIO
       -- `WithNamedLogger` instance.
       getTimedIO :: ReaderT Microsecond IO a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
-               MonadBase IO, MonadMask)
+               MonadBase IO, MonadMask, CanLog)
 
 instance MonadBaseControl IO TimedIO where
     type StM TimedIO a = a
