@@ -39,7 +39,7 @@ import           Prelude               hiding (takeWhile)
 
 import           Data.Attoparsec.Text  (Parser, char, decimal, string, takeWhile)
 
-import           Control.TimeWarp.Rpc  (Message)
+import           Control.TimeWarp.Rpc  (Message (formatMessage), messageName')
 import           System.Wlog           (LoggerConfig (..), Severity (..), WithLogger,
                                         logInfo, parseLoggerConfig, traverseLoggerConfig)
 
@@ -59,8 +59,11 @@ data Ping = Ping MsgId Payload
 data Pong = Pong MsgId Payload
     deriving (Generic, Data, Binary)
 
-instance Message Ping
-instance Message Pong
+instance Message Ping where
+    formatMessage = messageName'
+
+instance Message Pong where
+    formatMessage = messageName'
 
 instance Binary Payload where
     get = Payload . BL.length <$> get

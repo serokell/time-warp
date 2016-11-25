@@ -22,14 +22,14 @@ import           Control.Concurrent.STM.TVar       (modifyTVar, newTVar, readTVa
 import           Control.Monad                     (forM_, replicateM_, when)
 import           Control.Monad.STM                 (atomically)
 import           Control.Monad.Trans               (MonadIO (liftIO))
-
 import           Data.Binary                       (Binary, Get, Put, get, put)
 import           Data.Conduit                      (yield, (=$=))
 import qualified Data.Conduit.List                 as CL
 import           Data.Conduit.Serialization.Binary (conduitGet, conduitPut)
 import           Data.Data                         (Data)
 import           Data.MessagePack                  (MessagePack (..))
-import           Data.Void                         (Void)
+import           Data.Monoid                       ((<>))
+import           Data.Text.Buildable               (Buildable (..))
 import           Data.Word                         (Word16)
 import           Formatting                        (sformat, shown, string, (%))
 import           GHC.Generics                      (Generic)
@@ -72,18 +72,24 @@ runEmulation scenario = do
 data Ping = Ping
     deriving (Generic, Data, Binary, MessagePack, Message)
 
+instance Buildable Ping where
+    build _ = "Ping"
+
 data Pong = Pong
     deriving (Generic, Data, Binary, MessagePack, Message)
 
-instance Message Void
+instance Buildable Pong where
+    build _ = "Pong"
 
 data EpicRequest = EpicRequest
     { num :: Int
     , msg :: String
     } deriving (Generic, Data, Binary, MessagePack)
 
-instance Message EpicRequest
+instance Buildable EpicRequest where
+    build EpicRequest{..} = "EpicRequest " <> build num <> " " <> build msg
 
+instance Message EpicRequest
 
 -- * scenarios
 

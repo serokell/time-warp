@@ -47,6 +47,7 @@ module Control.TimeWarp.Rpc.Message
        , HeaderNNameNContentData (..)
 
        -- * Util
+       , messageName'
        , intangibleSink
        , proxyOf
        ) where
@@ -69,7 +70,9 @@ import           Data.Data                         (Data, dataTypeName, dataType
 import           Data.IORef                        (modifyIORef, newIORef, readIORef)
 import           Data.Proxy                        (Proxy (..), asProxyTypeOf)
 import qualified Data.Text                         as T
+import           Data.Text.Buildable               (Buildable)
 import           Data.Typeable                     (Typeable)
+import qualified Formatting                        as F
 
 
 -- * Message
@@ -85,12 +88,17 @@ class Typeable m => Message m where
     messageName proxy =
          T.pack . dataTypeName . dataTypeOf $ undefined `asProxyTypeOf` proxy
 
+    -- | Description of message, for debug purposes
+    formatMessage :: m -> T.Text
+    default formatMessage :: Buildable m => m -> T.Text
+    formatMessage = F.sformat F.build
+
 
 -- * Parts of message.
 -- $message-parts
 -- This part describes different parts of message. which are enought for serializing
 -- message / could be extracted on deserializing.
-
+--
 -- | Message's content.
 data ContentData r = ContentData r
 
@@ -125,6 +133,10 @@ data HeaderNNameNContentData h r = HeaderNNameNContentData h MessageName r
 -- | Constructs proxy of given type.
 proxyOf :: a -> Proxy a
 proxyOf _ = Proxy
+
+-- | As `messageName`, but accepts message itself, may be more convinient is most cases.
+messageName' :: Message m => m -> MessageName
+messageName' = messageName . proxyOf
 
 -- | From given conduit constructs a sink, which doesn't affect source above
 -- (all readen data would be `leftover`ed).
@@ -222,9 +234,3 @@ instance (Binary h, Binary r)
     unpackMsg p = unpackMsg p =$= CL.map extract
       where
         extract (HeaderNNameNContentData h _ r) = HeaderNContentData h r
-
-
--- * Misc
-
-instance Message () where
-    messageName _ = "()"

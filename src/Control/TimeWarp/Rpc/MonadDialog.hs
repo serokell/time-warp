@@ -291,7 +291,11 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
                         in do
                             lift . fork_ $ do
                                 cont <- invokeRawListenerSafe $ rawListener (header, raw)
-                                when cont $
+                                peer <- peerAddr
+                                when cont $ do
+                                    lift . commLog . logDebug $
+                                        sformat ("Got message from "%stext%": "%stext)
+                                        peer (formatMessage r)
                                     invokeListenerSafe name $ f (header, r)
                             loop
 
@@ -313,7 +317,7 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
     invokeListenerSafe name = handleAll $
         commLog . logError . sformat ("Uncaught error in listener "%shown%": "%shown) name
 
-chooseListener :: (CanLog m, MonadListener m, Unpackable p (HeaderNNameData h))
+chooseListener :: (MonadListener m, Unpackable p (HeaderNNameData h))
                => p -> h -> (l m -> MessageName) -> [l m]
                -> Consumer ByteString (ResponseT m) (Maybe (MessageName, Maybe (l m)))
 chooseListener packing h getName listeners = do
@@ -321,10 +325,7 @@ chooseListener packing h getName listeners = do
     forM nameM $
         \(HeaderNNameData h0 name) ->
             let _ = [h, h0]  -- constraint h0 type
-            in  do  peer <- lift peerAddr
-                    lift . commLog . logDebug $
-                        sformat ("Got message from "%stext%": "%stext) peer name
-                    return (name, listenersMap ^. at name)
+            in  return (name, listenersMap ^. at name)
   where
     listenersMap = M.fromList [(getName li, li) | li <- listeners]
 
