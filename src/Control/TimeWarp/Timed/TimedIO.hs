@@ -43,9 +43,7 @@ import           Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimed (..)
 -- `wait` refers to `Control.Concurrent.threadDelay`,
 -- `fork` refers to `Control.Concurrent.forkIO`, and so on.
 newtype TimedIO a = TimedIO
-    { -- Reader's environment stores the /origin/ point and logger name for
-      -- `WithNamedLogger` instance.
-      getTimedIO :: ReaderT Microsecond IO a
+    { getTimedIO :: ReaderT Microsecond IO a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
                MonadBase IO, MonadMask, CanLog)
 
