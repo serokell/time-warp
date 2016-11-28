@@ -506,14 +506,6 @@ sfProcessSocket SocketFrame{..} sock = do
         unlessInterrupted sfJobManager $
             throwM PeerClosedConnection
 
-    -- noteSend = iterM $ const $
-    --     commLog . logDebug $
-    --         sformat ("-> "%stext%" +1 message") sfPeerAddr
-
-    -- noteRec = iterM $ const $
-    --     commLog . logDebug $
-    --         sformat ("<- "%stext%" +1 message") sfPeerAddr
-
     reportErrors eventChan action desc =
         action `catchAll` \e -> do
             commLog . logDebug $ sformat ("Caught error on "%stext%": " % shown) desc e
