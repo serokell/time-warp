@@ -109,7 +109,6 @@ import           Data.Streaming.Network             (acceptSafe, bindPortTCP,
 import           Data.Text                          (Text)
 import           Data.Text.Buildable                (Buildable (build), build)
 import           Data.Text.Encoding                 (decodeUtf8)
-import           Data.Time.Units                    (toMicroseconds)
 import           Data.Typeable                      (Typeable)
 import           Formatting                         (bprint, builder, int, sformat, shown,
                                                      stext, string, (%))
@@ -127,7 +126,7 @@ import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer
 import           Control.TimeWarp.Timed             (Microsecond, MonadTimed, ThreadId,
                                                      TimedIO, for, fork, fork_, interval,
                                                      killThread, myThreadId, sec, wait)
-
+import           Serokell.Util.Concurrent           (threadDelay)
 
 -- * Related datatypes
 
@@ -245,9 +244,9 @@ interruptAllJobs m Force = do
 interruptAllJobs m (WithTimeout delay onTimeout) = do
     interruptAllJobs m Plain
     void . liftIO . C.forkIO $ do
-        C.threadDelay $ fromIntegral $ toMicroseconds delay
+        threadDelay delay
         done <- M.null . view jmJobs <$> TV.readTVarIO m
-        unless done $ onTimeout >> interruptAllJobs m Force
+        unless done $ liftIO onTimeout >> interruptAllJobs m Force
 
 -- | Waits for this manager to get closed and all registered jobs to invoke
 -- `MaskForJobFinished`.
@@ -325,7 +324,6 @@ data Settings = Settings
     , reconnectPolicy :: forall m . (HasLoggerName m, MonadIO m)
                       => FailsInRow -> m (Maybe Microsecond)
     }
-$(makeLenses ''Settings)
 
 -- | Default settings, you can use it like @transferSettings { queueSize = 1 }@
 transferSettings :: Settings
@@ -404,8 +402,8 @@ sfSend SocketFrame{..} src = do
                )
     whenM condM action = condM >>= flip when action
 
--- | Constructs function which allows infinitelly listens on given `SocketFrame` in terms
--- of `MonadTransfer`.
+-- | Constructs function which allows to infinitelly listen on given `SocketFrame`
+-- in terms of `MonadTransfer`.
 -- Attempt to use this function twice will end with `AlreadyListeningOutbound` error.
 sfReceive :: (MonadIO m, MonadMask m, MonadTimed m, WithLogger m,
               MonadBaseControl IO m)
