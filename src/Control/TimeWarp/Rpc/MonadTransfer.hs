@@ -59,7 +59,7 @@ import           Control.Monad.State         (MonadState)
 import           Control.Monad.Trans         (MonadIO (..), MonadTrans (..))
 import           Control.Monad.Trans.Control (MonadTransControl (..))
 import           Data.ByteString             (ByteString)
-import           Data.Conduit                (ConduitM, Sink, Source)
+import           Data.Conduit                (ConduitM, Producer, Sink, Source)
 import           Data.Monoid                 ((<>))
 import           Data.Text                   (Text)
 import           Data.Word                   (Word16)
@@ -109,12 +109,15 @@ data Binding
 -- | Allows to send/receive raw byte sequences.
 class Monad m => MonadTransfer m where
     -- | Sends raw data.
+    -- When invoked several times for same address, this function is expected to
+    -- use same connection kept under hood.
+    -- Byte sequence, produced by given source, will be transmitted as a whole;
     sendRaw :: NetworkAddress       -- ^ Destination address
             -> Source m ByteString  -- ^ Data to send
             -> m ()
 
     -- | Listens at specified input or output connection.
-    -- Resturns server stopper, which blocks current thread until server is actually
+    -- Returns server stopper, which blocks current thread until server is actually
     -- stopped.
     -- Calling this function in case there is defined listener already for this
     -- connection should lead to error.
@@ -133,7 +136,7 @@ class Monad m => MonadTransfer m where
 -- currently communicating with.
 class Monad m => MonadResponse m where
     -- | Sends data to peer.
-    replyRaw :: Source m ByteString -> m ()
+    replyRaw :: Producer m ByteString -> m ()
 
     -- | Closes connection with peer.
     closeR :: m ()
