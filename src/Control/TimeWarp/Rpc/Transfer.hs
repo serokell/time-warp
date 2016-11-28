@@ -71,7 +71,6 @@ module Control.TimeWarp.Rpc.Transfer
        -- * Settings
        , FailsInRow
        , Settings (..)
-       , transferSettings
        ) where
 
 import qualified Control.Concurrent                 as C
@@ -101,6 +100,7 @@ import           Data.Conduit                       (Sink, Source, ($$))
 import           Data.Conduit.Binary                (sinkLbs, sourceLbs)
 import           Data.Conduit.Network               (sinkSocket, sourceSocket)
 import           Data.Conduit.TMChan                (sinkTBMChan, sourceTBMChan)
+import           Data.Default                       (Default (..))
 import qualified Data.IORef                         as IR
 import           Data.List                          (intersperse)
 import qualified Data.Map                           as M
@@ -326,12 +326,12 @@ data Settings = Settings
     }
 
 -- | Default settings, you can use it like @transferSettings { queueSize = 1 }@
-transferSettings :: Settings
-transferSettings = Settings
-    { queueSize = 100
-    , reconnectPolicy =
-        \failsInRow -> return $ guard (failsInRow < 3) >> Just (interval 3 sec)
-    }
+instance Default Settings where
+    def = Settings
+        { queueSize = 100
+        , reconnectPolicy =
+            \failsInRow -> return $ guard (failsInRow < 3) >> Just (interval 3 sec)
+        }
 
 
 -- ** Manager
@@ -540,7 +540,7 @@ runTransferS s t = do m <- liftIO (TV.newTVarIO initManager)
                       flip runReaderT m $ flip runReaderT s $ getTransfer t
 
 runTransfer :: Transfer a -> LoggerNameBox TimedIO a
-runTransfer = runTransferS transferSettings
+runTransfer = runTransferS def
 
 modifyManager :: StateT Manager STM a -> Transfer a
 modifyManager how = Transfer . lift $

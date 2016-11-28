@@ -27,6 +27,7 @@ import           Data.Conduit                      (yield, (=$=))
 import qualified Data.Conduit.List                 as CL
 import           Data.Conduit.Serialization.Binary (conduitGet, conduitPut)
 import           Data.Data                         (Data)
+import           Data.Default                      (def)
 import           Data.MessagePack                  (MessagePack (..))
 import           Data.Monoid                       ((<>))
 import           Data.Text.Buildable               (Buildable (..))
@@ -45,7 +46,7 @@ import           Control.TimeWarp.Rpc              (BinaryP (..), Binding (..),
                                                     listenR, localhost, reconnectPolicy,
                                                     reply, replyRaw, runDialog,
                                                     runTransfer, runTransferS, send,
-                                                    sendH, sendR, transferSettings)
+                                                    sendH, sendR)
 import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, after, for,
                                                     fork_, interval, ms, runTimedIO,
                                                     schedule, sec, sec', till)
@@ -306,7 +307,7 @@ slowpokeScenario = runTimedIO $ do
 
     newNode name = usingLoggerName name . runTransferS settings . runDialog BinaryP
 
-    settings = transferSettings
+    settings = def
         { reconnectPolicy = \failsInRow -> return $
             if failsInRow < 5 then Just (interval 1 sec) else Nothing
         }
