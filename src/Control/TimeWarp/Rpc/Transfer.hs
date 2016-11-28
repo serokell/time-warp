@@ -39,9 +39,9 @@
 -- @receive@ infinitelly acquires chunks from receive-queue.
 -- Those queues are connected to plain socket behind the scene.
 --
--- Let's say lively socket to be /active/ if it's successfully sends and receives
+-- Let's say lively socket to be /active/ if it successfully sends and receives
 -- required data at the moment.
--- Upon becoming active, lively socket spawns `processor` thread, which itself
+-- Upon becoming active, lively socket spawns `processing-observer` thread, which itself
 -- spawns 3 threads: one pushes chunks from send-queue to socket, another one
 -- pulls chunks from socket to receive-queue, and the last tracks whether socket was
 -- closed.
