@@ -75,7 +75,6 @@ module Control.TimeWarp.Rpc.Transfer
        ) where
 
 import qualified Control.Concurrent                 as C
-import           Control.Concurrent.MVar            (MVar, modifyMVar, newMVar)
 import           Control.Concurrent.STM             (STM, atomically, check)
 import qualified Control.Concurrent.STM.TBMChan     as TBM
 import qualified Control.Concurrent.STM.TChan       as TC
@@ -93,8 +92,7 @@ import           Control.Monad.Catch                (Exception, MonadCatch,
                                                      throwM)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (ReaderT (..), ask)
-import           Control.Monad.State                (State, StateT (..), runState,
-                                                     runStateT)
+import           Control.Monad.State                (StateT (..))
 import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
 import qualified Data.ByteString                    as BS
@@ -106,14 +104,12 @@ import           Data.Conduit.TMChan                (sinkTBMChan, sourceTBMChan)
 import qualified Data.IORef                         as IR
 import           Data.List                          (intersperse)
 import qualified Data.Map                           as M
-import           Data.Maybe                         (fromJust, isJust)
 import           Data.Streaming.Network             (acceptSafe, bindPortTCP,
                                                      getSocketFamilyTCP)
 import           Data.Text                          (Text)
 import           Data.Text.Buildable                (Buildable (build), build)
 import           Data.Text.Encoding                 (decodeUtf8)
 import           Data.Time.Units                    (toMicroseconds)
-import           Data.Tuple                         (swap)
 import           Data.Typeable                      (Typeable)
 import           Formatting                         (bprint, builder, int, sformat, shown,
                                                      stext, string, (%))
@@ -183,10 +179,10 @@ data InterruptType
     | Force
     | WithTimeout Microsecond (IO ())
 
-modifyTVarS :: TV.TVar s -> State s a -> STM a
+modifyTVarS :: TV.TVar s -> StateT s STM a -> STM a
 modifyTVarS t st = do
     s <- TV.readTVar t
-    let (a, s') = runState st s
+    (a, s') <- runStateT st s
     TV.writeTVar t s'
     return a
 
@@ -424,7 +420,7 @@ sfReceive sf@SocketFrame{..} sink = do
     mask $ \unmask -> do
         addManagerAsJob sfJobManager interruptType liManager
         addThreadJob liManager $ unmask $ logOnErr $ do  -- TODO: reconnect on error?
-            flip runResponseT (sfResponseCtx sf) $
+            flip runResponseT (sfMkResponseCtx sf) $
                 sourceTBMChan sfInChan $$ sink
             commLog . logDebug $
                 sformat ("Listening on socket to "%stext%" happily stopped") sfPeerAddr
@@ -433,7 +429,7 @@ sfReceive sf@SocketFrame{..} sink = do
         sformat ("While closing socket to "%stext%" listener "%
                  "worked for too long, closing with no regard to it") sfPeerAddr
 
-    logOnErr = handleAll $ \e -> do
+    logOnErr = handleAll $ \e ->
         unlessInterrupted sfJobManager $ do
             commLog . logWarning $ sformat ("Server error: "%shown) e
             interruptAllJobs sfJobManager Plain
@@ -449,8 +445,8 @@ sfClose SocketFrame{..} = do
   where
     clearInChan = TBM.tryReadTBMChan sfInChan >>= maybe (return ()) (const clearInChan)
 
-sfOutputConn :: SocketFrame -> OutputConnection
-sfOutputConn sf =
+sfMkOutputConn :: SocketFrame -> OutputConnection
+sfMkOutputConn sf =
     OutputConnection
     { outConnSend       = sfSend sf
     , outConnRec        = sfReceive sf
@@ -458,8 +454,8 @@ sfOutputConn sf =
     , outConnAddr       = sfPeerAddr sf
     }
 
-sfResponseCtx :: SocketFrame -> ResponseContext
-sfResponseCtx sf =
+sfMkResponseCtx :: SocketFrame -> ResponseContext
+sfMkResponseCtx sf =
     ResponseContext
     { respSend     = sfSend sf
     , respClose    = sfClose sf
@@ -496,7 +492,7 @@ sfProcessSocket SocketFrame{..} sock = do
     either onError return event
     -- at this point workers are stopped
   where
-    foreverSend = do
+    foreverSend =
         mask $ \unmask -> do
             datm <- liftIO . atomically $ TBM.readTBMChan sfOutChan
             forM_ datm $
@@ -529,7 +525,12 @@ sfProcessSocket SocketFrame{..} sock = do
 -- * Transfer
 
 newtype Transfer a = Transfer
-    { getTransfer :: ReaderT Settings (ReaderT (MVar Manager) (LoggerNameBox TimedIO)) a
+    { getTransfer :: ReaderT Settings
+                        (ReaderT (TV.TVar Manager)
+                            (LoggerNameBox
+                                TimedIO
+                            )
+                        ) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadBase IO,
                 MonadThrow, MonadCatch, MonadMask, MonadTimed, CanLog, HasLoggerName)
 
@@ -537,15 +538,15 @@ type instance ThreadId Transfer = C.ThreadId
 
 -- | Run with specified settings.
 runTransferS :: Settings -> Transfer a -> LoggerNameBox TimedIO a
-runTransferS s t = do m <- liftIO (newMVar initManager)
+runTransferS s t = do m <- liftIO (TV.newTVarIO initManager)
                       flip runReaderT m $ flip runReaderT s $ getTransfer t
 
 runTransfer :: Transfer a -> LoggerNameBox TimedIO a
 runTransfer = runTransferS transferSettings
 
-modifyManager :: StateT Manager IO a -> Transfer a
+modifyManager :: StateT Manager STM a -> Transfer a
 modifyManager how = Transfer . lift $
-    ask >>= liftIO . flip modifyMVar (fmap swap . runStateT how)
+    ask >>= liftIO . atomically . flip modifyTVarS how
 
 
 -- * Logic
@@ -658,14 +659,18 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
 
     ensureConnExist = do
         settings <- Transfer ask
-        modifyManager $ do
-            existing <- use $ outputConn . at addr
-            if isJust existing
-                then
-                    return (fromJust existing, Nothing)
-                else do
-                    sf <- mkSocketFrame settings addrName
-                    let conn = sfOutputConn sf
+        let getOr m act = maybe act (return . (, Nothing)) m
+
+        -- two-phase connection creation
+        -- 1. check whether connection already exists: if doesn't, make `SocketFrame`.
+        -- 2. check again, if still absent push connection to pull
+        mconn <- modifyManager $ use $ outputConn . at addr
+        getOr mconn $ do
+            sf <- mkSocketFrame settings addrName
+            let conn = sfMkOutputConn sf
+            modifyManager $ do
+                mres <- use $ outputConn . at addr
+                getOr mres $ do
                     outputConn . at addr ?= conn
                     return (conn, Just sf)
 
@@ -727,7 +732,7 @@ instance MonadTransfer Transfer where
 -- * Instances
 
 instance MonadBaseControl IO Transfer where
-    type StM Transfer a = StM (ReaderT (MVar Manager) TimedIO) a
+    type StM Transfer a = StM (ReaderT (TV.TVar Manager) TimedIO) a
     liftBaseWith io =
         Transfer $ liftBaseWith $ \runInBase -> io $ runInBase . getTransfer
     restoreM = Transfer . restoreM
