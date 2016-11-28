@@ -32,8 +32,7 @@ library
                      , Control.TimeWarp.Timed.Misc
                      , Control.TimeWarp.Timed.TimedIO
                      , Control.TimeWarp.Timed.TimedT
-  build-depends:       aeson
-                     , ansi-terminal
+  build-depends:       ansi-terminal
                      , array
                      , base >= 4.8 && < 5
                      , binary >= 0.8.3
