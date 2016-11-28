@@ -59,7 +59,7 @@ import           Control.Monad.State         (MonadState)
 import           Control.Monad.Trans         (MonadIO (..), MonadTrans (..))
 import           Control.Monad.Trans.Control (MonadTransControl (..))
 import           Data.ByteString             (ByteString)
-import           Data.Conduit                (ConduitM, Producer, Sink, Source)
+import           Data.Conduit                (ConduitM, Sink, Source)
 import           Data.Monoid                 ((<>))
 import           Data.Text                   (Text)
 import           Data.Word                   (Word16)
@@ -133,7 +133,7 @@ class Monad m => MonadTransfer m where
 -- currently communicating with.
 class Monad m => MonadResponse m where
     -- | Sends data to peer.
-    replyRaw :: Producer m ByteString -> m ()
+    replyRaw :: Source m ByteString -> m ()
 
     -- | Closes connection with peer.
     closeR :: m ()
