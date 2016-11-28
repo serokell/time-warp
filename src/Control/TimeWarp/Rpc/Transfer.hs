@@ -246,8 +246,8 @@ interruptAllJobs m (WithTimeout delay onTimeout) = do
     interruptAllJobs m Plain
     void . liftIO . C.forkIO $ do
         C.threadDelay $ fromIntegral $ toMicroseconds delay
-        done <- liftIO $ M.null . view jmJobs <$> TV.readTVarIO m
-        unless done $ liftIO onTimeout >> interruptAllJobs m Force
+        done <- M.null . view jmJobs <$> TV.readTVarIO m
+        unless done $ onTimeout >> interruptAllJobs m Force
 
 -- | Waits for this manager to get closed and all registered jobs to invoke
 -- `MaskForJobFinished`.
