@@ -663,7 +663,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
 
         -- two-phase connection creation
         -- 1. check whether connection already exists: if doesn't, make `SocketFrame`.
-        -- 2. check again, if still absent push connection to pull
+        -- 2. check again, if still absent push connection to pool
         mconn <- modifyManager $ use $ outputConn . at addr
         getOr mconn $ do
             sf <- mkSocketFrame settings addrName
