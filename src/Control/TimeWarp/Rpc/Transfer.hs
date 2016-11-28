@@ -463,7 +463,7 @@ sfMkResponseCtx sf =
     }
 
 -- | Starts workers, which connect channels in `SocketFrame` with real `NS.Socket`.
--- If error in any worker occured, it's propagaded.
+-- If error in any worker occurs, it's propagated.
 sfProcessSocket :: (MonadIO m, MonadMask m, MonadTimed m, WithLogger m)
                 => SocketFrame -> NS.Socket -> m ()
 sfProcessSocket SocketFrame{..} sock = do
