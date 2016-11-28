@@ -23,7 +23,7 @@
 -- It operates with so called /lively sockets/, so that, if error occured while sending
 -- or receiving, it would try to restore connection before reporting error.
 --
--- Then some data is sent for first time to given address, connection with single
+-- When some data is sent for first time to given address, connection with single
 -- lively-socket is created; it would be reused for further sends until closed.
 --
 -- Then server is getting up at some port, it creates single thread to handle incoming
