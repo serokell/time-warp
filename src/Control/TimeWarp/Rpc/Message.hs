@@ -49,7 +49,6 @@ module Control.TimeWarp.Rpc.Message
        -- * Util
        , messageName'
        , intangibleSink
-       , proxyOf
        ) where
 
 import           Control.Monad                     (forM, mapM_, when)
@@ -130,13 +129,12 @@ data HeaderNNameNContentData h r = HeaderNNameNContentData h MessageName r
 
 -- * Util
 
--- | Constructs proxy of given type.
-proxyOf :: a -> Proxy a
-proxyOf _ = Proxy
-
 -- | As `messageName`, but accepts message itself, may be more convinient is most cases.
 messageName' :: Message m => m -> MessageName
 messageName' = messageName . proxyOf
+  where
+    proxyOf :: a -> Proxy a
+    proxyOf _ = Proxy
 
 -- | From given conduit constructs a sink, which doesn't affect source above
 -- (all readen data would be `leftover`ed).
@@ -197,7 +195,7 @@ instance (Binary h, Binary r, Message r)
       where
         packToRaw (HeaderNContentData h r) =
             HeaderNRawData h . RawData . BL.toStrict . runPut $ do
-                put $ messageName $ proxyOf r
+                put $ messageName' r
                 put r
 
 instance Binary h
