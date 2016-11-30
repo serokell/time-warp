@@ -116,11 +116,11 @@ import           System.Wlog                        (CanLog, HasLoggerName, Logg
                                                      WithLogger, logDebug, logError,
                                                      logInfo, logWarning)
 
-import           Control.TimeWarp.Manager           (InterruptType (..), JobManager (..),
+import           Control.TimeWarp.Manager           (InterruptType (..), JobCurator (..),
                                                      addManagerAsJob, addSafeThreadJob,
                                                      addThreadJob, interruptAllJobs,
-                                                     isInterrupted, jmIsClosed,
-                                                     mkJobManager, stopAllJobs,
+                                                     isInterrupted, jcIsClosed,
+                                                     mkJobCurator, stopAllJobs,
                                                      unlessInterrupted)
 import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer (..),
                                                      NetworkAddress, Port,
@@ -167,7 +167,7 @@ data OutputConnection = OutputConnection
                                        MonadBaseControl IO m, WithLogger m)
                         => Sink BS.ByteString (ResponseT m) () -> m ()
       -- ^ Function to stark sink-listener, returns synchronous closer
-    , outConnJobManager :: JobManager
+    , outConnJobCurator :: JobCurator
       -- ^ Job manager for this connection
     , outConnAddr       :: PeerAddr
       -- ^ Address of socket on other side of net
@@ -220,7 +220,7 @@ data SocketFrame = SocketFrame
     -- ^ For incoming packs of bytes
     , sfOutChan    :: TBM.TBMChan (BL.ByteString, IO ())
     -- ^ For (packs of bytes to send, notification when bytes passed to socket)
-    , sfJobManager :: JobManager
+    , sfJobCurator :: JobCurator
     -- ^ Job manager, tracks whether lively-socket wasn't closed.
     }
 
@@ -229,7 +229,7 @@ mkSocketFrame settings sfPeerAddr = liftIO $ do
     sfInBusy     <- TV.newTVarIO False
     sfInChan     <- TBM.newTBMChanIO (queueSize settings)
     sfOutChan    <- TBM.newTBMChanIO (queueSize settings)
-    sfJobManager <- mkJobManager
+    sfJobCurator <- mkJobCurator
     return SocketFrame{..}
 
 -- | Makes sender function in terms of @MonadTransfer@ for given `SocketFrame`.
@@ -252,8 +252,8 @@ sfSend SocketFrame{..} src = do
 
     -- wait till data get consumed by socket, but immediatelly quit on socket closed.
     liftIO . atomically $ do
-        let jm = getJobManager sfJobManager
-        closed <- view jmIsClosed <$> TV.readTVar jm
+        let jm = getJobCurator sfJobCurator
+        closed <- view jcIsClosed <$> TV.readTVar jm
         unless closed awaiter
   where
     mkMonitor = do
@@ -273,11 +273,11 @@ sfReceive sf@SocketFrame{..} sink = do
     busy <- liftIO . atomically $ TV.swapTVar sfInBusy True
     when busy $ throwM $ AlreadyListeningOutbound sfPeerAddr
 
-    liManager <- mkJobManager
+    liManager <- mkJobCurator
     onTimeout <- inCurrentContext logOnTimeout
     let interruptType = WithTimeout (interval 3 sec) onTimeout
     mask $ \unmask -> do
-        addManagerAsJob sfJobManager interruptType liManager
+        addManagerAsJob sfJobCurator interruptType liManager
         addThreadJob liManager $ unmask $ logOnErr $ do  -- TODO: reconnect on error?
             flip runResponseT (sfMkResponseCtx sf) $
                 sourceTBMChan sfInChan $$ sink
@@ -289,14 +289,14 @@ sfReceive sf@SocketFrame{..} sink = do
                  "worked for too long, closing with no regard to it") sfPeerAddr
 
     logOnErr = handleAll $ \e ->
-        unlessInterrupted sfJobManager $ do
+        unlessInterrupted sfJobCurator $ do
             commLog . logWarning $ sformat ("Server error: "%shown) e
-            interruptAllJobs sfJobManager Plain
+            interruptAllJobs sfJobCurator Plain
 
 
 sfClose :: SocketFrame -> IO ()
 sfClose SocketFrame{..} = do
-    interruptAllJobs sfJobManager Plain
+    interruptAllJobs sfJobCurator Plain
     atomically $ do
         TBM.closeTBMChan sfInChan
         TBM.closeTBMChan sfOutChan
@@ -309,7 +309,7 @@ sfMkOutputConn sf =
     OutputConnection
     { outConnSend       = sfSend sf
     , outConnRec        = sfReceive sf
-    , outConnJobManager = sfJobManager sf
+    , outConnJobCurator = sfJobCurator sf
     , outConnAddr       = sfPeerAddr sf
     }
 
@@ -337,8 +337,8 @@ sfProcessSocket SocketFrame{..} sock = do
     commLog . logDebug $ sformat ("Start processing of socket to "%stext) sfPeerAddr
     -- check whether @isClosed@ keeps @True@
     ctid <- fork $ do
-        let jm = getJobManager sfJobManager
-        liftIO . atomically $ check . view jmIsClosed =<< TV.readTVar jm
+        let jm = getJobCurator sfJobCurator
+        liftIO . atomically $ check . view jcIsClosed =<< TV.readTVar jm
         liftIO . atomically $
             TC.writeTChan eventChan $ Right ()
         mapM_ killThread [stid, rtid]
@@ -365,7 +365,7 @@ sfProcessSocket SocketFrame{..} sock = do
 
     foreverRec = do
         hoist liftIO (sourceSocket sock) $$ sinkTBMChan sfInChan False
-        unlessInterrupted sfJobManager $
+        unlessInterrupted sfJobCurator $
             throwM PeerClosedConnection
 
     reportErrors eventChan action desc =
@@ -425,7 +425,7 @@ listenInbound :: Port
               -> Sink BS.ByteString (ResponseT Transfer) ()
               -> Transfer (Transfer ())
 listenInbound (fromIntegral -> port) sink = do
-    jobManager <- mkJobManager
+    jobManager <- mkJobCurator
 
     -- launch server
     bracketOnError (liftIO $ bindPortTCP port "*") (liftIO . NS.close) $
@@ -449,7 +449,7 @@ listenInbound (fromIntegral -> port) sink = do
                 \unmask -> fork_ $ do
                     settings <- Transfer ask
                     sf <- mkSocketFrame settings $ buildSockAddr addr
-                    addManagerAsJob jobManager Plain (sfJobManager sf)
+                    addManagerAsJob jobManager Plain (sfJobCurator sf)
 
                     commLog . logDebug $
                         sformat ("New input connection: "%int%" <- "%stext)
@@ -494,7 +494,7 @@ listenOutbound :: NetworkAddress
 listenOutbound addr sink = do
     conn <- getOutConnOrOpen addr
     outConnRec conn sink
-    return $ stopAllJobs $ outConnJobManager conn
+    return $ stopAllJobs $ outConnJobCurator conn
 
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
@@ -503,7 +503,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
         \unmask -> do
             (conn, sfm) <- ensureConnExist
             forM_ sfm $
-                \sf -> addSafeThreadJob (sfJobManager sf) $
+                \sf -> addSafeThreadJob (sfJobCurator sf) $
                     unmask (startWorker sf) `finally` releaseConn sf
             return conn
   where
@@ -540,7 +540,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
                         sfProcessSocket sf sock
 
     withRecovery sf failsInRow action = catchAll action $ \e -> do
-        closed <- isInterrupted (sfJobManager sf)
+        closed <- isInterrupted (sfJobCurator sf)
         unless closed $ do
             commLog . logWarning $
                 sformat ("Error while working with socket to "%stext%": "%shown)
@@ -560,7 +560,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
                     withRecovery sf failsInRow action
 
     releaseConn sf = do
-        interruptAllJobs (sfJobManager sf) Plain
+        interruptAllJobs (sfJobCurator sf) Plain
         modifyManager $ outputConn . at addr .= Nothing
         commLog . logDebug $
             sformat ("Socket to "%stext%" closed") addrName
@@ -578,7 +578,7 @@ instance MonadTransfer Transfer where
     close addr = do
         maybeConn <- modifyManager . use $ outputConn . at addr
         forM_ maybeConn $
-            \conn -> interruptAllJobs (outConnJobManager conn) Plain
+            \conn -> interruptAllJobs (outConnJobCurator conn) Plain
 
 
 -- * Instances

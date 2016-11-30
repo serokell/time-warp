@@ -8,13 +8,12 @@
 module Control.TimeWarp.Manager.Job
        ( -- * Job data types
          InterruptType (..)
-       , JobManager    (..)
-       , JobsState
+       , JobCurator    (..)
 
          -- * 'JobsState' lenses
-       , jmCounter
-       , jmIsClosed
-       , jmJobs
+       , jcCounter
+       , jcIsClosed
+       , jcJobs
 
          -- * Manager utilities
        , addManagerAsJob
@@ -22,7 +21,7 @@ module Control.TimeWarp.Manager.Job
        , addThreadJob
        , interruptAllJobs
        , isInterrupted
-       , mkJobManager
+       , mkJobCurator
        , stopAllJobs
        , unlessInterrupted
        ) where
@@ -63,22 +62,22 @@ newtype MarkJobFinished = MarkJobFinished
     { runMarker :: IO ()
     }
 
-data JobsState = JobsState
+data JobCuratorState = JobCuratorState
     { -- | @True@ if close had been invoked
-      _jmIsClosed :: !Bool
+      _jcIsClosed :: !Bool
 
       -- | 'Map' with currently active jobs
-    , _jmJobs     :: !(HashMap JobId JobInterrupter)
+    , _jcJobs     :: !(HashMap JobId JobInterrupter)
 
       -- | Total number of allocated jobs ever
-    , _jmCounter  :: !JobId
+    , _jcCounter  :: !JobId
     }
 
-makeLenses ''JobsState
+makeLenses ''JobCuratorState
 
 -- | Keeps set of jobs. Allows to stop jobs and wait till all of them finish.
-newtype JobManager = JobManager
-    { getJobManager :: TVar JobsState
+newtype JobCurator = JobCurator
+    { getJobCurator :: TVar JobCuratorState
     }
 
 data InterruptType
@@ -86,12 +85,12 @@ data InterruptType
     | Force
     | WithTimeout !Microsecond !(IO ())
 
-mkJobManager :: MonadIO m => m JobManager
-mkJobManager = JobManager <$> (liftIO $ newTVarIO
-    JobsState
-    { _jmIsClosed = False
-    , _jmJobs     = mempty
-    , _jmCounter  = 0
+mkJobCurator :: MonadIO m => m JobCurator
+mkJobCurator = JobCurator <$> (liftIO $ newTVarIO
+    JobCuratorState
+    { _jcIsClosed = False
+    , _jcJobs     = mempty
+    , _jcCounter  = 0
     })
 
 
@@ -105,91 +104,91 @@ mkJobManager = JobManager <$> (liftIO $ newTVarIO
 -- If manager is already stopped, action would not start, and `JobInterrupter` would be
 -- invoked.
 addJob :: MonadIO m
-       => JobManager
+       => JobCurator
        -> JobInterrupter
        -> (MarkJobFinished -> m ())
        -> m ()
 addJob
-       (getJobManager     -> manager)
+       (getJobCurator     -> curator)
     ji@(runJobInterrupter -> interrupter)
     action
   = do
     jidm <- liftIO . atomically $ do
-        st <- readTVar manager
-        let closed = st ^. jmIsClosed
+        st <- readTVar curator
+        let closed = st ^. jcIsClosed
         if closed
             then return Nothing
-            else modifyTVarS manager $ do
-                    no <- jmCounter <<+= 1
-                    jmJobs . at no ?= ji
+            else modifyTVarS curator $ do
+                    no <- jcCounter <<+= 1
+                    jcJobs . at no ?= ji
                     return $ Just no
     maybe (liftIO interrupter) (action . markReady) jidm
   where
     markReady jid = MarkJobFinished $ atomically $ do
-        st <- readTVar manager
-        writeTVar manager $ st & jmJobs . at jid .~ Nothing
+        st <- readTVar curator
+        writeTVar curator $ st & jcJobs . at jid .~ Nothing
 
 -- | Invokes `JobInterrupter`s for all incompleted jobs.
 -- Has no effect on second call.
-interruptAllJobs :: MonadIO m => JobManager -> InterruptType -> m ()
-interruptAllJobs (getJobManager -> manager) Plain = do
-    jobs <- liftIO . atomically $ modifyTVarS manager $ do
-        wasClosed <- jmIsClosed <<.= True
+interruptAllJobs :: MonadIO m => JobCurator -> InterruptType -> m ()
+interruptAllJobs (getJobCurator -> curator) Plain = do
+    jobs <- liftIO . atomically $ modifyTVarS curator $ do
+        wasClosed <- jcIsClosed <<.= True
         if wasClosed
             then return mempty
-            else use jmJobs
+            else use jcJobs
     liftIO $ mapM_ runJobInterrupter jobs
-interruptAllJobs m@(getJobManager -> manager) Force = do
-    interruptAllJobs m Plain
-    liftIO . atomically $ modifyTVarS manager $ jmJobs .= mempty
-interruptAllJobs m@(getJobManager -> manager) (WithTimeout delay onTimeout) = do
-    interruptAllJobs m Plain
+interruptAllJobs c@(getJobCurator -> curator) Force = do
+    interruptAllJobs c Plain
+    liftIO . atomically $ modifyTVarS curator $ jcJobs .= mempty
+interruptAllJobs c@(getJobCurator -> curator) (WithTimeout delay onTimeout) = do
+    interruptAllJobs c Plain
     void $ liftIO . forkIO $ do
         threadDelay delay
-        done <- HM.null . view jmJobs <$> readTVarIO manager
-        unless done $ liftIO onTimeout >> interruptAllJobs m Force
+        done <- HM.null . view jcJobs <$> readTVarIO curator
+        unless done $ liftIO onTimeout >> interruptAllJobs c Force
 
 -- | Waits for this manager to get closed and all registered jobs to invoke
 -- `MaskForJobFinished`.
-awaitAllJobs :: MonadIO m => JobManager -> m ()
-awaitAllJobs (getJobManager -> jm) =
+awaitAllJobs :: MonadIO m => JobCurator -> m ()
+awaitAllJobs (getJobCurator -> jc) =
     liftIO . atomically $
-        check =<< (view jmIsClosed &&^ (HM.null . view jmJobs)) <$> readTVar jm
+        check =<< (view jcIsClosed &&^ (HM.null . view jcJobs)) <$> readTVar jc
 
 -- | Interrupts and then awaits for all jobs to complete.
-stopAllJobs :: MonadIO m => JobManager -> m ()
-stopAllJobs m = interruptAllJobs m Plain >> awaitAllJobs m
+stopAllJobs :: MonadIO m => JobCurator -> m ()
+stopAllJobs c = interruptAllJobs c Plain >> awaitAllJobs c
 
 -- | Add second manager as a job to first manager.
 addManagerAsJob :: (MonadIO m, MonadTimed m, MonadBaseControl IO m)
-                => JobManager -> InterruptType -> JobManager -> m ()
-addManagerAsJob manager intType managerJob = do
+                => JobCurator -> InterruptType -> JobCurator -> m ()
+addManagerAsJob curator intType managerJob = do
     interrupter <- inCurrentContext $ interruptAllJobs managerJob intType
-    addJob manager (JobInterrupter interrupter) $
+    addJob curator (JobInterrupter interrupter) $
         \(runMarker -> ready) -> fork_ $ awaitAllJobs managerJob >> liftIO ready
 
 -- | Adds job executing in another thread, where interrupting kills the thread.
 addThreadJob :: (CanLog m, MonadIO m,  MonadMask m, MonadTimed m, MonadBaseControl IO m)
-             => JobManager -> m () -> m ()
-addThreadJob manager action =
+             => JobCurator -> m () -> m ()
+addThreadJob curator action =
     mask $
         \unmask -> fork_ $ do
             tid <- myThreadId
             killer <- inCurrentContext $ killThread tid
-            addJob manager (JobInterrupter killer) $
+            addJob curator (JobInterrupter killer) $
                 \(runMarker -> markReady) -> unmask action `finally` liftIO markReady
 
 -- | Adds job executing in another thread, interrupting does nothing.
 -- Usefull then work stops itself on interrupt, and we just need to wait till it fully
 -- stops.
-addSafeThreadJob :: (MonadIO m,  MonadMask m, MonadTimed m) => JobManager -> m () -> m ()
-addSafeThreadJob manager action =
+addSafeThreadJob :: (MonadIO m,  MonadMask m, MonadTimed m) => JobCurator -> m () -> m ()
+addSafeThreadJob curator action =
     mask $
-        \unmask -> fork_ $ addJob manager (JobInterrupter $ return ()) $
+        \unmask -> fork_ $ addJob curator (JobInterrupter $ return ()) $
             \(runMarker -> markReady) -> unmask action `finally` liftIO markReady
 
-isInterrupted :: MonadIO m => JobManager -> m Bool
-isInterrupted = liftIO . atomically . fmap (view jmIsClosed) . readTVar . getJobManager
+isInterrupted :: MonadIO m => JobCurator -> m Bool
+isInterrupted = liftIO . atomically . fmap (view jcIsClosed) . readTVar . getJobCurator
 
-unlessInterrupted :: MonadIO m => JobManager -> m () -> m ()
-unlessInterrupted m a = isInterrupted m >>= flip unless a
+unlessInterrupted :: MonadIO m => JobCurator -> m () -> m ()
+unlessInterrupted c a = isInterrupted c >>= flip unless a
