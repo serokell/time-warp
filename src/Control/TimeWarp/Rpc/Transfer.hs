@@ -91,6 +91,7 @@ import           Control.Monad.State                (StateT (..))
 import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
 
+import           Control.Monad.Extra                (whenM)
 import qualified Data.ByteString                    as BS
 import qualified Data.ByteString.Lazy               as BL
 import           Data.Conduit                       (Sink, Source, ($$))
@@ -113,8 +114,8 @@ import qualified Network.Socket                     as NS
 import           Serokell.Util.Base                 (inCurrentContext)
 import           Serokell.Util.Concurrent           (modifyTVarS)
 import           System.Wlog                        (CanLog, HasLoggerName, LoggerNameBox,
-                                                     WithLogger, logDebug, logError,
-                                                     logInfo, logWarning)
+                                                     Severity (..), WithLogger, logDebug,
+                                                     logInfo, logMessage, logWarning)
 
 import           Control.TimeWarp.Manager           (InterruptType (..), JobCurator (..),
                                                      addManagerAsJob, addSafeThreadJob,
@@ -130,6 +131,16 @@ import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer
 import           Control.TimeWarp.Timed             (Microsecond, MonadTimed, ThreadId,
                                                      TimedIO, for, fork, fork_, interval,
                                                      killThread, sec, wait)
+
+-- * Util
+
+logSeverityUnlessClosed :: (WithLogger m, MonadIO m)
+                        => Severity -> JobCurator -> Text -> m ()
+logSeverityUnlessClosed severityIfNotClosed jm msg = do
+    closed <- isInterrupted jm
+    let severity = if closed then severityIfNotClosed else Debug
+    logMessage severity msg
+
 
 -- * Related datatypes
 
@@ -239,29 +250,33 @@ sfSend :: (MonadIO m, WithLogger m)
        => SocketFrame -> Source m BS.ByteString -> m ()
 sfSend SocketFrame{..} src = do
     lbs <- src $$ sinkLbs
-    whenM (liftIO . atomically $ TBM.isFullTBMChan sfOutChan) $
-        commLog . logWarning $
-            sformat ("Send channel for "%shown%" is full") sfPeerAddr
-    whenM (liftIO . atomically $ TBM.isClosedTBMChan sfOutChan) $
-        commLog . logWarning $
-            sformat ("Send channel for "%shown%" is closed, message wouldn't be sent")
-                sfPeerAddr
-
+    logQueueState
     (notifier, awaiter) <- mkMonitor
     liftIO . atomically . TBM.writeTBMChan sfOutChan $ (lbs, atomically notifier)
 
-    -- wait till data get consumed by socket, but immediatelly quit on socket closed.
+    -- wait till data get consumed by socket, but immediatelly quit on socket
+    -- get closed.
     liftIO . atomically $ do
         let jm = getJobCurator sfJobCurator
         closed <- view jcIsClosed <$> TV.readTVar jm
         unless closed awaiter
   where
+    -- creates pair (@notifier@, @awaiter@), where @awaiter@ blocks thread
+    -- until @notifier@ is called.
     mkMonitor = do
         t <- liftIO $ TV.newTVarIO False
         return ( TV.writeTVar t True
                , check =<< TV.readTVar t
                )
-    whenM condM action = condM >>= flip when action
+
+    logQueueState = do
+        whenM (liftIO . atomically $ TBM.isFullTBMChan sfOutChan) $
+            commLog . logWarning $
+                sformat ("Send channel for "%shown%" is full") sfPeerAddr
+        whenM (liftIO . atomically $ TBM.isClosedTBMChan sfOutChan) $
+            commLog . logWarning $
+                sformat ("Send channel for "%shown%" is closed, message wouldn't be sent")
+                    sfPeerAddr
 
 -- | Constructs function which allows to infinitelly listen on given `SocketFrame`
 -- in terms of `MonadTransfer`.
@@ -274,25 +289,26 @@ sfReceive sf@SocketFrame{..} sink = do
     when busy $ throwM $ AlreadyListeningOutbound sfPeerAddr
 
     liManager <- mkJobCurator
-    onTimeout <- inCurrentContext logOnTimeout
+    onTimeout <- inCurrentContext logOnInterruptTimeout
     let interruptType = WithTimeout (interval 3 sec) onTimeout
     mask $ \unmask -> do
         addManagerAsJob sfJobCurator interruptType liManager
         addThreadJob liManager $ unmask $ logOnErr $ do  -- TODO: reconnect on error?
-            flip runResponseT (sfMkResponseCtx sf) $
-                sourceTBMChan sfInChan $$ sink
-            commLog . logDebug $
-                sformat ("Listening on socket to "%stext%" happily stopped") sfPeerAddr
+            (sourceTBMChan sfInChan $$ sink) `runResponseT` sfMkResponseCtx sf
+            logListeningHappilyStopped
   where
-    logOnTimeout = commLog . logDebug $
-        sformat ("While closing socket to "%stext%" listener "%
-                 "worked for too long, closing with no regard to it") sfPeerAddr
-
     logOnErr = handleAll $ \e ->
         unlessInterrupted sfJobCurator $ do
             commLog . logWarning $ sformat ("Server error: "%shown) e
             interruptAllJobs sfJobCurator Plain
 
+    logOnInterruptTimeout = commLog . logDebug $
+        sformat ("While closing socket to "%stext%" listener "%
+                 "worked for too long, closing with no regard to it") sfPeerAddr
+
+    logListeningHappilyStopped =
+        commLog . logDebug $
+            sformat ("Listening on socket to "%stext%" happily stopped") sfPeerAddr
 
 sfClose :: SocketFrame -> IO ()
 sfClose SocketFrame{..} = do
@@ -425,64 +441,62 @@ listenInbound :: Port
               -> Sink BS.ByteString (ResponseT Transfer) ()
               -> Transfer (Transfer ())
 listenInbound (fromIntegral -> port) sink = do
-    jobManager <- mkJobCurator
-
+    serverJobCurator <- mkJobCurator
     -- launch server
     bracketOnError (liftIO $ bindPortTCP port "*") (liftIO . NS.close) $
         \lsocket -> mask $
-            \unmask -> addThreadJob jobManager $
+            \unmask -> addThreadJob serverJobCurator $
                 flip finally (liftIO $ NS.close lsocket) . unmask $
-                    logOnServeErr jobManager $
-                        serve lsocket jobManager
-
+                    handleAll (logOnServerError serverJobCurator) $
+                        serve lsocket serverJobCurator
     -- return closer
     inCurrentContext $ do
-        commLog . logDebug $
-            sformat ("Stopping server at "%int) port
-        stopAllJobs jobManager
-        commLog . logDebug $
-            sformat ("Server at "%int%" fully stopped") port
+        commLog . logDebug $ sformat ("Stopping server at "%int) port
+        stopAllJobs serverJobCurator
+        commLog . logDebug $ sformat ("Server at "%int%" fully stopped") port
   where
-    serve lsocket jobManager = forever $
+    serve lsocket serverJobCurator = forever $
         bracketOnError (liftIO $ acceptSafe lsocket) (liftIO . NS.close . fst) $
             \(sock, addr) -> mask $
                 \unmask -> fork_ $ do
                     settings <- Transfer ask
-                    sf <- mkSocketFrame settings $ buildSockAddr addr
-                    addManagerAsJob jobManager Plain (sfJobCurator sf)
+                    sf@SocketFrame{..} <- mkSocketFrame settings $ buildSockAddr addr
+                    addManagerAsJob serverJobCurator Plain sfJobCurator
 
-                    commLog . logDebug $
-                        sformat ("New input connection: "%int%" <- "%stext)
-                        port (sfPeerAddr sf)
-
-                    finally (unmask $ processSocket sock sf jobManager)
-                            (liftIO $ NS.close sock)
-
-    logOnServeErr jm = handleAll $ \e -> do
-            unlessInterrupted jm . logError $
-                sformat ("Server at port "%int%" stopped with error "%shown) port e
-            logDebug $ sformat ("Server at port "%int%" stopped with error "%shown) port e
+                    logNewInputConnection sfPeerAddr
+                    unmask (processSocket sock sf serverJobCurator)
+                        `finally` liftIO (NS.close sock)
 
     -- makes socket work, finishes once it's fully shutdown
-    processSocket sock sf jm = do
+    processSocket sock sf@SocketFrame{..} jc = do
         liftIO $ NS.setSocketOption sock NS.ReuseAddr 1
 
-        _ <- sfReceive sf sink
-        -- start `SocketFrame`'s' workers
-        unlessInterrupted jm $ startProcessing sf jm $ do
-            sfProcessSocket sf sock
-            commLog . logInfo $
-                sformat ("Happily closing input connection "%int%" <- "%stext)
-                port (sfPeerAddr sf)
+        sfReceive sf sink
+        unlessInterrupted jc $
+            handleAll (logErrorOnServerSocketProcessing jc sfPeerAddr) $ do
+                sfProcessSocket sf sock
+                logInputConnHappilyClosed sfPeerAddr
 
-    startProcessing sf jm action =
-        action `catchAll` \e -> do
-            unlessInterrupted jm . commLog . logWarning $
-                sformat ("Error in server socket "%int%" connected with "%stext%": "%shown)
-                port (sfPeerAddr sf) e
-            commLog . logDebug $
-                sformat ("Error in server socket "%int%" connected with "%stext%": "%shown)
-                port (sfPeerAddr sf) e
+    -- * Logs
+
+    logNewInputConnection addr =
+        commLog . logDebug $
+            sformat ("New input connection: "%int%" <- "%stext)
+            port addr
+
+    logErrorOnServerSocketProcessing jm addr e =
+        logSeverityUnlessClosed Warning jm $
+            sformat ("Error in server socket "%int%" connected with "%stext%": "%shown)
+            port addr e
+
+    logOnServerError jm e =
+        logSeverityUnlessClosed Error jm $
+            sformat ("Server at port "%int%" stopped with error "%shown) port e
+
+    logInputConnHappilyClosed addr =
+        commLog . logInfo $
+            sformat ("Happily closing input connection "%int%" <- "%stext)
+            port addr
 
 
 -- | Listens for incoming bytes on outbound connection.

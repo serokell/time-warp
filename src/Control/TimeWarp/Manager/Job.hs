@@ -63,7 +63,7 @@ newtype MarkJobFinished = MarkJobFinished
     }
 
 data JobCuratorState = JobCuratorState
-    { -- | @True@ if close had been invoked
+    { -- | @True@ if interrupt had been invoked. Also, when @True@, no job could be added
       _jcIsClosed :: !Bool
 
       -- | 'Map' with currently active jobs
@@ -80,10 +80,15 @@ newtype JobCurator = JobCurator
     { getJobCurator :: TVar JobCuratorState
     }
 
+-- | Defines way to interrupt all jobs in curator.
 data InterruptType
     = Plain
+    -- ^ Just interrupt all jobs
     | Force
+    -- ^ Interrupt all jobs, and treat them all as completed
     | WithTimeout !Microsecond !(IO ())
+    -- ^ Interrupt all jobs in `Plain` was, but if some jobs fail to complete in time,
+    -- interrupt `Force`ly and execute given action.
 
 mkJobCurator :: MonadIO m => m JobCurator
 mkJobCurator = JobCurator <$> (liftIO $ newTVarIO
@@ -101,8 +106,8 @@ mkJobCurator = JobCurator <$> (liftIO $ newTVarIO
 -- Given job *must* invoke given `MarkJobFinished` upon finishing, even if it was
 -- interrupted.
 --
--- If manager is already stopped, action would not start, and `JobInterrupter` would be
--- invoked.
+-- If curator is already interrupted, action would not start, and `JobInterrupter`
+-- would be invoked.
 addJob :: MonadIO m
        => JobCurator
        -> JobInterrupter
