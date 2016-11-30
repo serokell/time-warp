@@ -37,8 +37,8 @@ import           Control.Monad.Catch         (MonadMask (mask), finally)
 import           Control.Monad.Trans         (MonadIO (liftIO))
 import           Control.Monad.Trans.Control (MonadBaseControl (..))
 
-import           Data.Map.Strict             (Map)
-import qualified Data.Map.Strict             as M hiding (Map)
+import           Data.HashMap.Strict         (HashMap)
+import qualified Data.HashMap.Strict         as HM hiding (HashMap)
 import           Serokell.Util.Base          (inCurrentContext)
 import           Serokell.Util.Concurrent    (modifyTVarS, threadDelay)
 import           System.Wlog                 (CanLog)
@@ -54,13 +54,13 @@ type MarkJobFinished = IO ()
 
 data JobsState = JobsState
     { -- | @True@ if close had been invoked
-      _jmIsClosed :: Bool
+      _jmIsClosed :: !Bool
 
       -- | 'Map' with currently active jobs
-    , _jmJobs     :: Map JobId JobInterrupter
+    , _jmJobs     :: !(HashMap JobId JobInterrupter)
 
       -- | Total number of allocated jobs ever
-    , _jmCounter  :: JobId
+    , _jmCounter  :: !JobId
     }
 
 makeLenses ''JobsState
@@ -71,7 +71,7 @@ type JobManager = TVar JobsState
 data InterruptType
     = Plain
     | Force
-    | WithTimeout Microsecond (IO ())
+    | WithTimeout !Microsecond !(IO ())
 
 mkJobManager :: MonadIO m => m JobManager
 mkJobManager = liftIO . newTVarIO $
@@ -116,17 +116,17 @@ interruptAllJobs m Plain = do
     jobs <- liftIO . atomically $ modifyTVarS m $ do
         wasClosed <- jmIsClosed <<.= True
         if wasClosed
-            then return M.empty
+            then return mempty
             else use jmJobs
     liftIO $ sequence_ jobs
 interruptAllJobs m Force = do
     interruptAllJobs m Plain
-    liftIO . atomically $ modifyTVarS m $ jmJobs .= M.empty
+    liftIO . atomically $ modifyTVarS m $ jmJobs .= mempty
 interruptAllJobs m (WithTimeout delay onTimeout) = do
     interruptAllJobs m Plain
     void $ liftIO . forkIO $ do
         threadDelay delay
-        done <- M.null . view jmJobs <$> readTVarIO m
+        done <- HM.null . view jmJobs <$> readTVarIO m
         unless done $ liftIO onTimeout >> interruptAllJobs m Force
 
 -- | Waits for this manager to get closed and all registered jobs to invoke
@@ -134,7 +134,7 @@ interruptAllJobs m (WithTimeout delay onTimeout) = do
 awaitAllJobs :: MonadIO m => JobManager -> m ()
 awaitAllJobs m =
     liftIO . atomically $
-        check =<< ((&&) <$> view jmIsClosed <*> M.null . view jmJobs) <$> readTVar m
+        check =<< ((&&) <$> view jmIsClosed <*> HM.null . view jmJobs) <$> readTVar m
 
 -- | Interrupts and then awaits for all jobs to complete.
 stopAllJobs :: MonadIO m => JobManager -> m ()
