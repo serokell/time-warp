@@ -1,12 +1,10 @@
 {-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE Rank2Types            #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE TypeSynonymInstances  #-}
 {-# LANGUAGE UndecidableInstances  #-}
 {-# LANGUAGE ViewPatterns          #-}
 
@@ -79,10 +77,8 @@ import qualified Control.Concurrent.STM.TBMChan     as TBM
 import qualified Control.Concurrent.STM.TChan       as TC
 import qualified Control.Concurrent.STM.TVar        as TV
 import           Control.Lens                       (at, at, each, makeLenses, use, view,
-                                                     (&), (.=), (.~), (<<+=), (<<.=),
-                                                     (?=), (^.), (^..))
-import           Control.Monad                      (forM_, forever, guard, unless, void,
-                                                     when)
+                                                     (.=), (?=), (^..))
+import           Control.Monad                      (forM_, forever, guard, unless, when)
 import           Control.Monad.Base                 (MonadBase)
 import           Control.Monad.Catch                (Exception, MonadCatch,
                                                      MonadMask (mask), MonadThrow (..),
@@ -94,6 +90,7 @@ import           Control.Monad.Reader               (ReaderT (..), ask)
 import           Control.Monad.State                (StateT (..))
 import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
+
 import qualified Data.ByteString                    as BS
 import qualified Data.ByteString.Lazy               as BL
 import           Data.Conduit                       (Sink, Source, ($$))
@@ -101,9 +98,9 @@ import           Data.Conduit.Binary                (sinkLbs, sourceLbs)
 import           Data.Conduit.Network               (sinkSocket, sourceSocket)
 import           Data.Conduit.TMChan                (sinkTBMChan, sourceTBMChan)
 import           Data.Default                       (Default (..))
+import           Data.HashMap.Strict                (HashMap)
 import qualified Data.IORef                         as IR
 import           Data.List                          (intersperse)
-import qualified Data.Map                           as M
 import           Data.Streaming.Network             (acceptSafe, bindPortTCP,
                                                      getSocketFamilyTCP)
 import           Data.Text                          (Text)
@@ -112,12 +109,19 @@ import           Data.Text.Encoding                 (decodeUtf8)
 import           Data.Typeable                      (Typeable)
 import           Formatting                         (bprint, builder, int, sformat, shown,
                                                      stext, string, (%))
--- import           GHC.IO.Exception                   (IOException (IOError), ioe_errno)
 import qualified Network.Socket                     as NS
+import           Serokell.Util.Base                 (inCurrentContext)
+import           Serokell.Util.Concurrent           (modifyTVarS)
 import           System.Wlog                        (CanLog, HasLoggerName, LoggerNameBox,
                                                      WithLogger, logDebug, logError,
                                                      logInfo, logWarning)
 
+import           Control.TimeWarp.Manager           (InterruptType (..), JobCurator (..),
+                                                     addManagerAsJob, addSafeThreadJob,
+                                                     addThreadJob, interruptAllJobs,
+                                                     isInterrupted, jcIsClosed,
+                                                     mkJobCurator, stopAllJobs,
+                                                     unlessInterrupted)
 import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer (..),
                                                      NetworkAddress, Port,
                                                      ResponseContext (..), ResponseT,
@@ -125,9 +129,7 @@ import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer
                                                      sendRaw)
 import           Control.TimeWarp.Timed             (Microsecond, MonadTimed, ThreadId,
                                                      TimedIO, for, fork, fork_, interval,
-                                                     killThread, myThreadId, sec, wait)
-import           Serokell.Util.Base                 (inCurrentContext)
-import           Serokell.Util.Concurrent           (threadDelay, modifyTVarS)
+                                                     killThread, sec, wait)
 
 -- * Related datatypes
 
@@ -152,135 +154,6 @@ instance Exception PeerClosedConnection
 instance Buildable PeerClosedConnection where
     build _ = "Peer closed connection"
 
-
--- * Job manager
-
-type JobId = Int
-
-type JobInterrupter = IO ()
-
-type MarkJobFinished = IO ()
-
-data JobsState = JobsState
-    { _jmIsClosed :: Bool
-      -- ^ whether close had been invoked
-    , _jmJobs     :: M.Map JobId JobInterrupter
-      -- ^ map with currently active jobs
-    , _jmCounter  :: JobId
-      -- ^ total number of allocated jobs ever
-    }
-$(makeLenses ''JobsState)
-
--- | Keeps set of jobs. Allows to stop jobs and wait till all of them finish.
-type JobManager = TV.TVar JobsState
-
-data InterruptType
-    = Plain
-    | Force
-    | WithTimeout Microsecond (IO ())
-
-mkJobManager :: MonadIO m => m JobManager
-mkJobManager = liftIO . TV.newTVarIO $
-    JobsState
-    { _jmIsClosed = False
-    , _jmJobs     = M.empty
-    , _jmCounter  = 0
-    }
-
-
--- | Remembers and starts given action.
--- Once `interruptAllJobs` called on this manager, if job is not completed yet,
--- `JobInterrupter` is invoked.
---
--- Given job *must* invoke given `MarkJobFinished` upon finishing, even if it was
--- interrupted.
---
--- If manager is already stopped, action would not start, and `JobInterrupter` would be
--- invoked.
-addJob :: MonadIO m
-       => JobManager -> JobInterrupter -> (MarkJobFinished -> m ()) -> m ()
-addJob manager interrupter action = do
-    jidm <- liftIO . atomically $ do
-        st <- TV.readTVar manager
-        let closed = st ^. jmIsClosed
-        if closed
-            then return Nothing
-            else modifyTVarS manager $ do
-                    no <- jmCounter <<+= 1
-                    jmJobs . at no ?= interrupter
-                    return $ Just no
-    maybe (liftIO interrupter) (action . markReady) jidm
-  where
-    markReady jid = atomically $ do
-        st <- TV.readTVar manager
-        TV.writeTVar manager $ st & jmJobs . at jid .~ Nothing
-
--- | Invokes `JobInterrupter`s for all incompleted jobs.
--- Has no effect on second call.
-interruptAllJobs :: MonadIO m => JobManager -> InterruptType -> m ()
-interruptAllJobs m Plain = do
-    jobs <- liftIO . atomically $ modifyTVarS m $ do
-        wasClosed <- jmIsClosed <<.= True
-        if wasClosed
-            then return M.empty
-            else use jmJobs
-    liftIO $ sequence_ jobs
-interruptAllJobs m Force = do
-    interruptAllJobs m Plain
-    liftIO . atomically $ modifyTVarS m $ jmJobs .= M.empty
-interruptAllJobs m (WithTimeout delay onTimeout) = do
-    interruptAllJobs m Plain
-    void . liftIO . C.forkIO $ do
-        threadDelay delay
-        done <- M.null . view jmJobs <$> TV.readTVarIO m
-        unless done $ liftIO onTimeout >> interruptAllJobs m Force
-
--- | Waits for this manager to get closed and all registered jobs to invoke
--- `MaskForJobFinished`.
-awaitAllJobs :: MonadIO m => JobManager -> m ()
-awaitAllJobs m =
-    liftIO . atomically $
-        check =<< ((&&) <$> view jmIsClosed <*> M.null . view jmJobs) <$> TV.readTVar m
-
--- | Interrupts and then awaits for all jobs to complete.
-stopAllJobs :: MonadIO m => JobManager -> m ()
-stopAllJobs m = interruptAllJobs m Plain >> awaitAllJobs m
-
--- | Add second manager as a job to first manager.
-addManagerAsJob :: (MonadIO m, MonadTimed m, MonadBaseControl IO m)
-                => JobManager -> InterruptType -> JobManager -> m ()
-addManagerAsJob manager intType managerJob = do
-    interrupter <- inCurrentContext $ interruptAllJobs managerJob intType
-    addJob manager interrupter $
-        \ready -> fork_ $ awaitAllJobs managerJob >> liftIO ready
-
--- | Adds job executing in another thread, where interrupting kills the thread.
-addThreadJob :: (CanLog m, MonadIO m,  MonadMask m, MonadTimed m, MonadBaseControl IO m)
-             => JobManager -> m () -> m ()
-addThreadJob manager action =
-    mask $
-        \unmask -> fork_ $ do
-            tid <- myThreadId
-            killer <- inCurrentContext $ killThread tid
-            addJob manager killer $
-                \markReady -> unmask action `finally` liftIO markReady
-
--- | Adds job executing in another thread, interrupting does nothing.
--- Usefull then work stops itself on interrupt, and we just need to wait till it fully
--- stops.
-addSafeThreadJob :: (MonadIO m,  MonadMask m, MonadTimed m) => JobManager -> m () -> m ()
-addSafeThreadJob manager action =
-    mask $
-        \unmask -> fork_ $ addJob manager (return ()) $
-            \markReady -> unmask action `finally` liftIO markReady
-
-isInterrupted :: MonadIO m => JobManager -> m Bool
-isInterrupted = liftIO . atomically . fmap (view jmIsClosed) . TV.readTVar
-
-unlessInterrupted :: MonadIO m => JobManager -> m () -> m ()
-unlessInterrupted m a = isInterrupted m >>= flip unless a
-
-
 -- ** Connections
 
 -- | Textual representation of peer node. For debugging purposes only.
@@ -294,7 +167,7 @@ data OutputConnection = OutputConnection
                                        MonadBaseControl IO m, WithLogger m)
                         => Sink BS.ByteString (ResponseT m) () -> m ()
       -- ^ Function to stark sink-listener, returns synchronous closer
-    , outConnJobManager :: JobManager
+    , outConnJobCurator :: JobCurator
       -- ^ Job manager for this connection
     , outConnAddr       :: PeerAddr
       -- ^ Address of socket on other side of net
@@ -321,19 +194,19 @@ instance Default Settings where
         }
 
 
--- ** Manager
+-- ** ConnectionPool
 
-data Manager = Manager
-    { _outputConn :: M.Map NetworkAddress OutputConnection
-    }
-$(makeLenses ''Manager)
-
-initManager :: Manager
-initManager =
-    Manager
-    { _outputConn = M.empty
+newtype ConnectionPool = ConnectionPool
+    { _outputConn :: HashMap NetworkAddress OutputConnection
     }
 
+makeLenses ''ConnectionPool
+
+initConnectionPool :: ConnectionPool
+initConnectionPool =
+    ConnectionPool
+    { _outputConn = mempty
+    }
 
 -- ** SocketFrame
 
@@ -347,7 +220,7 @@ data SocketFrame = SocketFrame
     -- ^ For incoming packs of bytes
     , sfOutChan    :: TBM.TBMChan (BL.ByteString, IO ())
     -- ^ For (packs of bytes to send, notification when bytes passed to socket)
-    , sfJobManager :: JobManager
+    , sfJobCurator :: JobCurator
     -- ^ Job manager, tracks whether lively-socket wasn't closed.
     }
 
@@ -356,7 +229,7 @@ mkSocketFrame settings sfPeerAddr = liftIO $ do
     sfInBusy     <- TV.newTVarIO False
     sfInChan     <- TBM.newTBMChanIO (queueSize settings)
     sfOutChan    <- TBM.newTBMChanIO (queueSize settings)
-    sfJobManager <- mkJobManager
+    sfJobCurator <- mkJobCurator
     return SocketFrame{..}
 
 -- | Makes sender function in terms of @MonadTransfer@ for given `SocketFrame`.
@@ -379,7 +252,8 @@ sfSend SocketFrame{..} src = do
 
     -- wait till data get consumed by socket, but immediatelly quit on socket closed.
     liftIO . atomically $ do
-        closed <- view jmIsClosed <$> TV.readTVar sfJobManager
+        let jm = getJobCurator sfJobCurator
+        closed <- view jcIsClosed <$> TV.readTVar jm
         unless closed awaiter
   where
     mkMonitor = do
@@ -399,11 +273,11 @@ sfReceive sf@SocketFrame{..} sink = do
     busy <- liftIO . atomically $ TV.swapTVar sfInBusy True
     when busy $ throwM $ AlreadyListeningOutbound sfPeerAddr
 
-    liManager <- mkJobManager
+    liManager <- mkJobCurator
     onTimeout <- inCurrentContext logOnTimeout
     let interruptType = WithTimeout (interval 3 sec) onTimeout
     mask $ \unmask -> do
-        addManagerAsJob sfJobManager interruptType liManager
+        addManagerAsJob sfJobCurator interruptType liManager
         addThreadJob liManager $ unmask $ logOnErr $ do  -- TODO: reconnect on error?
             flip runResponseT (sfMkResponseCtx sf) $
                 sourceTBMChan sfInChan $$ sink
@@ -415,14 +289,14 @@ sfReceive sf@SocketFrame{..} sink = do
                  "worked for too long, closing with no regard to it") sfPeerAddr
 
     logOnErr = handleAll $ \e ->
-        unlessInterrupted sfJobManager $ do
+        unlessInterrupted sfJobCurator $ do
             commLog . logWarning $ sformat ("Server error: "%shown) e
-            interruptAllJobs sfJobManager Plain
+            interruptAllJobs sfJobCurator Plain
 
 
 sfClose :: SocketFrame -> IO ()
 sfClose SocketFrame{..} = do
-    interruptAllJobs sfJobManager Plain
+    interruptAllJobs sfJobCurator Plain
     atomically $ do
         TBM.closeTBMChan sfInChan
         TBM.closeTBMChan sfOutChan
@@ -435,7 +309,7 @@ sfMkOutputConn sf =
     OutputConnection
     { outConnSend       = sfSend sf
     , outConnRec        = sfReceive sf
-    , outConnJobManager = sfJobManager sf
+    , outConnJobCurator = sfJobCurator sf
     , outConnAddr       = sfPeerAddr sf
     }
 
@@ -463,7 +337,8 @@ sfProcessSocket SocketFrame{..} sock = do
     commLog . logDebug $ sformat ("Start processing of socket to "%stext) sfPeerAddr
     -- check whether @isClosed@ keeps @True@
     ctid <- fork $ do
-        liftIO . atomically $ check . view jmIsClosed =<< TV.readTVar sfJobManager
+        let jm = getJobCurator sfJobCurator
+        liftIO . atomically $ check . view jcIsClosed =<< TV.readTVar jm
         liftIO . atomically $
             TC.writeTChan eventChan $ Right ()
         mapM_ killThread [stid, rtid]
@@ -490,7 +365,7 @@ sfProcessSocket SocketFrame{..} sock = do
 
     foreverRec = do
         hoist liftIO (sourceSocket sock) $$ sinkTBMChan sfInChan False
-        unlessInterrupted sfJobManager $
+        unlessInterrupted sfJobCurator $
             throwM PeerClosedConnection
 
     reportErrors eventChan action desc =
@@ -503,7 +378,7 @@ sfProcessSocket SocketFrame{..} sock = do
 
 newtype Transfer a = Transfer
     { getTransfer :: ReaderT Settings
-                        (ReaderT (TV.TVar Manager)
+                        (ReaderT (TV.TVar ConnectionPool)
                             (LoggerNameBox
                                 TimedIO
                             )
@@ -515,13 +390,13 @@ type instance ThreadId Transfer = C.ThreadId
 
 -- | Run with specified settings.
 runTransferS :: Settings -> Transfer a -> LoggerNameBox TimedIO a
-runTransferS s t = do m <- liftIO (TV.newTVarIO initManager)
+runTransferS s t = do m <- liftIO (TV.newTVarIO initConnectionPool)
                       flip runReaderT m $ flip runReaderT s $ getTransfer t
 
 runTransfer :: Transfer a -> LoggerNameBox TimedIO a
 runTransfer = runTransferS def
 
-modifyManager :: StateT Manager STM a -> Transfer a
+modifyManager :: StateT ConnectionPool STM a -> Transfer a
 modifyManager how = Transfer . lift $
     ask >>= liftIO . atomically . flip modifyTVarS how
 
@@ -550,7 +425,7 @@ listenInbound :: Port
               -> Sink BS.ByteString (ResponseT Transfer) ()
               -> Transfer (Transfer ())
 listenInbound (fromIntegral -> port) sink = do
-    jobManager <- mkJobManager
+    jobManager <- mkJobCurator
 
     -- launch server
     bracketOnError (liftIO $ bindPortTCP port "*") (liftIO . NS.close) $
@@ -574,7 +449,7 @@ listenInbound (fromIntegral -> port) sink = do
                 \unmask -> fork_ $ do
                     settings <- Transfer ask
                     sf <- mkSocketFrame settings $ buildSockAddr addr
-                    addManagerAsJob jobManager Plain (sfJobManager sf)
+                    addManagerAsJob jobManager Plain (sfJobCurator sf)
 
                     commLog . logDebug $
                         sformat ("New input connection: "%int%" <- "%stext)
@@ -619,7 +494,7 @@ listenOutbound :: NetworkAddress
 listenOutbound addr sink = do
     conn <- getOutConnOrOpen addr
     outConnRec conn sink
-    return $ stopAllJobs $ outConnJobManager conn
+    return $ stopAllJobs $ outConnJobCurator conn
 
 
 getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
@@ -628,7 +503,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
         \unmask -> do
             (conn, sfm) <- ensureConnExist
             forM_ sfm $
-                \sf -> addSafeThreadJob (sfJobManager sf) $
+                \sf -> addSafeThreadJob (sfJobCurator sf) $
                     unmask (startWorker sf) `finally` releaseConn sf
             return conn
   where
@@ -665,7 +540,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
                         sfProcessSocket sf sock
 
     withRecovery sf failsInRow action = catchAll action $ \e -> do
-        closed <- isInterrupted (sfJobManager sf)
+        closed <- isInterrupted (sfJobCurator sf)
         unless closed $ do
             commLog . logWarning $
                 sformat ("Error while working with socket to "%stext%": "%shown)
@@ -685,7 +560,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
                     withRecovery sf failsInRow action
 
     releaseConn sf = do
-        interruptAllJobs (sfJobManager sf) Plain
+        interruptAllJobs (sfJobCurator sf) Plain
         modifyManager $ outputConn . at addr .= Nothing
         commLog . logDebug $
             sformat ("Socket to "%stext%" closed") addrName
@@ -703,13 +578,13 @@ instance MonadTransfer Transfer where
     close addr = do
         maybeConn <- modifyManager . use $ outputConn . at addr
         forM_ maybeConn $
-            \conn -> interruptAllJobs (outConnJobManager conn) Plain
+            \conn -> interruptAllJobs (outConnJobCurator conn) Plain
 
 
 -- * Instances
 
 instance MonadBaseControl IO Transfer where
-    type StM Transfer a = StM (ReaderT (TV.TVar Manager) TimedIO) a
+    type StM Transfer a = StM (ReaderT (TV.TVar ConnectionPool) TimedIO) a
     liftBaseWith io =
         Transfer $ liftBaseWith $ \runInBase -> io $ runInBase . getTransfer
     restoreM = Transfer . restoreM
