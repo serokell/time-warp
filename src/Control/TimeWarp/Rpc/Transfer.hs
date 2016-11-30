@@ -126,7 +126,8 @@ import           Control.TimeWarp.Rpc.MonadTransfer (Binding (..), MonadTransfer
 import           Control.TimeWarp.Timed             (Microsecond, MonadTimed, ThreadId,
                                                      TimedIO, for, fork, fork_, interval,
                                                      killThread, myThreadId, sec, wait)
-import           Serokell.Util.Concurrent           (threadDelay)
+import           Serokell.Util.Base                 (inCurrentContext)
+import           Serokell.Util.Concurrent           (threadDelay, modifyTVarS)
 
 -- * Related datatypes
 
@@ -177,20 +178,6 @@ data InterruptType
     = Plain
     | Force
     | WithTimeout Microsecond (IO ())
-
-modifyTVarS :: TV.TVar s -> StateT s STM a -> STM a
-modifyTVarS t st = do
-    s <- TV.readTVar t
-    (a, s') <- runStateT st s
-    TV.writeTVar t s'
-    return a
-
--- | Remembers monadic context of an action and transforms it to `IO`.
--- Note that any changes in context would be lost.
--- NOTE: interesting, why `monad-control` package lacks of this function, it seems cool
-inCurrentContext :: (MonadBaseControl IO m, MonadIO n) => m () -> m (n ())
-inCurrentContext action =
-    liftBaseWith $ \runInIO -> return . liftIO . void $ runInIO action
 
 mkJobManager :: MonadIO m => m JobManager
 mkJobManager = liftIO . TV.newTVarIO $

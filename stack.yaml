@@ -8,6 +8,10 @@ packages:
     git: https://github.com/serokell/log-warper.git
     commit: 57479ac47c2d2a91066464f284efe9230c551d34
   extra-dep: true
+- location:
+    git: https://github.com/serokell/serokell-util
+    commit: f0e53766f5d6f4ffb6c709c2bc5bd2064edfdcce
+  extra-dep: true
 
 nix:
     shell-file: shell.nix
@@ -20,7 +24,6 @@ extra-deps:
 - recursion-schemes-5
 - pqueue-1.3.1.1
 - data-msgpack-0.0.8
-- serokell-util-0.1.1.1
 - time-units-1.0.0
 
 # Override default flag values for local packages and extra-deps
