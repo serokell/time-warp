@@ -116,7 +116,7 @@ import           System.Wlog                        (CanLog, HasLoggerName, Logg
                                                      WithLogger, logDebug, logError,
                                                      logInfo, logWarning)
 
-import           Control.TimeWarp.Manager           (InterruptType (..), JobManager,
+import           Control.TimeWarp.Manager           (InterruptType (..), JobManager (..),
                                                      addManagerAsJob, addSafeThreadJob,
                                                      addThreadJob, interruptAllJobs,
                                                      isInterrupted, jmIsClosed,
@@ -252,7 +252,8 @@ sfSend SocketFrame{..} src = do
 
     -- wait till data get consumed by socket, but immediatelly quit on socket closed.
     liftIO . atomically $ do
-        closed <- view jmIsClosed <$> TV.readTVar sfJobManager
+        let jm = getJobManager sfJobManager
+        closed <- view jmIsClosed <$> TV.readTVar jm
         unless closed awaiter
   where
     mkMonitor = do
@@ -336,7 +337,8 @@ sfProcessSocket SocketFrame{..} sock = do
     commLog . logDebug $ sformat ("Start processing of socket to "%stext) sfPeerAddr
     -- check whether @isClosed@ keeps @True@
     ctid <- fork $ do
-        liftIO . atomically $ check . view jmIsClosed =<< TV.readTVar sfJobManager
+        let jm = getJobManager sfJobManager
+        liftIO . atomically $ check . view jmIsClosed =<< TV.readTVar jm
         liftIO . atomically $
             TC.writeTChan eventChan $ Right ()
         mapM_ killThread [stid, rtid]
