@@ -18,20 +18,21 @@ description:         This package allows to write scenarios over distributed
                      network nastiness manually controlled.
 
 library
-  exposed-modules:     Control.TimeWarp.Rpc
-                     , Control.TimeWarp.Rpc.Message
-                     , Control.TimeWarp.Rpc.MonadDialog
-                     , Control.TimeWarp.Rpc.MonadTransfer
---                     , Control.TimeWarp.Rpc.MonadRpc
---                     , Control.TimeWarp.Rpc.Rpc
---                     , Control.TimeWarp.Rpc.TH
-                     , Control.TimeWarp.Rpc.Transfer
+  exposed-modules:     Control.TimeWarp.Manager
+                       Control.TimeWarp.Manager.Job
 
-                     , Control.TimeWarp.Timed
-                     , Control.TimeWarp.Timed.MonadTimed
-                     , Control.TimeWarp.Timed.Misc
-                     , Control.TimeWarp.Timed.TimedIO
-                     , Control.TimeWarp.Timed.TimedT
+                       Control.TimeWarp.Rpc
+                       Control.TimeWarp.Rpc.Message
+                       Control.TimeWarp.Rpc.MonadDialog
+                       Control.TimeWarp.Rpc.MonadTransfer
+                       Control.TimeWarp.Rpc.Transfer
+
+                       Control.TimeWarp.Timed
+                       Control.TimeWarp.Timed.MonadTimed
+                       Control.TimeWarp.Timed.Misc
+                       Control.TimeWarp.Timed.TimedIO
+                       Control.TimeWarp.Timed.TimedT
+
   build-depends:       ansi-terminal
                      , array
                      , base >= 4.8 && < 5
