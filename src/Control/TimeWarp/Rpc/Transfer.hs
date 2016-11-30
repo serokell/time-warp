@@ -98,9 +98,9 @@ import           Data.Conduit.Binary                (sinkLbs, sourceLbs)
 import           Data.Conduit.Network               (sinkSocket, sourceSocket)
 import           Data.Conduit.TMChan                (sinkTBMChan, sourceTBMChan)
 import           Data.Default                       (Default (..))
+import           Data.HashMap.Strict                (HashMap)
 import qualified Data.IORef                         as IR
 import           Data.List                          (intersperse)
-import qualified Data.Map                           as M
 import           Data.Streaming.Network             (acceptSafe, bindPortTCP,
                                                      getSocketFamilyTCP)
 import           Data.Text                          (Text)
@@ -194,18 +194,18 @@ instance Default Settings where
         }
 
 
--- ** Manager
+-- ** ConnectionPool
 
-data Manager = Manager
-    { _outputConn :: M.Map NetworkAddress OutputConnection
+newtype ConnectionPool = ConnectionPool
+    { _outputConn :: HashMap NetworkAddress OutputConnection
     }
 
-makeLenses ''Manager
+makeLenses ''ConnectionPool
 
-initManager :: Manager
-initManager =
-    Manager
-    { _outputConn = M.empty
+initConnectionPool :: ConnectionPool
+initConnectionPool =
+    ConnectionPool
+    { _outputConn = mempty
     }
 
 -- ** SocketFrame
@@ -376,7 +376,7 @@ sfProcessSocket SocketFrame{..} sock = do
 
 newtype Transfer a = Transfer
     { getTransfer :: ReaderT Settings
-                        (ReaderT (TV.TVar Manager)
+                        (ReaderT (TV.TVar ConnectionPool)
                             (LoggerNameBox
                                 TimedIO
                             )
@@ -388,13 +388,13 @@ type instance ThreadId Transfer = C.ThreadId
 
 -- | Run with specified settings.
 runTransferS :: Settings -> Transfer a -> LoggerNameBox TimedIO a
-runTransferS s t = do m <- liftIO (TV.newTVarIO initManager)
+runTransferS s t = do m <- liftIO (TV.newTVarIO initConnectionPool)
                       flip runReaderT m $ flip runReaderT s $ getTransfer t
 
 runTransfer :: Transfer a -> LoggerNameBox TimedIO a
 runTransfer = runTransferS def
 
-modifyManager :: StateT Manager STM a -> Transfer a
+modifyManager :: StateT ConnectionPool STM a -> Transfer a
 modifyManager how = Transfer . lift $
     ask >>= liftIO . atomically . flip modifyTVarS how
 
@@ -582,7 +582,7 @@ instance MonadTransfer Transfer where
 -- * Instances
 
 instance MonadBaseControl IO Transfer where
-    type StM Transfer a = StM (ReaderT (TV.TVar Manager) TimedIO) a
+    type StM Transfer a = StM (ReaderT (TV.TVar ConnectionPool) TimedIO) a
     liftBaseWith io =
         Transfer $ liftBaseWith $ \runInBase -> io $ runInBase . getTransfer
     restoreM = Transfer . restoreM
