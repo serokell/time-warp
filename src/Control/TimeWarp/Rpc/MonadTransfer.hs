@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes       #-}
+{-# LANGUAGE DefaultSignatures         #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
@@ -115,6 +116,10 @@ class Monad m => MonadTransfer m where
     sendRaw :: NetworkAddress       -- ^ Destination address
             -> Source m ByteString  -- ^ Data to send
             -> m ()
+    default sendRaw :: (MonadWrapped m, MonadTransfer (UnwrappedM m))
+                    => NetworkAddress -> Source m ByteString -> m ()
+    sendRaw addr req = view _UnwrappedM $
+        sendRaw addr $ view _WrappedM `hoist` req
 
     -- | Listens at specified input or output connection.
     -- Returns server stopper, which blocks current thread until server is actually
@@ -124,10 +129,17 @@ class Monad m => MonadTransfer m where
     listenRaw :: Binding                           -- ^ Port/address to listen to
               -> Sink ByteString (ResponseT m) ()  -- ^ Parser for input byte stream
               -> m (m ())                          -- ^ Server stopper
+    default listenRaw :: (MonadWrapped m, MonadTransfer (UnwrappedM m))
+                      => Binding -> Sink ByteString (ResponseT m) () -> m (m ())
+    listenRaw binding sink = view _UnwrappedM $ fmap (view _UnwrappedM) $
+            listenRaw binding $ view _WrappedM `hoistRespCond` sink
 
     -- | Closes outbound connection to specified node, if exists.
     -- To close inbound connections, use `closeR`.
     close :: NetworkAddress -> m ()
+    default close :: (MonadWrapped m, MonadTransfer (UnwrappedM m))
+                  => NetworkAddress -> m ()
+    close = view _UnwrappedM . close
 
 
 -- * MonadResponse
@@ -213,16 +225,6 @@ instance Monad m => MonadWrapped (LoggerNameBox m) where
 _UnwrappedM :: MonadWrapped m => Iso' (UnwrappedM m a) (m a)
 _UnwrappedM = from _WrappedM
 
-defaultSendRaw :: (MonadWrapped m, MonadTransfer (UnwrappedM m))
-               => NetworkAddress -> Source m ByteString -> m ()
-defaultSendRaw addr req = view _UnwrappedM $
-    sendRaw addr $ view _WrappedM `hoist` req
-
-defaultListenRaw :: (MonadWrapped m, MonadTransfer (UnwrappedM m))
-                 => Binding -> Sink ByteString (ResponseT m) () -> m (m ())
-defaultListenRaw binding sink = view  _UnwrappedM $ fmap (view _UnwrappedM) $
-        listenRaw binding $ view _WrappedM `hoistRespCond` sink
-
 instance MonadTransfer m => MonadTransfer (ReaderT r m) where
     sendRaw addr req = ask >>= \ctx -> lift $ sendRaw addr (hoist (`runReaderT` ctx) req)
     listenRaw binding sink =
@@ -230,9 +232,6 @@ instance MonadTransfer m => MonadTransfer (ReaderT r m) where
     close = lift . close
 
 instance MonadTransfer m => MonadTransfer (LoggerNameBox m) where
-    sendRaw = defaultSendRaw
-    listenRaw = defaultListenRaw
-    close = lift . close
 
 instance MonadResponse m => MonadResponse (ReaderT r m) where
     replyRaw dat = ask >>= \ctx -> lift $ replyRaw (hoist (`runReaderT` ctx) dat)
