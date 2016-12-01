@@ -52,6 +52,7 @@ module Control.TimeWarp.Rpc.MonadTransfer
        , hoistRespCond
        ) where
 
+import           Control.Lens                (Iso', Wrapped (..), from, view)
 import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow)
 import           Control.Monad.Morph         (hoist)
 import           Control.Monad.Reader        (MonadReader (..), ReaderT (..), mapReaderT)
@@ -65,8 +66,7 @@ import           Data.Text                   (Text)
 import           Data.Word                   (Word16)
 import           System.Wlog                 (CanLog, HasLoggerName, LoggerName,
                                               LoggerNameBox (..), WithLogger,
-                                              getLoggerName, modifyLoggerName,
-                                              usingLoggerName)
+                                              modifyLoggerName)
 
 import           Control.TimeWarp.Timed      (MonadTimed, ThreadId)
 
@@ -201,6 +201,28 @@ hoistRespCond :: Monad m
               -> ConduitM i o (ResponseT n) r
 hoistRespCond how = hoist $ mapResponseT how
 
+-- | MonadWrapped. This is similar to `Wrapped`, but for `Monad`s.
+class Monad m => MonadWrapped m where
+    type UnwrappedM m :: * -> *
+    _WrappedM :: Iso' (m a) (UnwrappedM m a)
+
+instance Monad m => MonadWrapped (LoggerNameBox m) where
+    type UnwrappedM (LoggerNameBox m) = ReaderT LoggerName m
+    _WrappedM = _Wrapped'
+
+_UnwrappedM :: MonadWrapped m => Iso' (UnwrappedM m a) (m a)
+_UnwrappedM = from _WrappedM
+
+defaultSendRaw :: (MonadWrapped m, MonadTransfer (UnwrappedM m))
+               => NetworkAddress -> Source m ByteString -> m ()
+defaultSendRaw addr req = view _UnwrappedM $
+    sendRaw addr $ view _WrappedM `hoist` req
+
+defaultListenRaw :: (MonadWrapped m, MonadTransfer (UnwrappedM m))
+                 => Binding -> Sink ByteString (ResponseT m) () -> m (m ())
+defaultListenRaw binding sink = view  _UnwrappedM $ fmap (view _UnwrappedM) $
+        listenRaw binding $ view _WrappedM `hoistRespCond` sink
+
 instance MonadTransfer m => MonadTransfer (ReaderT r m) where
     sendRaw addr req = ask >>= \ctx -> lift $ sendRaw addr (hoist (`runReaderT` ctx) req)
     listenRaw binding sink =
@@ -208,10 +230,8 @@ instance MonadTransfer m => MonadTransfer (ReaderT r m) where
     close = lift . close
 
 instance MonadTransfer m => MonadTransfer (LoggerNameBox m) where
-    sendRaw addr req = getLoggerName >>=
-        \loggerName -> lift $ sendRaw addr (hoist (usingLoggerName loggerName) req)
-    listenRaw binding sink = LoggerNameBox $ fmap LoggerNameBox $
-        listenRaw binding $ hoistRespCond loggerNameBoxEntry sink
+    sendRaw = defaultSendRaw
+    listenRaw = defaultListenRaw
     close = lift . close
 
 instance MonadResponse m => MonadResponse (ReaderT r m) where
