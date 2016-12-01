@@ -81,12 +81,11 @@ module Control.TimeWarp.Rpc.MonadDialog
        , MonadListener
        ) where
 
-import           Control.Lens                       (at, (^.))
+import           Control.Lens                       (at, iso, (^.))
 import           Control.Monad                      (forM, forM_, void, when)
 import           Control.Monad.Base                 (MonadBase (..))
 import           Control.Monad.Catch                (MonadCatch, MonadMask, MonadThrow,
                                                      handleAll)
-import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (MonadReader (ask), ReaderT (..))
 import           Control.Monad.State                (MonadState)
 import           Control.Monad.Trans                (MonadIO, MonadTrans (..))
@@ -104,6 +103,8 @@ import           System.Wlog                        (CanLog, HasLoggerName,
                                                      LoggerNameBox (..), WithLogger,
                                                      logDebug, logError, logWarning)
 
+import           Serokell.Util.Lens                 (WrappedM (..))
+
 import           Control.TimeWarp.Rpc.Message       (HeaderNContentData (..),
                                                      HeaderNNameData (..),
                                                      HeaderNRawData (..), Message (..),
@@ -113,8 +114,7 @@ import           Control.TimeWarp.Rpc.Message       (HeaderNContentData (..),
 import           Control.TimeWarp.Rpc.MonadTransfer (Binding,
                                                      MonadResponse (peerAddr, replyRaw),
                                                      MonadTransfer (..), NetworkAddress,
-                                                     ResponseT (..), commLog,
-                                                     hoistRespCond)
+                                                     ResponseT (..), commLog)
 import           Control.TimeWarp.Timed             (MonadTimed, ThreadId, fork_)
 
 
@@ -391,12 +391,11 @@ instance MonadBaseControl IO m => MonadBaseControl IO (Dialog p m) where
 
 type instance ThreadId (Dialog p m) = ThreadId m
 
+instance Monad m => WrappedM (Dialog p m) where
+    type UnwrappedM (Dialog p m) = ReaderT p m
+    _WrappedM = iso getDialog Dialog
+
 instance MonadTransfer m => MonadTransfer (Dialog p m) where
-    sendRaw addr req =
-        Dialog ask >>= \ctx -> lift $ sendRaw addr (hoist (runDialog ctx) req)
-    listenRaw binding sink =
-        fmap Dialog $ Dialog $ listenRaw binding $ hoistRespCond getDialog sink
-    close = lift . close
 
 instance MonadTransfer m => MonadDialog p (Dialog p m) where
     packingType = Dialog ask

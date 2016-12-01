@@ -6,11 +6,11 @@ packages:
 - '.'
 - location:
     git: https://github.com/serokell/log-warper.git
-    commit: 57479ac47c2d2a91066464f284efe9230c551d34
+    commit: 18e49241948ba2f72c92b5cee016fd2852b9dfd4
   extra-dep: true
 - location:
     git: https://github.com/serokell/serokell-util
-    commit: f0e53766f5d6f4ffb6c709c2bc5bd2064edfdcce
+    commit: 7b735ec3cceca85d9c65910c32c08a8cdb6aad48
   extra-dep: true
 
 nix:

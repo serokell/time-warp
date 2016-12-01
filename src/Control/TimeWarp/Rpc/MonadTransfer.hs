@@ -53,7 +53,7 @@ module Control.TimeWarp.Rpc.MonadTransfer
        , hoistRespCond
        ) where
 
-import           Control.Lens                (Iso', Wrapped (..), from, view)
+import           Control.Lens                (view)
 import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow)
 import           Control.Monad.Morph         (hoist)
 import           Control.Monad.Reader        (MonadReader (..), ReaderT (..), mapReaderT)
@@ -68,6 +68,8 @@ import           Data.Word                   (Word16)
 import           System.Wlog                 (CanLog, HasLoggerName, LoggerName,
                                               LoggerNameBox (..), WithLogger,
                                               modifyLoggerName)
+
+import           Serokell.Util.Lens          (WrappedM (..), _UnwrappedM)
 
 import           Control.TimeWarp.Timed      (MonadTimed, ThreadId)
 
@@ -116,7 +118,7 @@ class Monad m => MonadTransfer m where
     sendRaw :: NetworkAddress       -- ^ Destination address
             -> Source m ByteString  -- ^ Data to send
             -> m ()
-    default sendRaw :: (MonadWrapped m, MonadTransfer (UnwrappedM m))
+    default sendRaw :: (WrappedM m, MonadTransfer (UnwrappedM m))
                     => NetworkAddress -> Source m ByteString -> m ()
     sendRaw addr req = view _UnwrappedM $
         sendRaw addr $ view _WrappedM `hoist` req
@@ -129,7 +131,7 @@ class Monad m => MonadTransfer m where
     listenRaw :: Binding                           -- ^ Port/address to listen to
               -> Sink ByteString (ResponseT m) ()  -- ^ Parser for input byte stream
               -> m (m ())                          -- ^ Server stopper
-    default listenRaw :: (MonadWrapped m, MonadTransfer (UnwrappedM m))
+    default listenRaw :: (WrappedM m, MonadTransfer (UnwrappedM m))
                       => Binding -> Sink ByteString (ResponseT m) () -> m (m ())
     listenRaw binding sink = view _UnwrappedM $ fmap (view _UnwrappedM) $
             listenRaw binding $ view _WrappedM `hoistRespCond` sink
@@ -137,7 +139,7 @@ class Monad m => MonadTransfer m where
     -- | Closes outbound connection to specified node, if exists.
     -- To close inbound connections, use `closeR`.
     close :: NetworkAddress -> m ()
-    default close :: (MonadWrapped m, MonadTransfer (UnwrappedM m))
+    default close :: (WrappedM m, MonadTransfer (UnwrappedM m))
                   => NetworkAddress -> m ()
     close = view _UnwrappedM . close
 
@@ -212,18 +214,6 @@ hoistRespCond :: Monad m
               -> ConduitM i o (ResponseT m) r
               -> ConduitM i o (ResponseT n) r
 hoistRespCond how = hoist $ mapResponseT how
-
--- | MonadWrapped. This is similar to `Wrapped`, but for `Monad`s.
-class Monad m => MonadWrapped m where
-    type UnwrappedM m :: * -> *
-    _WrappedM :: Iso' (m a) (UnwrappedM m a)
-
-instance Monad m => MonadWrapped (LoggerNameBox m) where
-    type UnwrappedM (LoggerNameBox m) = ReaderT LoggerName m
-    _WrappedM = _Wrapped'
-
-_UnwrappedM :: MonadWrapped m => Iso' (UnwrappedM m a) (m a)
-_UnwrappedM = from _WrappedM
 
 instance MonadTransfer m => MonadTransfer (ReaderT r m) where
     sendRaw addr req = ask >>= \ctx -> lift $ sendRaw addr (hoist (`runReaderT` ctx) req)
