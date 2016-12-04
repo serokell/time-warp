@@ -125,6 +125,29 @@ test-suite time-warp-test
                      , DeriveDataTypeable
                      , GeneralizedNewtypeDeriving
 
+executable ping-pong
+  main-is:             Main.hs
+  build-depends:       base          >= 4.8 && < 5
+                     , binary
+                     , data-default
+                     , exceptions    >= 0.8.2.1
+                     , formatting
+                     , log-warper    >= 0.2.0
+                     , mtl
+                     , serokell-util >= 0.1.1.1
+                     , stm           >= 2.4.4.1
+                     , text          >= 1.2.2.0
+                     , time-warp
+                     , time
+  hs-source-dirs:      examples/ping-pong
+  default-language:    Haskell2010
+  ghc-options:         -threaded -Wall -fno-warn-orphans
+  default-extensions:  DeriveGeneric
+                       DeriveDataTypeable
+                       GeneralizedNewtypeDeriving
+                       OverloadedStrings
+                       RecordWildCards
+
 executable net-playground
   main-is:             Main.hs
   build-depends:       async >= 2.0.1
