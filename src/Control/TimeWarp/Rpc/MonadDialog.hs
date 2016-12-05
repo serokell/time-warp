@@ -82,10 +82,10 @@ module Control.TimeWarp.Rpc.MonadDialog
        ) where
 
 import           Control.Lens                       (at, iso, (^.))
-import           Control.Monad                      (forM, forM_, void, when)
+import           Control.Monad                      (mapM_, void, when)
 import           Control.Monad.Base                 (MonadBase (..))
 import           Control.Monad.Catch                (MonadCatch, MonadMask, MonadThrow,
-                                                     handleAll)
+                                                     catchAll, handleAll)
 import           Control.Monad.Reader               (MonadReader (ask), ReaderT (..))
 import           Control.Monad.State                (MonadState)
 import           Control.Monad.Trans                (MonadIO, MonadTrans (..))
@@ -93,9 +93,9 @@ import           Control.Monad.Trans.Control        (ComposeSt, MonadBaseControl
                                                      MonadTransControl (..), StM,
                                                      defaultLiftBaseWith, defaultLiftWith,
                                                      defaultRestoreM, defaultRestoreT)
-import           Data.ByteString                    (ByteString)
-import           Data.Conduit                       (Consumer, yield, (=$=))
-import           Data.Conduit.List                  as CL
+import           Data.Binary                        (Binary)
+import           Data.Conduit                       (yield, (=$=))
+import qualified Data.Conduit.List                  as CL
 import           Data.Map                           as M
 import           Data.Proxy                         (Proxy (..))
 import           Formatting                         (sformat, shown, stext, (%))
@@ -107,10 +107,12 @@ import           Serokell.Util.Lens                 (WrappedM (..))
 
 import           Control.TimeWarp.Rpc.Message       (HeaderNContentData (..),
                                                      HeaderNNameData (..),
+                                                     HeaderNNameNContentData (..),
                                                      HeaderNRawData (..), Message (..),
                                                      MessageName, Packable (..),
                                                      RawData (..), Unpackable (..),
-                                                     intangibleSink)
+                                                     parseHeaderNNameData,
+                                                     parseHeaderNNameNContentData)
 import           Control.TimeWarp.Rpc.MonadTransfer (Binding,
                                                      MonadResponse (peerAddr, replyRaw),
                                                      MonadTransfer (..), NetworkAddress,
@@ -168,7 +170,7 @@ replyR :: (Packable p (HeaderNRawData h), MonadDialog p m, MonadResponse m, Mona
 replyR h raw = packingType >>= \p -> replyRP p h raw
 
 -- | Starts server with given set of listeners.
-listen :: (Unpackable p (HeaderNNameData ()), Unpackable p (HeaderNRawData ()),
+listen :: (Unpackable p (HeaderNRawData ()),
            MonadListener m, MonadDialog p m)
        => Binding -> [Listener p m] -> m (m ())
 listen binding listeners =
@@ -176,7 +178,7 @@ listen binding listeners =
 
 -- | Starts server with given set of listeners, which allow to read both header and
 -- content of received message.
-listenH :: (Unpackable p (HeaderNNameData h), Unpackable p (HeaderNRawData h),
+listenH :: (Unpackable p (HeaderNRawData h),
             MonadListener m, MonadDialog p m)
         => Binding -> [ListenerH p h m] -> m (m ())
 listenH binding listeners =
@@ -187,7 +189,7 @@ listenH binding listeners =
 -- received message.
 -- If raw listener returned `True`, then processing continues with given typed listeners
 -- in the way defined in `listenH`.
-listenR :: (Unpackable p (HeaderNNameData h), Unpackable p (HeaderNRawData h),
+listenR :: (Unpackable p (HeaderNRawData h),
             MonadListener m, MonadDialog p m)
         => Binding -> [ListenerH p h m] -> ListenerR h m -> m (m ())
 listenR binding listeners rawListener =
@@ -243,7 +245,7 @@ type MonadListener  m =
     )
 
 -- | Similar to `listen`.
-listenP :: (Unpackable p (HeaderNNameData ()), Unpackable p (HeaderNRawData ()),
+listenP :: (Unpackable p (HeaderNRawData ()),
             MonadListener m)
         => p -> Binding -> [Listener p m] -> m (m ())
 listenP packing binding listeners = listenHP packing binding $ convert <$> listeners
@@ -253,62 +255,50 @@ listenP packing binding listeners = listenHP packing binding $ convert <$> liste
     second ((), r) = r
 
 -- | Similar to `listenH`.
-listenHP :: (Unpackable p (HeaderNNameData h), Unpackable p (HeaderNRawData h),
+listenHP :: (Unpackable p (HeaderNRawData h),
              MonadListener m)
          => p -> Binding -> [ListenerH p h m] -> m (m ())
 listenHP packing binding listeners =
     listenRP packing binding listeners (const $ return True)
 
 -- | Similar to `listenR`.
-listenRP :: (Unpackable p (HeaderNNameData h), Unpackable p (HeaderNRawData h),
-             MonadListener m)
+listenRP :: (Unpackable p (HeaderNRawData h), MonadListener m)
          => p -> Binding -> [ListenerH p h m] -> ListenerR h m -> m (m ())
 listenRP packing binding listeners rawListener = listenRaw binding loop
   where
-    loop = do
-        hrM <- intangibleSink $ unpackMsg packing
-        forM_ hrM $
-            \(HeaderNRawData h raw) -> processContent h raw
+    loop =
+        -- [TW-92] Review exception handling on `listen`
+        -- do we catch exception here? Do we close conduit properly?
+        unpackMsg packing =$= CL.head >>= mapM_ processContent
 
-    processContent header raw = do
-        nameM <- selector header
+    processContent rawMsg@(HeaderNRawData header raw) = do
+        nameM <- lift $ (Right <$> selector rawMsg) `catchAll` (return . Left)
         case nameM of
-            Nothing ->
+            Left e ->
                 lift . commLog . logWarning $
-                    sformat "Unexpected end of incoming message"
-            Just (name, Nothing) -> do
+                    sformat ("Error parsing message name: " % shown) e
+            Right (name, Nothing) -> do
                 lift . fork_ . void $ invokeRawListenerSafe $ rawListener (header, raw)
                 lift . commLog . logWarning $
                     sformat ("No listener with name "%stext%" defined") name
-                skipMsgAndGo header
-            Just (name, Just (ListenerH f)) -> do
-                msgM <- unpackMsg packing =$= CL.head
-                case msgM of
-                    Nothing -> lift . commLog . logWarning $
-                        sformat "Unexpected end of incoming message"
-                    Just (HeaderNContentData h r) ->
-                        let _ = [h, header]  -- constraint on h type
-                        in do
-                            lift . fork_ $ do
-                                cont <- invokeRawListenerSafe $ rawListener (header, raw)
-                                peer <- peerAddr
-                                when cont $ do
-                                    lift . commLog . logDebug $
-                                        sformat ("Got message from "%stext%": "%stext)
-                                        peer (formatMessage r)
-                                    invokeListenerSafe name $ f (header, r)
-                            loop
+                loop
+            Right (name, Just (ListenerH f)) -> handleAll handleE $ parseHeaderNNameNContentData rawMsg >>=
+                \(HeaderNNameNContentData _ _ r) -> do
+                    lift . fork_ $ do
+                        cont <- invokeRawListenerSafe $ rawListener (header, raw)
+                        peer <- peerAddr
+                        when cont $ do
+                            lift . commLog . logDebug $
+                                sformat ("Got message from "%stext%": "%stext)
+                                peer (formatMessage r)
+                            invokeListenerSafe name $ f (header, r)
+                    loop
 
-    selector header = chooseListener packing header getListenerNameH listeners
 
-    skipMsgAndGo h = do
-        -- this is expected to work as fast as indexing
-        skip <- unpackMsg packing =$= CL.head
-        forM_ skip $
-            \(HeaderNRawData h0 _) ->
-                let _ = [h, h0]  -- constraint h0 type
-                in  loop
+    handleE e = lift . commLog . logWarning $
+                        sformat ("Error parsing message: " % shown) e
 
+    selector rawMsg = chooseListener rawMsg getListenerNameH listeners
 
     invokeRawListenerSafe = handleAll $ \e -> do
         commLog . logError $ sformat ("Uncaught error in raw listener: "%shown) e
@@ -317,29 +307,25 @@ listenRP packing binding listeners rawListener = listenRaw binding loop
     invokeListenerSafe name = handleAll $
         commLog . logError . sformat ("Uncaught error in listener "%shown%": "%shown) name
 
-chooseListener :: (MonadListener m, Unpackable p (HeaderNNameData h))
-               => p -> h -> (l m -> MessageName) -> [l m]
-               -> Consumer ByteString (ResponseT m) (Maybe (MessageName, Maybe (l m)))
-chooseListener packing h getName listeners = do
-    nameM <- intangibleSink $ unpackMsg packing
-    forM nameM $
-        \(HeaderNNameData h0 name) ->
-            let _ = [h, h0]  -- constraint h0 type
-            in  return (name, listenersMap ^. at name)
+chooseListener :: MonadListener m
+               => HeaderNRawData h -> (l m -> MessageName) -> [l m]
+               -> ResponseT m (MessageName, Maybe (l m))
+chooseListener rawMsg getName listeners = parseHeaderNNameData rawMsg >>= handleMessage
   where
     listenersMap = M.fromList [(getName li, li) | li <- listeners]
+    handleMessage (HeaderNNameData _ name) = return (name, listenersMap ^. at name)
 
 
 -- * Listeners
 
 -- | Creates plain listener which accepts message.
 data Listener p m =
-    forall r . (Unpackable p (HeaderNContentData () r), Message r)
+    forall r . (Binary r, Message r)
              => Listener (r -> ResponseT m ())
 
 -- | Creates listener which accepts header and message.
 data ListenerH p h m =
-    forall r . (Unpackable p (HeaderNContentData h r), Message r)
+    forall r . (Binary r, Message r)
              => ListenerH ((h, r) -> ResponseT m ())
 
 -- | Creates listener which accepts header and raw data.

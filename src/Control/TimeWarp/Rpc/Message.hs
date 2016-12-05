@@ -6,6 +6,7 @@
 {-# LANGUAGE Rank2Types            #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
+{-# LANGUAGE ViewPatterns          #-}
 
 -- |
 -- Module      : Control.TimeWarp.Rpc.Message
@@ -46,27 +47,28 @@ module Control.TimeWarp.Rpc.Message
        , HeaderNContentData (..)
        , HeaderNNameNContentData (..)
 
+
+       , parseHeaderNNameData
+       , parseHeaderNNameNContentData
+
        -- * Util
        , messageName'
-       , intangibleSink
        ) where
 
-import           Control.Monad                     (forM, mapM_, when)
+import           Control.Monad                     (when)
 import           Control.Monad.Catch               (MonadThrow (..))
-import           Control.Monad.Trans               (MonadIO (..))
 import           Data.Binary                       (Binary (..))
-import           Data.Binary.Get                   (Decoder (..), Get, pushChunk, runGet,
-                                                    runGetIncremental)
+import           Data.Binary.Get                   (Decoder (..), Get, pushChunk,
+                                                    runGetIncremental, runGetOrFail)
 import           Data.Binary.Put                   (runPut)
 import           Data.ByteString                   (ByteString)
 import qualified Data.ByteString                   as BS
 import qualified Data.ByteString.Lazy              as BL
-import           Data.Conduit                      (Conduit, Consumer, await,
-                                                    awaitForever, leftover, yield, (=$=))
+import           Data.Conduit                      (Conduit, await, leftover, yield,
+                                                    (=$=))
 import qualified Data.Conduit.List                 as CL
 import           Data.Conduit.Serialization.Binary (ParseError (..), conduitPut)
 import           Data.Data                         (Data, dataTypeName, dataTypeOf)
-import           Data.IORef                        (modifyIORef, newIORef, readIORef)
 import           Data.Proxy                        (Proxy (..), asProxyTypeOf)
 import qualified Data.Text                         as T
 import           Data.Text.Buildable               (Buildable)
@@ -126,7 +128,6 @@ data NameNContentData r = NameNContentData MessageName r
 -- | Message's header, name & content.
 data HeaderNNameNContentData h r = HeaderNNameNContentData h MessageName r
 
-
 -- * Util
 
 -- | As `messageName`, but accepts message itself, may be more convinient is most cases.
@@ -135,20 +136,6 @@ messageName' = messageName . proxyOf
   where
     proxyOf :: a -> Proxy a
     proxyOf _ = Proxy
-
--- | From given conduit constructs a sink, which doesn't affect source above
--- (all readen data would be `leftover`ed).
-intangibleSink :: MonadIO m => Conduit i m o -> Consumer i m (Maybe o)
-intangibleSink cond = do
-    taken <- liftIO $ newIORef []
-    am <- notingCond taken =$= ignoreLeftovers =$= cond =$= CL.head
-    forM am $ \a -> do
-        mapM_ leftover =<< liftIO (readIORef taken)
-        return a
-  where
-    notingCond taken = awaitForever $ \a -> do liftIO $ modifyIORef taken (a:)
-                                               yield a
-    ignoreLeftovers = awaitForever yield
 
 -- | Like `conduitGet`, but applicable to be used inside `unpackMsg`.
 conduitGet' :: MonadThrow m => Get b -> Conduit ByteString m b
@@ -212,20 +199,36 @@ instance Binary h
       => Unpackable BinaryP (HeaderNRawData h) where
     unpackMsg _ = conduitGet' $ HeaderNRawData <$> get <*> (RawData <$> get)
 
+parseHeaderNNameData :: MonadThrow m => HeaderNRawData h -> m (HeaderNNameData h)
+parseHeaderNNameData (HeaderNRawData h (RawData raw)) =
+            case rawE of
+              Left (BL.toStrict -> bs, off, err) -> throwM $ ParseError bs off $
+                  "parseHeaderNNameData: " ++ err
+              Right (_, _, a)  -> return a
+          where
+            rawE = runGetOrFail (HeaderNNameData h <$> get) $ BL.fromStrict raw
+
+parseHeaderNNameNContentData :: (MonadThrow m, Binary r) => HeaderNRawData h -> m (HeaderNNameNContentData h r)
+parseHeaderNNameNContentData (HeaderNRawData h (RawData raw)) =
+            case rawE of
+              Left (BL.toStrict -> bs, off, err) -> throwM $ ParseError bs off $
+                  "parseHeaderNNameContentData: " ++ err
+              Right (bs, off, a)  ->
+                  if BL.null bs
+                     then return a
+                     else throwM $ ParseError (BL.toStrict bs) off $
+                         "parseHeaderNNameContentNData: unconsumed input"
+          where
+            rawE = runGetOrFail (HeaderNNameNContentData h <$> get <*> get) $ BL.fromStrict raw
+
 -- | TODO: don't read whole content
 instance Binary h
       => Unpackable BinaryP (HeaderNNameData h) where
-    unpackMsg p = unpackMsg p =$= CL.map extract
-      where
-        extract (HeaderNRawData h (RawData raw)) =
-            runGet (HeaderNNameData h <$> get) $ BL.fromStrict raw
+    unpackMsg p = unpackMsg p =$= CL.mapM parseHeaderNNameData
 
 instance (Binary h, Binary r)
        => Unpackable BinaryP (HeaderNNameNContentData h r) where
-    unpackMsg p = unpackMsg p =$= CL.map extract
-      where
-        extract (HeaderNRawData h (RawData raw)) =
-            runGet (HeaderNNameNContentData h <$> get <*> get) $ BL.fromStrict raw
+    unpackMsg p = unpackMsg p =$= CL.mapM parseHeaderNNameNContentData
 
 instance (Binary h, Binary r)
        => Unpackable BinaryP (HeaderNContentData h r) where
