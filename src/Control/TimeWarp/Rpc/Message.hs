@@ -51,21 +51,18 @@ module Control.TimeWarp.Rpc.Message
 
        -- * Util
        , messageName'
+       , runGetOrThrow
        ) where
 
-import           Control.Lens                      ((<&>))
-import           Control.Monad                     (when)
 import           Control.Monad.Catch               (MonadThrow (..))
 import           Control.Monad.Extra               (unlessM)
 import           Data.Binary                       (Binary (..))
-import           Data.Binary.Get                   (Decoder (..), Get, isEmpty, label,
-                                                    pushChunk, runGet, runGetIncremental,
+import           Data.Binary.Get                   (Decoder (..), isEmpty, label,
                                                     runGetOrFail)
 import           Data.Binary.Put                   (runPut)
 import           Data.ByteString                   (ByteString)
 import qualified Data.ByteString                   as BS
-import qualified Data.ByteString.Lazy              as BL
-import           Data.Conduit                      (Conduit, await, leftover, yield,
+import           Data.Conduit                      (Conduit,
                                                     (=$=))
 import qualified Data.Conduit.List                 as CL
 import           Data.Conduit.Serialization.Binary (ParseError (..), conduitGet,
@@ -140,6 +137,7 @@ messageName' = messageName . proxyOf
     proxyOf :: a -> Proxy a
     proxyOf _ = Proxy
 
+-- | Parses given bytestring, throwing `ParseError` on fail.
 runGetOrThrow :: MonadThrow m => Get a -> BL.ByteString -> m a
 runGetOrThrow p s =
     either (\(bs, off, err) -> throwM $ ParseError (BL.toStrict bs) off err)
@@ -163,8 +161,7 @@ class PackingType p where
 
 -- | Defines a way to serialize object @r@ with given packing type @p@.
 class PackingType p => Packable p r where
-    -- | Way of packing data to raw bytes. At the moment when value gets passed
-    -- downstream, all unconsumed input should be `leftover`ed.
+    -- | Way of packing data to raw bytes.
     packMsg :: MonadThrow m => p -> Conduit r m ByteString
 
 -- | Defines a way to deserealize data with given packing type @p@ and extract object @r@.
