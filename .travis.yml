@@ -17,7 +17,7 @@ install:
 - stack --no-terminal --install-ghc build --only-dependencies --jobs=4
 script:
 - stack --no-terminal build --test --haddock --no-haddock-deps --bench --jobs=4
---flag time-warp:build-executables
+    --flag time-warp:build-executables
 notifications:
   email: false
   slack: serokell:Lk0GI0786tPYo9Nve9SSuPOf
