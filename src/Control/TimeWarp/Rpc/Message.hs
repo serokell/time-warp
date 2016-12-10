@@ -7,7 +7,6 @@
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE UndecidableInstances  #-}
-{-# LANGUAGE ViewPatterns          #-}
 
 -- |
 -- Module      : Control.TimeWarp.Rpc.Message
@@ -57,9 +56,10 @@ module Control.TimeWarp.Rpc.Message
 import           Control.Lens                      ((<&>))
 import           Control.Monad                     (when)
 import           Control.Monad.Catch               (MonadThrow (..))
+import           Control.Monad.Extra               (unlessM)
 import           Data.Binary                       (Binary (..))
-import           Data.Binary.Get                   (Decoder (..), Get, label, pushChunk,
-                                                    runGet, runGetIncremental,
+import           Data.Binary.Get                   (Decoder (..), Get, isEmpty, label,
+                                                    pushChunk, runGet, runGetIncremental,
                                                     runGetOrFail)
 import           Data.Binary.Put                   (runPut)
 import           Data.ByteString                   (ByteString)
@@ -140,6 +140,11 @@ messageName' = messageName . proxyOf
     proxyOf :: a -> Proxy a
     proxyOf _ = Proxy
 
+runGetOrThrow :: MonadThrow m => Get a -> BL.ByteString -> m a
+runGetOrThrow p s =
+    either (\(bs, off, err) -> throwM $ ParseError (BL.toStrict bs) off err)
+           (\(_, _, a) -> return a)
+        $ runGetOrFail p s
 
 -- * Serialization and deserialization
 
@@ -204,28 +209,18 @@ instance Binary h
       => Unpackable (BinaryP h) (HeaderNRawData h) where
     extractMsgPart _ = return
 
-parseNameNContentData :: (MonadThrow m, Binary r)
-                      => HeaderNRawData h -> m (NameNContentData r)
-parseNameNContentData (HeaderNRawData _ (RawData raw)) =
-            case rawE of
-              Left (BL.toStrict -> bs, off, err) -> throwM $ ParseError bs off $
-                  "parseNNameContentData: " ++ err
-              Right (bs, off, a)  ->
-                  if BL.null bs
-                     then return a
-                     else throwM $ ParseError (BL.toStrict bs) off $
-                         "parseHeaderNNameContentNData: unconsumed input"
-          where
-            rawE = runGetOrFail (NameNContentData <$> get <*> get) $ BL.fromStrict raw
-
-
 instance Binary h
       => Unpackable (BinaryP h) NameData where
     extractMsgPart _ (HeaderNRawData _ (RawData raw)) =
-        let labelName = "(in instance Unpackable BinaryP NameData)"
-        in return $ runGet (NameData <$> label labelName get) $ BL.fromStrict raw
+        let labelName = "(in parseNameData)"
+        in runGetOrThrow (NameData <$> label labelName get) $ BL.fromStrict raw
 
 instance (Binary h, Binary r)
       => Unpackable (BinaryP h) (ContentData r) where
-    extractMsgPart _ m = parseNameNContentData m <&>
-        \(NameNContentData _ c) -> ContentData c
+    extractMsgPart _ (HeaderNRawData _ (RawData raw)) =
+        runGetOrThrow parser $ BL.fromStrict raw
+      where
+        parser = checkAllConsumed $ label labelName $
+            (get :: Get MessageName) *> (ContentData <$> get)
+        checkAllConsumed p = p <* unlessM isEmpty (fail "unconsumed input")
+        labelName = "(in parseNameNContentData)"
