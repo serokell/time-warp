@@ -20,4 +20,8 @@ script:
     --flag time-warp:build-executables
 notifications:
   email: false
-  slack: serokell:Lk0GI0786tPYo9Nve9SSuPOf
+  slack:
+    rooms:
+      - serokell:Lk0GI0786tPYo9Nve9SSuPOf
+    on_success: change
+    on_failure: always
