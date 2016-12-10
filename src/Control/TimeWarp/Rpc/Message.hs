@@ -57,13 +57,11 @@ module Control.TimeWarp.Rpc.Message
 import           Control.Monad.Catch               (MonadThrow (..))
 import           Control.Monad.Extra               (unlessM)
 import           Data.Binary                       (Binary (..))
-import           Data.Binary.Get                   (Decoder (..), isEmpty, label,
-                                                    runGetOrFail)
+import           Data.Binary.Get                   (Get, isEmpty, label, runGetOrFail)
 import           Data.Binary.Put                   (runPut)
 import           Data.ByteString                   (ByteString)
-import qualified Data.ByteString                   as BS
-import           Data.Conduit                      (Conduit,
-                                                    (=$=))
+import qualified Data.ByteString.Lazy              as BL
+import           Data.Conduit                      (Conduit, (=$=))
 import qualified Data.Conduit.List                 as CL
 import           Data.Conduit.Serialization.Binary (ParseError (..), conduitGet,
                                                     conduitPut)
