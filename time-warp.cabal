@@ -17,6 +17,11 @@ description:         This package allows to write scenarios over distributed
                      fast emulation without need to wait for delays and with
                      network nastiness manually controlled.
 
+flag build-executables
+    description:       Build executables
+    default:           False
+    manual:            True
+
 library
   exposed-modules:     Control.TimeWarp.Manager
                        Control.TimeWarp.Manager.Job
@@ -140,6 +145,10 @@ executable ping-pong
                      , time-warp
                      , time
   hs-source-dirs:      examples/ping-pong
+  if flag(build-executables)
+    buildable:         True
+  else
+    buildable:         False
   default-language:    Haskell2010
   ghc-options:         -threaded -Wall -fno-warn-orphans
   default-extensions:  DeriveGeneric
@@ -211,6 +220,10 @@ executable bench-sender
                      , unordered-containers >= 0.2.7
   hs-source-dirs:      bench/Network/Sender
                      , bench/Network/Common
+  if flag(build-executables)
+    buildable:         True
+  else
+    buildable:         False
   default-language:    Haskell2010
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
   default-extensions:  OverloadedStrings
@@ -243,6 +256,10 @@ executable bench-receiver
                      , unordered-containers >= 0.2.7
   hs-source-dirs:      bench/Network/Receiver
                      , bench/Network/Common
+  if flag(build-executables)
+    buildable:         True
+  else
+    buildable:         False
   default-language:    Haskell2010
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
   default-extensions:  OverloadedStrings
@@ -280,6 +297,10 @@ executable bench-log-reader
                      , unordered-containers >= 0.2.7
   hs-source-dirs:      bench/Network/LogReader
                      , bench/Network/Common
+  if flag(build-executables)
+    buildable:         True
+  else
+    buildable:         False
   default-language:    Haskell2010
   ghc-options:         -threaded -Wall
   default-extensions:  OverloadedStrings
