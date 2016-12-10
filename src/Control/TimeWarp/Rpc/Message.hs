@@ -41,13 +41,8 @@ module Control.TimeWarp.Rpc.Message
        -- $message-parts
        , ContentData (..)
        , NameData (..)
-       , NameNContentData (..)
        , RawData (..)
-       , HeaderData (..)
-       , HeaderNNameData (..)
-       , HeaderNRawData (..)
-       , HeaderNContentData (..)
-       , HeaderNNameNContentData (..)
+       , WithHeaderData (..)
 
        -- * Util
        , messageName'
@@ -107,23 +102,8 @@ data RawData = RawData ByteString
 -- | Message's name.
 data NameData = NameData MessageName
 
--- | Message's header.
-data HeaderData h = HeaderData h
-
--- | Message's header & content.
-data HeaderNContentData h r = HeaderNContentData h r
-
--- | Message's header & remaining part in raw form.
-data HeaderNRawData h = HeaderNRawData h RawData
-
--- | Message's header & name.
-data HeaderNNameData h = HeaderNNameData h MessageName
-
--- | Message's name & content.
-data NameNContentData r = NameNContentData MessageName r
-
--- | Message's header, name & content.
-data HeaderNNameNContentData h r = HeaderNNameNContentData h MessageName r
+-- | Message's header & something else
+data WithHeaderData h r = WithHeaderData h r
 
 
 -- * Util
@@ -181,38 +161,38 @@ plainBinaryP :: BinaryP ()
 plainBinaryP = BinaryP
 
 instance Binary h => PackingType (BinaryP h) where
-    type IntermediateForm (BinaryP h) = HeaderNRawData h
-    unpackMsg _ = conduitGet $ HeaderNRawData <$> get <*> (RawData <$> get)
+    type IntermediateForm (BinaryP h) = WithHeaderData h RawData
+    unpackMsg _ = conduitGet $ WithHeaderData <$> get <*> (RawData <$> get)
 
 instance (Binary h, Binary r, Message r)
-       => Packable (BinaryP h) (HeaderNContentData h r) where
+       => Packable (BinaryP h) (WithHeaderData h (ContentData r)) where
     packMsg p = CL.map packToRaw =$= packMsg p
       where
-        packToRaw (HeaderNContentData h r) =
-            HeaderNRawData h . RawData . BL.toStrict . runPut $ do
+        packToRaw (WithHeaderData h (ContentData r)) =
+            WithHeaderData h . RawData . BL.toStrict . runPut $ do
                 put $ messageName' r
                 put r
 
 instance Binary h
-      => Packable (BinaryP h) (HeaderNRawData h) where
+      => Packable (BinaryP h) (WithHeaderData h RawData) where
     packMsg _ = CL.map doPut =$= conduitPut
       where
-        doPut (HeaderNRawData h (RawData r)) = put h >> put r
+        doPut (WithHeaderData h (RawData r)) = put h >> put r
 
 
 instance Binary h
-      => Unpackable (BinaryP h) (HeaderNRawData h) where
+      => Unpackable (BinaryP h) (WithHeaderData h RawData) where
     extractMsgPart _ = return
 
 instance Binary h
       => Unpackable (BinaryP h) NameData where
-    extractMsgPart _ (HeaderNRawData _ (RawData raw)) =
+    extractMsgPart _ (WithHeaderData _ (RawData raw)) =
         let labelName = "(in parseNameData)"
         in runGetOrThrow (NameData <$> label labelName get) $ BL.fromStrict raw
 
 instance (Binary h, Binary r)
       => Unpackable (BinaryP h) (ContentData r) where
-    extractMsgPart _ (HeaderNRawData _ (RawData raw)) =
+    extractMsgPart _ (WithHeaderData _ (RawData raw)) =
         runGetOrThrow parser $ BL.fromStrict raw
       where
         parser = checkAllConsumed $ label labelName $
