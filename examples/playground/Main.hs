@@ -43,10 +43,10 @@ import           Control.TimeWarp.Rpc              (BinaryP (..), Binding (..),
                                                     Listener (..), ListenerH (..),
                                                     Message, MonadTransfer (..),
                                                     NetworkAddress, Port, listen, listenH,
-                                                    listenR, localhost, reconnectPolicy,
-                                                    reply, replyRaw, runDialog,
-                                                    runTransfer, runTransferS, send,
-                                                    sendH, sendR)
+                                                    listenR, localhost, plainBinaryP,
+                                                    reconnectPolicy, reply, replyRaw,
+                                                    runDialog, runTransfer, runTransferS,
+                                                    send, sendH, sendR)
 import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, after, for,
                                                     fork_, interval, ms, runTimedIO,
                                                     schedule, sec, sec', till)
@@ -143,7 +143,7 @@ yohohoScenario = runTimedIO $ do
     finish :: Second
     finish = 5
 
-    newNode name = usingLoggerName name . runTransfer . runDialog BinaryP
+    newNode name = usingLoggerName name . runTransfer . runDialog plainBinaryP
 
     guy :: Word16 -> NetworkAddress
     guy = (localhost, ) . guysPort
@@ -256,10 +256,10 @@ proxyScenario = runTimedIO $ do
                 sformat ("Proxy! h = "%shown) h
             ]
             $ \(h, raw) -> do
-                when (int h < 5) $ do
-                    sendR (localhost, 5678) (int h) raw
+                when (h < 5) $ do
+                    sendR (localhost, 5678) h raw
                     sync $ logInfo $ sformat ("Resend "%shown) h
-                return $ even h
+                return $ even (int h)
 
 
     wait (for 100 ms)
@@ -276,11 +276,13 @@ proxyScenario = runTimedIO $ do
     finish :: Second
     finish = 1
 
-    newNode name = usingLoggerName name . runTransfer . runDialog BinaryP
+    newNode name = usingLoggerName name . runTransfer . runDialog packing
+
+    packing :: BinaryP Int
+    packing = BinaryP
 
     int :: Int -> Int
     int = id
-
 
 -- | Slowpoke server scenario
 slowpokeScenario :: IO ()
@@ -305,7 +307,7 @@ slowpokeScenario = runTimedIO $ do
     finish :: Second
     finish = 5
 
-    newNode name = usingLoggerName name . runTransferS settings . runDialog BinaryP
+    newNode name = usingLoggerName name . runTransferS settings . runDialog plainBinaryP
 
     settings = def
         { reconnectPolicy = \failsInRow -> return $
@@ -335,7 +337,7 @@ closingServerScenario = runTimedIO $ do
     finish :: Second
     finish = 3
 
-    newNode name = usingLoggerName name . runTransfer . runDialog BinaryP
+    newNode name = usingLoggerName name . runTransfer . runDialog plainBinaryP
 
 
 workersManager :: MonadIO m => m (m (m ()) -> m (), m ())

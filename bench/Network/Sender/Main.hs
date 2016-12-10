@@ -13,12 +13,10 @@ import           System.Random               (randomRIO)
 
 import           Bench.Network.Commons       (MeasureEvent (..), Payload (..), Ping (..),
                                               Pong (..), loadLogConfig, logMeasure)
-import           Control.TimeWarp.Rpc        (BinaryP (..), Binding (AtConnTo),
-                                              Listener (..), listen, runDialog,
-                                              runTransfer, send)
-import           Control.TimeWarp.Timed      (Microsecond, for, interval, mcs,
-                                              runTimedIO, runTimedIO, sec, startTimer,
-                                              wait)
+import           Control.TimeWarp.Rpc        (Binding (AtConnTo), Listener (..), listen,
+                                              plainBinaryP, runDialog, runTransfer, send)
+import           Control.TimeWarp.Timed      (Microsecond, for, interval, mcs, runTimedIO,
+                                              runTimedIO, sec, startTimer, wait)
 import           Options.Applicative.Simple  (simpleOptions)
 import           SenderOptions               (Args (..), argsParser)
 import           System.Wlog                 (usingLoggerName)
@@ -66,5 +64,5 @@ main = do
                 sequence_ closeConns
   where
     runNode name = runTimedIO . usingLoggerName name
-    runNetworking = runTransfer . runDialog BinaryP
+    runNetworking = runTransfer . runDialog plainBinaryP
     runConcurrently l f = liftBaseWith $ \run -> void $ forConcurrently l (run . f)

@@ -7,9 +7,8 @@ import           GHC.IO.Encoding            (setLocaleEncoding, utf8)
 
 import           Bench.Network.Commons      (MeasureEvent (..), Ping (..), Pong (..),
                                              loadLogConfig, logMeasure)
-import           Control.TimeWarp.Rpc       (BinaryP (..), Binding (AtPort),
-                                             Listener (..), listen, reply, runDialog,
-                                             runTransfer)
+import           Control.TimeWarp.Rpc       (Binding (AtPort), Listener (..), listen,
+                                             plainBinaryP, reply, runDialog, runTransfer)
 import           Control.TimeWarp.Timed     (for, runTimedIO, sec, wait)
 import           Options.Applicative.Simple (simpleOptions)
 import           System.Wlog                (usingLoggerName)
@@ -42,4 +41,5 @@ main = do
         stopper
 
   where
-    runNode name = runTimedIO . usingLoggerName name . runTransfer . runDialog BinaryP
+    runNode name = runTimedIO . usingLoggerName name
+                 . runTransfer . runDialog plainBinaryP

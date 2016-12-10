@@ -5,6 +5,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE Rank2Types            #-}
 {-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE UndecidableInstances  #-}
 {-# LANGUAGE ViewPatterns          #-}
 
@@ -29,11 +30,13 @@ module Control.TimeWarp.Rpc.Message
        , Message (..)
 
        -- * Serialization and deserialization
+       , PackingType (..)
        , Packable (..)
        , Unpackable (..)
 
        -- * Basic packing types
        , BinaryP (..)
+       , plainBinaryP
 
        -- * Parts of message
        -- $message-parts
@@ -47,19 +50,17 @@ module Control.TimeWarp.Rpc.Message
        , HeaderNContentData (..)
        , HeaderNNameNContentData (..)
 
-
-       , parseHeaderNNameData
-       , parseHeaderNNameNContentData
-
        -- * Util
        , messageName'
        ) where
 
+import           Control.Lens                      ((<&>))
 import           Control.Monad                     (when)
 import           Control.Monad.Catch               (MonadThrow (..))
 import           Data.Binary                       (Binary (..))
-import           Data.Binary.Get                   (Decoder (..), Get, pushChunk,
-                                                    runGetIncremental, runGetOrFail)
+import           Data.Binary.Get                   (Decoder (..), Get, label, pushChunk,
+                                                    runGet, runGetIncremental,
+                                                    runGetOrFail)
 import           Data.Binary.Put                   (runPut)
 import           Data.ByteString                   (ByteString)
 import qualified Data.ByteString                   as BS
@@ -67,7 +68,8 @@ import qualified Data.ByteString.Lazy              as BL
 import           Data.Conduit                      (Conduit, await, leftover, yield,
                                                     (=$=))
 import qualified Data.Conduit.List                 as CL
-import           Data.Conduit.Serialization.Binary (ParseError (..), conduitPut)
+import           Data.Conduit.Serialization.Binary (ParseError (..), conduitGet,
+                                                    conduitPut)
 import           Data.Data                         (Data, dataTypeName, dataTypeOf)
 import           Data.Proxy                        (Proxy (..), asProxyTypeOf)
 import qualified Data.Text                         as T
@@ -128,6 +130,7 @@ data NameNContentData r = NameNContentData MessageName r
 -- | Message's header, name & content.
 data HeaderNNameNContentData h r = HeaderNNameNContentData h MessageName r
 
+
 -- * Util
 
 -- | As `messageName`, but accepts message itself, may be more convinient is most cases.
@@ -137,34 +140,32 @@ messageName' = messageName . proxyOf
     proxyOf :: a -> Proxy a
     proxyOf _ = Proxy
 
--- | Like `conduitGet`, but applicable to be used inside `unpackMsg`.
-conduitGet' :: MonadThrow m => Get b -> Conduit ByteString m b
-conduitGet' g = start
-  where
-    start = do mx <- await
-               case mx of
-                  Nothing -> return ()
-                  Just x -> do
-                               go (runGetIncremental g `pushChunk` x)
-    go (Done bs _ v) = do when (not $ BS.null bs) $ leftover bs
-                          yield v
-                          start
-    go (Fail u o e)  = throwM (ParseError u o e)
-    go (Partial n)   = await >>= (go . n)
-
 
 -- * Serialization and deserialization
 
+-- | Defines a serialization / deserialization strategy.
+-- Deserealization is assumed to be performed in two phases:
+--
+-- * byte stream -> intermediate form
+--
+-- * intermediate form -> any part of message (or their combination)
+class PackingType p where
+    -- | Defines intermediate form
+    type IntermediateForm p :: *
+
+    -- | Way of unpacking raw bytes to intermediate form.
+    unpackMsg :: MonadThrow m => p -> Conduit ByteString m (IntermediateForm p)
+
 -- | Defines a way to serialize object @r@ with given packing type @p@.
-class Packable p r where
+class PackingType p => Packable p r where
     -- | Way of packing data to raw bytes. At the moment when value gets passed
     -- downstream, all unconsumed input should be `leftover`ed.
     packMsg :: MonadThrow m => p -> Conduit r m ByteString
 
 -- | Defines a way to deserealize data with given packing type @p@ and extract object @r@.
-class Unpackable p r where
-    -- | Way of unpacking raw bytes to data.
-    unpackMsg :: MonadThrow m => p -> Conduit ByteString m r
+class PackingType p => Unpackable p r where
+    -- | Way to extract message part from intermediate form.
+    extractMsgPart :: MonadThrow m => p -> IntermediateForm p -> m r
 
 
 -- * Basic packing types
@@ -174,10 +175,17 @@ class Unpackable p r where
 -- | Defines way to encode `Binary` instances into message of format
 -- (header, [[name], content]), where [x] = (length of x, x).
 -- /P/ here denotes to "packing".
-data BinaryP = BinaryP
+data BinaryP header = BinaryP
+
+plainBinaryP :: BinaryP ()
+plainBinaryP = BinaryP
+
+instance Binary h => PackingType (BinaryP h) where
+    type IntermediateForm (BinaryP h) = HeaderNRawData h
+    unpackMsg _ = conduitGet $ HeaderNRawData <$> get <*> (RawData <$> get)
 
 instance (Binary h, Binary r, Message r)
-       => Packable BinaryP (HeaderNContentData h r) where
+       => Packable (BinaryP h) (HeaderNContentData h r) where
     packMsg p = CL.map packToRaw =$= packMsg p
       where
         packToRaw (HeaderNContentData h r) =
@@ -186,52 +194,38 @@ instance (Binary h, Binary r, Message r)
                 put r
 
 instance Binary h
-      => Packable BinaryP (HeaderNRawData h) where
+      => Packable (BinaryP h) (HeaderNRawData h) where
     packMsg _ = CL.map doPut =$= conduitPut
       where
         doPut (HeaderNRawData h (RawData r)) = put h >> put r
 
-instance Binary h
-      => Unpackable BinaryP (HeaderData h) where
-    unpackMsg _ = conduitGet' $ HeaderData <$> get
 
 instance Binary h
-      => Unpackable BinaryP (HeaderNRawData h) where
-    unpackMsg _ = conduitGet' $ HeaderNRawData <$> get <*> (RawData <$> get)
+      => Unpackable (BinaryP h) (HeaderNRawData h) where
+    extractMsgPart _ = return
 
-parseHeaderNNameData :: MonadThrow m => HeaderNRawData h -> m (HeaderNNameData h)
-parseHeaderNNameData (HeaderNRawData h (RawData raw)) =
+parseNameNContentData :: (MonadThrow m, Binary r)
+                      => HeaderNRawData h -> m (NameNContentData r)
+parseNameNContentData (HeaderNRawData _ (RawData raw)) =
             case rawE of
               Left (BL.toStrict -> bs, off, err) -> throwM $ ParseError bs off $
-                  "parseHeaderNNameData: " ++ err
-              Right (_, _, a)  -> return a
-          where
-            rawE = runGetOrFail (HeaderNNameData h <$> get) $ BL.fromStrict raw
-
-parseHeaderNNameNContentData :: (MonadThrow m, Binary r) => HeaderNRawData h -> m (HeaderNNameNContentData h r)
-parseHeaderNNameNContentData (HeaderNRawData h (RawData raw)) =
-            case rawE of
-              Left (BL.toStrict -> bs, off, err) -> throwM $ ParseError bs off $
-                  "parseHeaderNNameContentData: " ++ err
+                  "parseNNameContentData: " ++ err
               Right (bs, off, a)  ->
                   if BL.null bs
                      then return a
                      else throwM $ ParseError (BL.toStrict bs) off $
                          "parseHeaderNNameContentNData: unconsumed input"
           where
-            rawE = runGetOrFail (HeaderNNameNContentData h <$> get <*> get) $ BL.fromStrict raw
+            rawE = runGetOrFail (NameNContentData <$> get <*> get) $ BL.fromStrict raw
 
--- | TODO: don't read whole content
+
 instance Binary h
-      => Unpackable BinaryP (HeaderNNameData h) where
-    unpackMsg p = unpackMsg p =$= CL.mapM parseHeaderNNameData
+      => Unpackable (BinaryP h) NameData where
+    extractMsgPart _ (HeaderNRawData _ (RawData raw)) =
+        let labelName = "(in instance Unpackable BinaryP NameData)"
+        in return $ runGet (NameData <$> label labelName get) $ BL.fromStrict raw
 
 instance (Binary h, Binary r)
-       => Unpackable BinaryP (HeaderNNameNContentData h r) where
-    unpackMsg p = unpackMsg p =$= CL.mapM parseHeaderNNameNContentData
-
-instance (Binary h, Binary r)
-       => Unpackable BinaryP (HeaderNContentData h r) where
-    unpackMsg p = unpackMsg p =$= CL.map extract
-      where
-        extract (HeaderNNameNContentData h _ r) = HeaderNContentData h r
+      => Unpackable (BinaryP h) (ContentData r) where
+    extractMsgPart _ m = parseNameNContentData m <&>
+        \(NameNContentData _ c) -> ContentData c
