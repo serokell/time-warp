@@ -17,9 +17,9 @@ description:         This package allows to write scenarios over distributed
                      network nastiness manually controlled.
 
 flag build-executables
-    description:       Build executables
-    default:           False
-    manual:            True
+  description:       Build executables
+  default:           False
+  manual:            True
 
 library
   exposed-modules:     Control.TimeWarp.Manager
