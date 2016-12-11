@@ -67,7 +67,6 @@ library
                      , QuickCheck >= 2.8.1
                      , quickcheck-instances
                      , random >= 1.1
-                     , regex-tdfa >= 1.2.2
                      , safe
                      , serokell-util >= 0.1.1.1
                      , semigroups
