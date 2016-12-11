@@ -187,15 +187,16 @@ instance Binary h
 instance Binary h
       => Unpackable (BinaryP h) NameData where
     extractMsgPart _ (WithHeaderData _ (RawData raw)) =
-        let labelName = "(in parseNameData)"
-        in runGetOrThrow (NameData <$> label labelName get) $ BL.fromStrict raw
+        runGetOrThrow (NameData <$> label lname get) $ BL.fromStrict raw
+      where
+        lname = "(in parseNameData)"
 
 instance (Binary h, Binary r)
       => Unpackable (BinaryP h) (ContentData r) where
     extractMsgPart _ (WithHeaderData _ (RawData raw)) =
         runGetOrThrow parser $ BL.fromStrict raw
       where
-        parser = checkAllConsumed $ label labelName $
+        parser = label lname $ checkAllConsumed $
             (get :: Get MessageName) *> (ContentData <$> get)
         checkAllConsumed p = p <* unlessM isEmpty (fail "unconsumed input")
-        labelName = "(in parseNameNContentData)"
+        lname = "(in parseNameNContentData)"
