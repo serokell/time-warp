@@ -186,7 +186,7 @@ newtype ResponseT s m a = ResponseT
     { getResponseT :: ReaderT (ResponseContext s) m a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadTrans,
                 MonadThrow, MonadCatch, MonadMask,
-                MonadState s, CanLog,
+                MonadState ss, CanLog,
                 HasLoggerName, MonadTimed)
 
 -- | Unwrappes `ResponseT`.
