@@ -120,7 +120,7 @@ import           Control.TimeWarp.Timed             (MonadTimed, ThreadId, fork_
 
 -- | Defines communication based on messages.
 -- It allows to specify service data (/header/) for use by overlying protocols.
-class MonadTransfer s m => MonadDialog s p m | m -> p where
+class MonadTransfer s m => MonadDialog s p m | m -> p, m -> s where
     packingType :: m p
 
 -- * Communication methods
@@ -343,38 +343,38 @@ getListenerNameH (ListenerH f) = messageName $ proxyOfArg f
 -- | Default implementation of `MonadDialog`.
 -- Keeps packing type in context, allowing to use the same serialization strategy
 -- all over the code without extra boilerplate.
-newtype Dialog s p m a = Dialog
+newtype Dialog p m a = Dialog
     { getDialog :: ReaderT p m a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadTrans,
                 MonadThrow, MonadCatch, MonadMask,
                 MonadState s, CanLog, HasLoggerName, MonadTimed)
 
 -- | Runs given `Dialog`.
-runDialog :: p -> Dialog s p m a -> m a
+runDialog :: p -> Dialog p m a -> m a
 runDialog p = flip runReaderT p . getDialog
 
-instance MonadBase IO m => MonadBase IO (Dialog s p m) where
+instance MonadBase IO m => MonadBase IO (Dialog p m) where
     liftBase = lift . liftBase
 
-instance MonadTransControl (Dialog s p) where
-    type StT (Dialog s p) a = StT (ReaderT p) a
+instance MonadTransControl (Dialog p) where
+    type StT (Dialog p) a = StT (ReaderT p) a
     liftWith = defaultLiftWith Dialog getDialog
     restoreT = defaultRestoreT Dialog
 
-instance MonadBaseControl IO m => MonadBaseControl IO (Dialog s p m) where
-    type StM (Dialog s p m) a = ComposeSt (Dialog s p) m a
+instance MonadBaseControl IO m => MonadBaseControl IO (Dialog p m) where
+    type StM (Dialog p m) a = ComposeSt (Dialog p) m a
     liftBaseWith     = defaultLiftBaseWith
     restoreM         = defaultRestoreM
 
-type instance ThreadId (Dialog s p m) = ThreadId m
+type instance ThreadId (Dialog p m) = ThreadId m
 
-instance Monad m => WrappedM (Dialog s p m) where
-    type UnwrappedM (Dialog s p m) = ReaderT p m
+instance Monad m => WrappedM (Dialog p m) where
+    type UnwrappedM (Dialog p m) = ReaderT p m
     _WrappedM = iso getDialog Dialog
 
-instance MonadTransfer s m => MonadTransfer s (Dialog s p m) where
+instance MonadTransfer s m => MonadTransfer s (Dialog p m) where
 
-instance MonadTransfer s m => MonadDialog s p (Dialog s p m) where
+instance MonadTransfer s m => MonadDialog s p (Dialog p m) where
     packingType = Dialog ask
 
 

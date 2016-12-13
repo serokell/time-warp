@@ -26,7 +26,7 @@ import           Control.TimeWarp.Rpc     (BinaryP, Binding (AtPort), Dialog,
                                            runDialog, runTransfer, send)
 import           Control.TimeWarp.Timed   (for, runTimedIO, sec, wait)
 
-runNode :: LoggerName -> Dialog () (BinaryP ()) (Transfer ()) () -> IO ()
+runNode :: LoggerName -> Dialog (BinaryP ()) (Transfer ()) () -> IO ()
 runNode name = void . forkIO . runTimedIO . usingLoggerName name . runTransfer (pure ())
              . runDialog plainBinaryP
 
