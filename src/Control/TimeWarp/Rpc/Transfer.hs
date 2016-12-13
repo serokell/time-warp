@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE Rank2Types            #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
@@ -86,7 +87,7 @@ import           Control.Monad.Catch                (Exception, MonadCatch,
                                                      finally, handleAll, onException,
                                                      throwM)
 import           Control.Monad.Morph                (hoist)
-import           Control.Monad.Reader               (ReaderT (..), ask)
+import           Control.Monad.Reader               (MonadReader (ask), ReaderT (..))
 import           Control.Monad.State                (StateT (..))
 import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
@@ -170,18 +171,20 @@ instance Buildable PeerClosedConnection where
 -- | Textual representation of peer node. For debugging purposes only.
 type PeerAddr = Text
 
-data OutputConnection = OutputConnection
+data OutputConnection s = OutputConnection
     { outConnSend       :: forall m . (MonadIO m, MonadMask m, WithLogger m)
                         => Source m BS.ByteString -> m ()
       -- ^ Function to send all data produced by source
     , outConnRec        :: forall m . (MonadIO m, MonadMask m, MonadTimed m,
                                        MonadBaseControl IO m, WithLogger m)
-                        => Sink BS.ByteString (ResponseT m) () -> m ()
+                        => Sink BS.ByteString (ResponseT s m) () -> m ()
       -- ^ Function to stark sink-listener, returns synchronous closer
     , outConnJobCurator :: JobCurator
       -- ^ Job manager for this connection
     , outConnAddr       :: PeerAddr
       -- ^ Address of socket on other side of net
+    , outConnUserState  :: s
+      -- ^ State binded to socket
     }
 
 
@@ -207,13 +210,13 @@ instance Default Settings where
 
 -- ** ConnectionPool
 
-newtype ConnectionPool = ConnectionPool
-    { _outputConn :: HashMap NetworkAddress OutputConnection
+newtype ConnectionPool s = ConnectionPool
+    { _outputConn :: HashMap NetworkAddress (OutputConnection s)
     }
 
 makeLenses ''ConnectionPool
 
-initConnectionPool :: ConnectionPool
+initConnectionPool :: ConnectionPool s
 initConnectionPool =
     ConnectionPool
     { _outputConn = mempty
@@ -222,7 +225,7 @@ initConnectionPool =
 -- ** SocketFrame
 
 -- | Keeps data required to implement so-called /lively socket/.
-data SocketFrame = SocketFrame
+data SocketFrame s = SocketFrame
     { sfPeerAddr   :: PeerAddr
     -- ^ Peer address, for debuging purposes only
     , sfInBusy     :: TV.TVar Bool
@@ -233,21 +236,24 @@ data SocketFrame = SocketFrame
     -- ^ For (packs of bytes to send, notification when bytes passed to socket)
     , sfJobCurator :: JobCurator
     -- ^ Job manager, tracks whether lively-socket wasn't closed.
+    , sfUserState  :: s
     }
 
-mkSocketFrame :: MonadIO m => Settings -> PeerAddr -> m SocketFrame
-mkSocketFrame settings sfPeerAddr = liftIO $ do
+mkSocketFrame :: MonadIO m
+              => Settings -> IO s -> PeerAddr -> m (SocketFrame s)
+mkSocketFrame settings mkUserState sfPeerAddr = liftIO $ do
     sfInBusy     <- TV.newTVarIO False
     sfInChan     <- TBM.newTBMChanIO (queueSize settings)
     sfOutChan    <- TBM.newTBMChanIO (queueSize settings)
     sfJobCurator <- mkJobCurator
+    sfUserState  <- mkUserState
     return SocketFrame{..}
 
 -- | Makes sender function in terms of @MonadTransfer@ for given `SocketFrame`.
 -- This first extracts ready `Lazy.ByteString` from given source, and then passes it to
 -- sending queue.
 sfSend :: (MonadIO m, WithLogger m)
-       => SocketFrame -> Source m BS.ByteString -> m ()
+       => SocketFrame s -> Source m BS.ByteString -> m ()
 sfSend SocketFrame{..} src = do
     lbs <- src $$ sinkLbs
     logQueueState
@@ -283,7 +289,7 @@ sfSend SocketFrame{..} src = do
 -- Attempt to use this function twice will end with `AlreadyListeningOutbound` error.
 sfReceive :: (MonadIO m, MonadMask m, MonadTimed m, WithLogger m,
               MonadBaseControl IO m)
-          => SocketFrame -> Sink BS.ByteString (ResponseT m) () -> m ()
+          => SocketFrame s -> Sink BS.ByteString (ResponseT s m) () -> m ()
 sfReceive sf@SocketFrame{..} sink = do
     busy <- liftIO . atomically $ TV.swapTVar sfInBusy True
     when busy $ throwM $ AlreadyListeningOutbound sfPeerAddr
@@ -310,7 +316,7 @@ sfReceive sf@SocketFrame{..} sink = do
         commLog . logDebug $
             sformat ("Listening on socket to "%stext%" happily stopped") sfPeerAddr
 
-sfClose :: SocketFrame -> IO ()
+sfClose :: SocketFrame s -> IO ()
 sfClose SocketFrame{..} = do
     interruptAllJobs sfJobCurator Plain
     atomically $ do
@@ -320,27 +326,29 @@ sfClose SocketFrame{..} = do
   where
     clearInChan = TBM.tryReadTBMChan sfInChan >>= maybe (return ()) (const clearInChan)
 
-sfMkOutputConn :: SocketFrame -> OutputConnection
+sfMkOutputConn :: SocketFrame s -> OutputConnection s
 sfMkOutputConn sf =
     OutputConnection
     { outConnSend       = sfSend sf
     , outConnRec        = sfReceive sf
     , outConnJobCurator = sfJobCurator sf
     , outConnAddr       = sfPeerAddr sf
+    , outConnUserState  = sfUserState sf
     }
 
-sfMkResponseCtx :: SocketFrame -> ResponseContext
+sfMkResponseCtx :: SocketFrame s -> ResponseContext s
 sfMkResponseCtx sf =
     ResponseContext
-    { respSend     = sfSend sf
-    , respClose    = sfClose sf
-    , respPeerAddr = sfPeerAddr sf
+    { respSend      = sfSend sf
+    , respClose     = sfClose sf
+    , respPeerAddr  = sfPeerAddr sf
+    , respUserState = sfUserState sf
     }
 
 -- | Starts workers, which connect channels in `SocketFrame` with real `NS.Socket`.
 -- If error in any worker occurs, it's propagated.
 sfProcessSocket :: (MonadIO m, MonadMask m, MonadTimed m, WithLogger m)
-                => SocketFrame -> NS.Socket -> m ()
+                => SocketFrame s -> NS.Socket -> m ()
 sfProcessSocket SocketFrame{..} sock = do
     -- TODO: rewrite to async when MonadTimed supports it
     -- create channel to notify about error
@@ -392,27 +400,32 @@ sfProcessSocket SocketFrame{..} sock = do
 
 -- * Transfer
 
-newtype Transfer a = Transfer
+newtype Transfer s a = Transfer
     { getTransfer :: ReaderT Settings
-                        (ReaderT (TV.TVar ConnectionPool)
-                            (LoggerNameBox
-                                TimedIO
+                        (ReaderT (TV.TVar (ConnectionPool s))
+                            (ReaderT (IO s)
+                                (LoggerNameBox
+                                    TimedIO
+                                )
                             )
                         ) a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadBase IO,
                 MonadThrow, MonadCatch, MonadMask, MonadTimed, CanLog, HasLoggerName)
 
-type instance ThreadId Transfer = C.ThreadId
+type instance ThreadId (Transfer s) = C.ThreadId
 
 -- | Run with specified settings.
-runTransferS :: Settings -> Transfer a -> LoggerNameBox TimedIO a
-runTransferS s t = do m <- liftIO (TV.newTVarIO initConnectionPool)
-                      flip runReaderT m $ flip runReaderT s $ getTransfer t
+runTransferS :: Settings -> IO s -> Transfer s a -> LoggerNameBox TimedIO a
+runTransferS s us t = do
+    m <- liftIO (TV.newTVarIO initConnectionPool)
+    flip runReaderT us $ flip runReaderT m $ flip runReaderT s $
+        getTransfer t
 
-runTransfer :: Transfer a -> LoggerNameBox TimedIO a
+-- | Run `Transfer`, with a way to create initial state for socket.
+runTransfer :: IO s -> Transfer s a -> LoggerNameBox TimedIO a
 runTransfer = runTransferS def
 
-modifyManager :: StateT ConnectionPool STM a -> Transfer a
+modifyManager :: StateT (ConnectionPool s) STM a -> Transfer s a
 modifyManager how = Transfer . lift $
     ask >>= liftIO . atomically . flip modifyTVarS how
 
@@ -438,8 +451,8 @@ buildNetworkAddress :: NetworkAddress -> PeerAddr
 buildNetworkAddress (host, port) = sformat (stext%":"%int) (decodeUtf8 host) port
 
 listenInbound :: Port
-              -> Sink BS.ByteString (ResponseT Transfer) ()
-              -> Transfer (Transfer ())
+              -> Sink BS.ByteString (ResponseT s (Transfer s)) ()
+              -> Transfer s (Transfer s ())
 listenInbound (fromIntegral -> port) sink = do
     serverJobCurator <- mkJobCurator
     -- launch server
@@ -460,7 +473,8 @@ listenInbound (fromIntegral -> port) sink = do
             \(sock, addr) -> mask $
                 \unmask -> fork_ $ do
                     settings <- Transfer ask
-                    sf@SocketFrame{..} <- mkSocketFrame settings $ buildSockAddr addr
+                    us <- Transfer . lift . lift $ ask
+                    sf@SocketFrame{..} <- mkSocketFrame settings us $ buildSockAddr addr
                     addManagerAsJob serverJobCurator Plain sfJobCurator
 
                     logNewInputConnection sfPeerAddr
@@ -503,15 +517,15 @@ listenInbound (fromIntegral -> port) sink = do
 -- This thread doesn't block current thread. Use returned function to close relevant
 -- connection.
 listenOutbound :: NetworkAddress
-               -> Sink BS.ByteString (ResponseT Transfer) ()
-               -> Transfer (Transfer ())
+               -> Sink BS.ByteString (ResponseT s (Transfer s)) ()
+               -> Transfer s (Transfer s ())
 listenOutbound addr sink = do
     conn <- getOutConnOrOpen addr
     outConnRec conn sink
     return $ stopAllJobs $ outConnJobCurator conn
 
 
-getOutConnOrOpen :: NetworkAddress -> Transfer OutputConnection
+getOutConnOrOpen :: NetworkAddress -> Transfer s (OutputConnection s)
 getOutConnOrOpen addr@(host, fromIntegral -> port) =
     mask $
         \unmask -> do
@@ -532,7 +546,8 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
         -- 2. check again, if still absent push connection to pool
         mconn <- modifyManager $ use $ outputConn . at addr
         getOr mconn $ do
-            sf <- mkSocketFrame settings addrName
+            us <- Transfer . lift . lift $ ask
+            sf <- mkSocketFrame settings us addrName
             let conn = sfMkOutputConn sf
             modifyManager $ do
                 mres <- use $ outputConn . at addr
@@ -580,7 +595,7 @@ getOutConnOrOpen addr@(host, fromIntegral -> port) =
             sformat ("Socket to "%stext%" closed") addrName
 
 
-instance MonadTransfer Transfer where
+instance MonadTransfer s (Transfer s) where
     sendRaw addr src = do
         conn <- getOutConnOrOpen addr
         outConnSend conn src
@@ -594,11 +609,14 @@ instance MonadTransfer Transfer where
         forM_ maybeConn $
             \conn -> interruptAllJobs (outConnJobCurator conn) Plain
 
+    userState addr =
+        outConnUserState <$> getOutConnOrOpen addr
+
 
 -- * Instances
 
-instance MonadBaseControl IO Transfer where
-    type StM Transfer a = StM (ReaderT (TV.TVar ConnectionPool) TimedIO) a
+instance MonadBaseControl IO (Transfer s) where
+    type StM (Transfer s) a = StM (LoggerNameBox TimedIO) a
     liftBaseWith io =
         Transfer $ liftBaseWith $ \runInBase -> io $ runInBase . getTransfer
     restoreM = Transfer . restoreM

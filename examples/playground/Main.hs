@@ -143,7 +143,7 @@ yohohoScenario = runTimedIO $ do
     finish :: Second
     finish = 5
 
-    newNode name = usingLoggerName name . runTransfer . runDialog plainBinaryP
+    newNode name = usingLoggerName name . runTransfer (pure ()) . runDialog plainBinaryP
 
     guy :: Word16 -> NetworkAddress
     guy = (localhost, ) . guysPort
@@ -205,7 +205,7 @@ transferScenario = runTimedIO $ do
     magicVal :: Int
     magicVal = 234
 
-    newNode name = usingLoggerName name . runTransfer
+    newNode name = usingLoggerName name . runTransfer (pure ())
 
 {-
 rpcScenario :: IO ()
@@ -276,7 +276,7 @@ proxyScenario = runTimedIO $ do
     finish :: Second
     finish = 1
 
-    newNode name = usingLoggerName name . runTransfer . runDialog packing
+    newNode name = usingLoggerName name . runTransfer (pure ()) . runDialog packing
 
     packing :: BinaryP Int
     packing = BinaryP
@@ -307,7 +307,8 @@ slowpokeScenario = runTimedIO $ do
     finish :: Second
     finish = 5
 
-    newNode name = usingLoggerName name . runTransferS settings . runDialog plainBinaryP
+    newNode name = usingLoggerName name . runTransferS settings (pure ())
+                 . runDialog plainBinaryP
 
     settings = def
         { reconnectPolicy = \failsInRow -> return $
@@ -337,7 +338,7 @@ closingServerScenario = runTimedIO $ do
     finish :: Second
     finish = 3
 
-    newNode name = usingLoggerName name . runTransfer . runDialog plainBinaryP
+    newNode name = usingLoggerName name . runTransfer (pure ()) . runDialog plainBinaryP
 
 
 workersManager :: MonadIO m => m (m (m ()) -> m (), m ())

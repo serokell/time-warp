@@ -42,4 +42,4 @@ main = do
 
   where
     runNode name = runTimedIO . usingLoggerName name
-                 . runTransfer . runDialog plainBinaryP
+                 . runTransfer (pure ()) . runDialog plainBinaryP

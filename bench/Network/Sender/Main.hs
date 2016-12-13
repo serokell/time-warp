@@ -64,5 +64,5 @@ main = do
                 sequence_ closeConns
   where
     runNode name = runTimedIO . usingLoggerName name
-    runNetworking = runTransfer . runDialog plainBinaryP
+    runNetworking = runTransfer (pure ()) . runDialog plainBinaryP
     runConcurrently l f = liftBaseWith $ \run -> void $ forConcurrently l (run . f)

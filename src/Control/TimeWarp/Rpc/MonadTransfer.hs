@@ -3,6 +3,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
+{-# LANGUAGE FunctionalDependencies    #-}
 {-# LANGUAGE GADTs                     #-}
 {-# LANGUAGE MultiParamTypeClasses     #-}
 {-# LANGUAGE Rank2Types                #-}
@@ -53,7 +54,7 @@ module Control.TimeWarp.Rpc.MonadTransfer
        , hoistRespCond
        ) where
 
-import           Control.Lens                (view)
+import           Control.Lens                (iso, view)
 import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow)
 import           Control.Monad.Morph         (hoist)
 import           Control.Monad.Reader        (MonadReader (..), ReaderT (..), mapReaderT)
@@ -110,7 +111,7 @@ data Binding
 -- * MonadTransfer
 
 -- | Allows to send/receive raw byte sequences.
-class Monad m => MonadTransfer m where
+class Monad m => MonadTransfer s m | m -> s where
     -- | Sends raw data.
     -- When invoked several times for same address, this function is expected to
     -- use same connection kept under hood.
@@ -118,7 +119,7 @@ class Monad m => MonadTransfer m where
     sendRaw :: NetworkAddress       -- ^ Destination address
             -> Source m ByteString  -- ^ Data to send
             -> m ()
-    default sendRaw :: (WrappedM m, MonadTransfer (UnwrappedM m))
+    default sendRaw :: (WrappedM m, MonadTransfer s (UnwrappedM m))
                     => NetworkAddress -> Source m ByteString -> m ()
     sendRaw addr req = view _UnwrappedM $
         sendRaw addr $ view _WrappedM `hoist` req
@@ -128,27 +129,34 @@ class Monad m => MonadTransfer m where
     -- stopped.
     -- Calling this function in case there is defined listener already for this
     -- connection should lead to error.
-    listenRaw :: Binding                           -- ^ Port/address to listen to
-              -> Sink ByteString (ResponseT m) ()  -- ^ Parser for input byte stream
-              -> m (m ())                          -- ^ Server stopper
-    default listenRaw :: (WrappedM m, MonadTransfer (UnwrappedM m))
-                      => Binding -> Sink ByteString (ResponseT m) () -> m (m ())
+    listenRaw :: Binding                             -- ^ Port/address to listen to
+              -> Sink ByteString (ResponseT s m) ()  -- ^ Parser for input byte stream
+              -> m (m ())                            -- ^ Server stopper
+    default listenRaw :: (WrappedM m, MonadTransfer s (UnwrappedM m))
+                      => Binding -> Sink ByteString (ResponseT s m) () -> m (m ())
     listenRaw binding sink = view _UnwrappedM $ fmap (view _UnwrappedM) $
             listenRaw binding $ view _WrappedM `hoistRespCond` sink
 
     -- | Closes outbound connection to specified node, if exists.
     -- To close inbound connections, use `closeR`.
     close :: NetworkAddress -> m ()
-    default close :: (WrappedM m, MonadTransfer (UnwrappedM m))
+    default close :: (WrappedM m, MonadTransfer s (UnwrappedM m))
                   => NetworkAddress -> m ()
     close = view _UnwrappedM . close
+
+    -- | Gets state, attached to related socket.
+    -- If such connection doesn't exist, it would be created.
+    userState :: NetworkAddress -> m s
+    default userState :: (WrappedM m, MonadTransfer s (UnwrappedM m))
+                      => NetworkAddress -> m s
+    userState = view _UnwrappedM . userState
 
 
 -- * MonadResponse
 
 -- | Provides operations related to /peer/ node. Peer is a node, which this node is
 -- currently communicating with.
-class Monad m => MonadResponse m where
+class Monad m => MonadResponse s m | m -> s where
     -- | Sends data to peer.
     replyRaw :: Producer m ByteString -> m ()
 
@@ -158,51 +166,59 @@ class Monad m => MonadResponse m where
     -- | Gets address of peer, for debugging purposes only.
     peerAddr :: m Text
 
+    -- | Get state attached to socket.
+    userStateR :: m s
+    default userStateR :: MonadTrans t => t m s
+    userStateR = lift userStateR
+
+
 -- | Keeps information about peer.
-data ResponseContext = ResponseContext
-    { respSend     :: forall m . (MonadIO m, MonadMask m, WithLogger m)
-                   => Source m ByteString -> m ()
-    , respClose    :: IO ()
-    , respPeerAddr :: Text
+data ResponseContext s = ResponseContext
+    { respSend      :: forall m . (MonadIO m, MonadMask m, WithLogger m)
+                    => Source m ByteString -> m ()
+    , respClose     :: IO ()
+    , respPeerAddr  :: Text
+    , respUserState :: s
     }
 
 -- | Default implementation of `MonadResponse`.
-newtype ResponseT m a = ResponseT
-    { getResponseT :: ReaderT ResponseContext m a
+newtype ResponseT s m a = ResponseT
+    { getResponseT :: ReaderT (ResponseContext s) m a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadTrans,
                 MonadThrow, MonadCatch, MonadMask,
                 MonadState s, CanLog,
                 HasLoggerName, MonadTimed)
 
 -- | Unwrappes `ResponseT`.
-runResponseT :: ResponseT m a -> ResponseContext -> m a
+runResponseT :: ResponseT s m a -> ResponseContext s -> m a
 runResponseT = runReaderT . getResponseT
 
-type instance ThreadId (ResponseT m) = ThreadId m
+instance Monad m => WrappedM (ResponseT s m) where
+    type UnwrappedM (ResponseT s m) = ReaderT (ResponseContext s) m
+    _WrappedM = iso getResponseT ResponseT
 
-instance MonadReader r m => MonadReader r (ResponseT m) where
+type instance ThreadId (ResponseT s m) = ThreadId m
+
+instance MonadReader r m => MonadReader r (ResponseT s m) where
     ask = lift ask
     reader f = lift $ reader f
     local = mapResponseT . local
 
-instance MonadTransfer m => MonadTransfer (ResponseT m) where
-    sendRaw addr src = ResponseT ask >>=
-        \ctx -> lift $ sendRaw addr (hoist (`runResponseT` ctx) src)
-    listenRaw binding sink =
-        fmap ResponseT $ ResponseT $ listenRaw binding $ hoistRespCond getResponseT sink
-    close addr = lift $ close addr
+instance MonadTransfer s m => MonadTransfer s (ResponseT s0 m) where
 
 instance (MonadIO m, MonadMask m, WithLogger m)
-         => MonadResponse (ResponseT m) where
+         => MonadResponse s (ResponseT s m) where
     replyRaw dat = ResponseT ask >>= \ctx -> respSend ctx dat
 
     closeR = ResponseT $ ask >>= liftIO . respClose
 
     peerAddr = respPeerAddr <$> ResponseT ask
 
+    userStateR = respUserState <$> ResponseT ask
+
 -- | Maps entry of `ResponseT`.
 -- TODO: implement `hoist` instead, it should be enough.
-mapResponseT :: (m a -> n b) -> ResponseT m a -> ResponseT n b
+mapResponseT :: (m a -> n b) -> ResponseT s m a -> ResponseT s n b
 mapResponseT how = ResponseT . mapReaderT how . getResponseT
 
 
@@ -211,19 +227,20 @@ mapResponseT how = ResponseT . mapReaderT how . getResponseT
 -- | Allows to modify entry of @Conduit i o (ResponseT m) r@.
 hoistRespCond :: Monad m
               => (forall a . m a -> n a)
-              -> ConduitM i o (ResponseT m) r
-              -> ConduitM i o (ResponseT n) r
+              -> ConduitM i o (ResponseT s m) r
+              -> ConduitM i o (ResponseT s n) r
 hoistRespCond how = hoist $ mapResponseT how
 
-instance MonadTransfer m => MonadTransfer (ReaderT r m) where
+instance MonadTransfer s m => MonadTransfer s (ReaderT r m) where
     sendRaw addr req = ask >>= \ctx -> lift $ sendRaw addr (hoist (`runReaderT` ctx) req)
     listenRaw binding sink =
         fmap lift $ liftWith $ \run -> listenRaw binding $ hoistRespCond run sink
     close = lift . close
+    userState = lift . userState
 
-instance MonadTransfer m => MonadTransfer (LoggerNameBox m) where
+instance MonadTransfer s m => MonadTransfer s (LoggerNameBox m) where
 
-instance MonadResponse m => MonadResponse (ReaderT r m) where
+instance MonadResponse s m => MonadResponse s (ReaderT r m) where
     replyRaw dat = ask >>= \ctx -> lift $ replyRaw (hoist (`runReaderT` ctx) dat)
     closeR = lift closeR
     peerAddr = lift peerAddr
