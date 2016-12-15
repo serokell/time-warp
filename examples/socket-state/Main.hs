@@ -33,7 +33,7 @@ import           Control.TimeWarp.Timed   (after, for, invoke, runTimedIO, sec, 
 type RequestsCounter = TVar Int
 
 runNode :: LoggerName -> Dialog (BinaryP ()) (Transfer RequestsCounter) () -> IO ()
-runNode name = void . forkIO . runTimedIO . usingLoggerName name . runTransfer (mkState)
+runNode name = void . forkIO . runTimedIO . usingLoggerName name . runTransfer mkState
              . runDialog plainBinaryP
     where
         mkState = atomically $ newTVar 0
