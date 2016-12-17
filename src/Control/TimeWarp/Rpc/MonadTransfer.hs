@@ -168,7 +168,7 @@ class Monad m => MonadResponse s m | m -> s where
 
     -- | Get state attached to socket.
     userStateR :: m s
-    default userStateR :: MonadTrans t => t m s
+    default userStateR :: (MonadTrans t, t n ~ m, MonadResponse s n) => t n s
     userStateR = lift userStateR
 
 
