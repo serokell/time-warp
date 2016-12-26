@@ -123,6 +123,7 @@ data ForkStrategy s = ForkStrategy
 -- It allows to specify service data (/header/) for use by overlying protocols.
 class MonadTransfer s m => MonadDialog s p m | m -> p, m -> s where
     packingType     :: m p
+    forkStrategy    :: m (ForkStrategy MessageName)
     setForkStrategy :: ForkStrategy MessageName -> m a -> m a
 
 -- * Communication methods
@@ -227,7 +228,10 @@ listenR :: (Unpackable p (WithHeaderData h RawData),Unpackable p NameData,
         => Binding -> [ListenerH s p h m] -> ListenerR s h m -> m (m ())
 listenR binding listeners rawListener = do
     packing <- packingType
-    listenRaw binding $ unpackMsg packing =$= CL.mapM_ (processContent packing)
+    forking <- forkStrategy
+    listenRaw binding $ handleAll handleE $
+        unpackMsg packing =$= CL.mapM  (processContent packing)
+                          =$= CL.mapM_ (withForkStrategy forking)
   where
     processContent packing msg = do
         WithHeaderData header raw <- extractMsgPart packing msg
@@ -235,13 +239,14 @@ listenR binding listeners rawListener = do
 
         case listenersMap ^. at name of
             Nothing -> do
-                fork_ . void $ invokeRawListenerSafe $ rawListener (header, raw)
                 commLog . logWarning $
                     sformat ("No listener with name "%stext%" defined") name
+                putDownstream name . void $
+                    invokeRawListenerSafe $ rawListener (header, raw)
 
-            Just (ListenerH f) -> handleAll handleE $ do
+            Just (ListenerH f) -> do
                 ContentData r <- extractMsgPart packing msg
-                fork_ $ do
+                putDownstream name $ do
                     cont <- invokeRawListenerSafe $ rawListener (header, raw)
                     peer <- peerAddr
                     when cont $ do
@@ -263,6 +268,7 @@ listenR binding listeners rawListener = do
     invokeListenerSafe name = handleAll $
         commLog . logError . sformat ("Uncaught error in listener "%shown%": "%shown) name
 
+    putDownstream = curry return
 
 -- * Listeners
 
@@ -333,6 +339,7 @@ instance MonadTransfer s m => MonadTransfer s (Dialog p m) where
 
 instance MonadTransfer s m => MonadDialog s p (Dialog p m) where
     packingType = fst <$> Dialog ask
+    forkStrategy = snd <$> Dialog ask
     setForkStrategy fs = Dialog . local (_2 .~ fs) . getDialog
 
 
@@ -340,6 +347,7 @@ instance MonadTransfer s m => MonadDialog s p (Dialog p m) where
 
 instance MonadDialog s p m => MonadDialog s p (ReaderT r m) where
     packingType = lift packingType
+    forkStrategy = lift forkStrategy
     setForkStrategy fs = hoist $ setForkStrategy fs
 
 deriving instance MonadDialog s p m => MonadDialog s p (LoggerNameBox m)
