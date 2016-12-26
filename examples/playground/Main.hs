@@ -13,6 +13,7 @@ module Main
     , proxyScenario
     , slowpokeScenario
     , closingServerScenario
+    , pendingForkStrategy
 --    , runEmulation
 --    , runReal
     ) where
@@ -40,13 +41,14 @@ import           System.Wlog                       (LoggerName, Severity (Debug)
                                                     usingLoggerName)
 
 import           Control.TimeWarp.Rpc              (BinaryP (..), Binding (..),
-                                                    Listener (..), ListenerH (..),
-                                                    Message, MonadTransfer (..),
-                                                    NetworkAddress, Port, listen, listenH,
-                                                    listenR, localhost, plainBinaryP,
+                                                    ForkStrategy (..), Listener (..),
+                                                    ListenerH (..), Message,
+                                                    MonadTransfer (..), NetworkAddress,
+                                                    Port, listen, listenH, listenR,
+                                                    localhost, messageName', plainBinaryP,
                                                     reconnectPolicy, reply, replyRaw,
                                                     runDialog, runTransfer, runTransferS,
-                                                    send, sendH, sendR)
+                                                    send, sendH, sendR, setForkStrategy)
 import           Control.TimeWarp.Timed            (MonadTimed (wait), Second, after, for,
                                                     fork_, interval, ms, runTimedIO,
                                                     schedule, sec, sec', till)
@@ -340,6 +342,38 @@ closingServerScenario = runTimedIO $ do
 
     newNode name = usingLoggerName name . runTransfer (pure ()) . runDialog plainBinaryP
 
+pendingForkStrategy :: IO ()
+pendingForkStrategy = runTimedIO $ do
+    initLogging Debug
+    (saveWorker, killWorkers) <- newNode narrator workersManager
+
+    newNode "server" . fork_ $
+        saveWorker $ setForkStrategy forkStrategy $
+            listen (AtPort 1234)
+                [ Listener $ \Ping -> do
+                    logInfo "Got Ping, wait 1 sec"
+                    wait (for 1 sec)
+                ]
+
+    wait (for 100 ms)
+
+    newNode "client" . fork_ $ do
+        wait (for 100 ms)
+        replicateM_ 5 $ send (localhost, 1234) Ping
+
+    wait (till finish)
+    newNode narrator killWorkers
+    wait (for 100 ms)
+  where
+    finish :: Second
+    finish = 6
+
+    forkStrategy = ForkStrategy $ \msgName act ->
+        if msgName == messageName' Ping
+        then act        -- execute in-place
+        else fork_ act  -- execute in another thread
+
+    newNode name = usingLoggerName name . runTransfer (pure ()) . runDialog plainBinaryP
 
 workersManager :: MonadIO m => m (m (m ()) -> m (), m ())
 workersManager = do

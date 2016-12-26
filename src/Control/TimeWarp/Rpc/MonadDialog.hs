@@ -113,7 +113,7 @@ import           Control.TimeWarp.Timed             (MonadTimed, ThreadId, fork_
 
 data ForkStrategy s = ForkStrategy
     { withForkStrategy :: forall m . (MonadIO m, MonadTimed m)
-                       => (s, m ()) -> m ()
+                       => s -> m () -> m ()
     }
 
 
@@ -231,7 +231,7 @@ listenR binding listeners rawListener = do
     forking <- forkStrategy
     listenRaw binding $ handleAll handleE $
         unpackMsg packing =$= CL.mapM  (processContent packing)
-                          =$= CL.mapM_ (withForkStrategy forking)
+                          =$= CL.mapM_ (uncurry $ withForkStrategy forking)
   where
     processContent packing msg = do
         WithHeaderData header raw <- extractMsgPart packing msg
@@ -314,7 +314,7 @@ newtype Dialog p m a = Dialog
 
 -- | Runs given `Dialog`.
 runDialog :: p -> Dialog p m a -> m a
-runDialog p = flip runReaderT (p, ForkStrategy $ fork_ . snd) . getDialog
+runDialog p = flip runReaderT (p, ForkStrategy $ const fork_) . getDialog
 
 instance MonadBase IO m => MonadBase IO (Dialog p m) where
     liftBase = lift . liftBase
