@@ -49,7 +49,6 @@ module Control.TimeWarp.Rpc.MonadDialog
        , ForkStrategy (..)
 
        -- * Communication methods
-       -- ** For MonadDialog
        -- $monad-dialog-funcs
        , send
        , sendH
@@ -60,18 +59,6 @@ module Control.TimeWarp.Rpc.MonadDialog
        , reply
        , replyH
        , replyR
-
-       -- ** Packing type manually defined
-       -- $manual-packing-funcs
-       , sendP
-       , sendHP
-       , sendRP
-       , listenP
-       , listenHP
-       , listenRP
-       , replyP
-       , replyHP
-       , replyRP
 
        -- * Listeners
        , Listener (..)
@@ -84,7 +71,7 @@ module Control.TimeWarp.Rpc.MonadDialog
        , MonadListener
        ) where
 
-import           Control.Lens                       (_2, at, iso, (^.), (.~))
+import           Control.Lens                       (at, iso, (.~), (^.), _2)
 import           Control.Monad                      (void, when)
 import           Control.Monad.Base                 (MonadBase (..))
 import           Control.Monad.Catch                (MonadCatch, MonadMask, MonadThrow,
@@ -98,7 +85,8 @@ import           Control.Monad.Trans.Control        (ComposeSt, MonadBaseControl
                                                      MonadTransControl (..), StM,
                                                      defaultLiftBaseWith, defaultLiftWith,
                                                      defaultRestoreM, defaultRestoreT)
-import           Data.Conduit                       (yield, (=$=))
+import           Data.ByteString                    (ByteString)
+import           Data.Conduit                       (Conduit, yield, (=$=))
 import qualified Data.Conduit.List                  as CL
 import           Data.Map                           as M
 import           Data.Proxy                         (Proxy (..))
@@ -139,7 +127,12 @@ class MonadTransfer s m => MonadDialog s p m | m -> p, m -> s where
 
 -- * Communication methods
 
--- ** For MonadDialog
+-- ** Helpers
+
+packMsg' :: (Packable p r, MonadDialog s p m, MonadThrow m) => Conduit r m ByteString
+packMsg' = lift packingType >>= packMsg
+
+
 -- $monad-dialog-funcs
 -- Functions differ by suffix, meanings are following:
 --
@@ -149,109 +142,53 @@ class MonadTransfer s m => MonadDialog s p m | m -> p, m -> s where
 --
 --  * R - operates with message in raw form with header
 
--- | Sends a message.
+-- ** Send functions
+
+-- | Send message of arbitrary structure
+doSend :: (Packable p r, MonadDialog s p m, MonadThrow m)
+       => NetworkAddress -> r -> m ()
+doSend addr r = sendRaw addr $ yield r =$= packMsg'
+
+-- | Send plain message
 send :: (Packable p (WithHeaderData () (ContentData r)), MonadDialog s p m, MonadThrow m)
      => NetworkAddress -> r -> m ()
-send addr msg = packingType >>= \p -> sendP p addr msg
+send addr msg = doSend addr $ WithHeaderData () (ContentData msg)
 
--- | Sends a message with given header.
+-- | Send message with header
 sendH :: (Packable p (WithHeaderData h (ContentData r)), MonadDialog s p m, MonadThrow m)
       => NetworkAddress -> h -> r -> m ()
-sendH addr h msg = packingType >>= \p -> sendHP p addr h msg
+sendH addr h msg = doSend addr $ WithHeaderData h (ContentData msg)
 
--- | Sends a message with given header and message content in raw form.
+-- | Send message given in raw form
 sendR :: (Packable p (WithHeaderData h RawData), MonadDialog s p m, MonadThrow m)
       => NetworkAddress -> h -> RawData -> m ()
-sendR addr h raw = packingType >>= \p -> sendRP p addr h raw
+sendR addr h raw = doSend addr $ WithHeaderData h raw
+
+
+-- ** Reply functions
+
+-- | Reply to peer node with message of arbitrary structure
+doReply :: (Packable p r, MonadDialog s p m, MonadResponse s m, MonadThrow m)
+        => r -> m ()
+doReply r = replyRaw $ yield r =$= packMsg'
 
 -- | Sends message to peer node.
 reply :: (Packable p (WithHeaderData () (ContentData r)), MonadDialog s p m,
           MonadResponse s m, MonadThrow m)
       => r -> m ()
-reply msg = packingType >>= \p -> replyP p msg
+reply msg = doReply $ WithHeaderData () (ContentData msg)
 
 -- | Sends message with given header to peer node.
 replyH :: (Packable p (WithHeaderData h (ContentData r)), MonadDialog s p m,
            MonadResponse s m, MonadThrow m)
        => h -> r -> m ()
-replyH h msg = packingType >>= \p -> replyHP p h msg
+replyH h msg = doReply $ WithHeaderData h (ContentData msg)
 
 -- | Sends message with given header and message content in raw form to peer node.
 replyR :: (Packable p (WithHeaderData h RawData), MonadDialog s p m,
            MonadResponse s m, MonadThrow m)
        => h -> RawData -> m ()
-replyR h raw = packingType >>= \p -> replyRP p h raw
-
--- | Starts server with given set of listeners.
-listen :: (Unpackable p (WithHeaderData () RawData),Unpackable p NameData,
-           MonadListener s m, MonadDialog s p m)
-       => Binding -> [Listener s p m] -> m (m ())
-listen binding listeners =
-    packingType >>= \p -> listenP p binding listeners
-
--- | Starts server with given set of listeners, which allow to read both header and
--- content of received message.
-listenH :: (Unpackable p (WithHeaderData h RawData), Unpackable p NameData,
-            MonadListener s m, MonadDialog s p m)
-        => Binding -> [ListenerH s p h m] -> m (m ())
-listenH binding listeners =
-    packingType >>= \p -> listenHP p binding listeners
-
--- | Starts server with given /raw listener/ and set of /typed listeners/.
--- First, raw listener is applied, it allows to read header and content in raw form of
--- received message.
--- If raw listener returned `True`, then processing continues with given typed listeners
--- in the way defined in `listenH`.
-listenR :: (Unpackable p (WithHeaderData h RawData),Unpackable p NameData,
-            MonadListener s m, MonadDialog s p m)
-        => Binding -> [ListenerH s p h m] -> ListenerR s h m -> m (m ())
-listenR binding listeners rawListener =
-    packingType >>= \p -> listenRP p binding listeners rawListener
-
-
--- ** Packing type manually defined
--- $manual-packing-funcs
--- These functions are analogies to ones without /P/ suffix, but accept packing type as
--- argument.
-
--- | Similar to `send`.
-sendP :: (Packable p (WithHeaderData () (ContentData r)), MonadTransfer s m, MonadThrow m)
-      => p -> NetworkAddress -> r -> m ()
-sendP packing addr msg = sendRaw addr $
-    yield (WithHeaderData () (ContentData msg)) =$= packMsg packing
-
--- | Similar to `sendH`.
-sendHP :: (Packable p (WithHeaderData h (ContentData r)), MonadTransfer s m, MonadThrow m)
-      => p -> NetworkAddress -> h -> r -> m ()
-sendHP packing addr h msg = sendRaw addr $
-        yield (WithHeaderData h (ContentData msg)) =$= packMsg packing
-
--- | Similar to `sendR`.
-sendRP :: (Packable p (WithHeaderData h RawData), MonadTransfer s m, MonadThrow m)
-      => p -> NetworkAddress -> h -> RawData -> m ()
-sendRP packing addr h raw = sendRaw addr $
-    yield (WithHeaderData h raw) =$= packMsg packing
-
-
--- | Similar to `reply`.
-replyP :: (Packable p (WithHeaderData () (ContentData r)), MonadResponse s m,
-           MonadThrow m)
-       => p -> r -> m ()
-replyP packing msg =
-    replyRaw $ yield (WithHeaderData () (ContentData msg)) =$= packMsg packing
-
--- | Similar to `replyH`.
-replyHP :: (Packable p (WithHeaderData h (ContentData r)), MonadResponse s m,
-            MonadThrow m)
-       => p -> h -> r -> m ()
-replyHP packing h msg =
-    replyRaw $ yield (WithHeaderData h (ContentData msg)) =$= packMsg packing
-
--- | Similar to `replyR`.
-replyRP :: (Packable p (WithHeaderData h RawData), MonadResponse s m, MonadThrow m)
-       => p -> h -> RawData -> m ()
-replyRP packing h raw =
-    replyRaw $ yield (WithHeaderData h raw) =$= packMsg packing
+replyR h raw = doReply $ WithHeaderData h raw
 
 -- Those @m@ looks like waterfall :3
 type MonadListener  s m =
@@ -262,31 +199,37 @@ type MonadListener  s m =
     , WithLogger    m
     )
 
--- | Similar to `listen`.
-listenP :: (Unpackable p (WithHeaderData () RawData), Unpackable p NameData,
-            MonadListener s m)
-        => p -> Binding -> [Listener s p m] -> m (m ())
-listenP packing binding listeners = listenHP packing binding $ convert <$> listeners
+-- | Starts server with given set of listeners.
+listen :: (Unpackable p (WithHeaderData () RawData),Unpackable p NameData,
+           MonadListener s m, MonadDialog s p m)
+       => Binding -> [Listener s p m] -> m (m ())
+listen binding listeners = listenH binding $ convert <$> listeners
   where
     convert :: Listener s p m -> ListenerH s p () m
     convert (Listener f) = ListenerH $ f . second
     second ((), r) = r
 
--- | Similar to `listenH`.
-listenHP :: (Unpackable p (WithHeaderData h RawData), Unpackable p NameData,
-             MonadListener s m)
-         => p -> Binding -> [ListenerH s p h m] -> m (m ())
-listenHP packing binding listeners =
-    listenRP packing binding listeners (const $ return True)
+-- | Starts server with given set of listeners, which allow to read both header and
+-- content of received message.
+listenH :: (Unpackable p (WithHeaderData h RawData), Unpackable p NameData,
+            MonadListener s m, MonadDialog s p m)
+        => Binding -> [ListenerH s p h m] -> m (m ())
+listenH binding listeners =
+    listenR binding listeners (const $ return True)
 
--- | Similar to `listenR`.
-listenRP :: (Unpackable p (WithHeaderData h RawData), Unpackable p NameData,
-             MonadListener s m)
-         => p -> Binding -> [ListenerH s p h m] -> ListenerR s h m -> m (m ())
-listenRP packing binding listeners rawListener =
-    listenRaw binding $ unpackMsg packing =$= CL.mapM_ processContent
+-- | Starts server with given /raw listener/ and set of /typed listeners/.
+-- First, raw listener is applied, it allows to read header and content in raw form of
+-- received message.
+-- If raw listener returned `True`, then processing continues with given typed listeners
+-- in the way defined in `listenH`.
+listenR :: (Unpackable p (WithHeaderData h RawData),Unpackable p NameData,
+            MonadListener s m, MonadDialog s p m)
+        => Binding -> [ListenerH s p h m] -> ListenerR s h m -> m (m ())
+listenR binding listeners rawListener = do
+    packing <- packingType
+    listenRaw binding $ unpackMsg packing =$= CL.mapM_ (processContent packing)
   where
-    processContent msg = do
+    processContent packing msg = do
         WithHeaderData header raw <- extractMsgPart packing msg
         NameData name             <- extractMsgPart packing msg
 
