@@ -45,6 +45,9 @@ module Control.TimeWarp.Rpc.MonadDialog
        , Dialog (..)
        , runDialog
 
+       -- * ForkStrategy
+       , ForkStrategy (..)
+
        -- * Communication methods
        -- ** For MonadDialog
        -- $monad-dialog-funcs
@@ -81,12 +84,14 @@ module Control.TimeWarp.Rpc.MonadDialog
        , MonadListener
        ) where
 
-import           Control.Lens                       (at, iso, (^.))
+import           Control.Lens                       (_2, at, iso, (^.), (.~))
 import           Control.Monad                      (void, when)
 import           Control.Monad.Base                 (MonadBase (..))
 import           Control.Monad.Catch                (MonadCatch, MonadMask, MonadThrow,
                                                      handleAll)
-import           Control.Monad.Reader               (MonadReader (ask), ReaderT (..))
+import           Control.Monad.Morph                (hoist)
+import           Control.Monad.Reader               (MonadReader (ask, local),
+                                                     ReaderT (..))
 import           Control.Monad.State                (MonadState)
 import           Control.Monad.Trans                (MonadIO, MonadTrans (..))
 import           Control.Monad.Trans.Control        (ComposeSt, MonadBaseControl (..),
@@ -116,12 +121,21 @@ import           Control.TimeWarp.Rpc.MonadTransfer (Binding,
 import           Control.TimeWarp.Timed             (MonadTimed, ThreadId, fork_)
 
 
--- * MonadRpc
+-- * Related datatypes
+
+data ForkStrategy s = ForkStrategy
+    { withForkStrategy :: forall m . (MonadIO m, MonadTimed m)
+                       => (s, m ()) -> m ()
+    }
+
+
+-- * MonadDialog
 
 -- | Defines communication based on messages.
 -- It allows to specify service data (/header/) for use by overlying protocols.
 class MonadTransfer s m => MonadDialog s p m | m -> p, m -> s where
-    packingType :: m p
+    packingType     :: m p
+    setForkStrategy :: ForkStrategy MessageName -> m a -> m a
 
 -- * Communication methods
 
@@ -344,14 +358,14 @@ getListenerNameH (ListenerH f) = messageName $ proxyOfArg f
 -- Keeps packing type in context, allowing to use the same serialization strategy
 -- all over the code without extra boilerplate.
 newtype Dialog p m a = Dialog
-    { getDialog :: ReaderT p m a
+    { getDialog :: ReaderT (p, ForkStrategy MessageName) m a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadTrans,
                 MonadThrow, MonadCatch, MonadMask,
                 MonadState s, CanLog, HasLoggerName, MonadTimed)
 
 -- | Runs given `Dialog`.
 runDialog :: p -> Dialog p m a -> m a
-runDialog p = flip runReaderT p . getDialog
+runDialog p = flip runReaderT (p, ForkStrategy $ fork_ . snd) . getDialog
 
 instance MonadBase IO m => MonadBase IO (Dialog p m) where
     liftBase = lift . liftBase
@@ -369,19 +383,21 @@ instance MonadBaseControl IO m => MonadBaseControl IO (Dialog p m) where
 type instance ThreadId (Dialog p m) = ThreadId m
 
 instance Monad m => WrappedM (Dialog p m) where
-    type UnwrappedM (Dialog p m) = ReaderT p m
+    type UnwrappedM (Dialog p m) = ReaderT (p, ForkStrategy MessageName) m
     _WrappedM = iso getDialog Dialog
 
 instance MonadTransfer s m => MonadTransfer s (Dialog p m) where
 
 instance MonadTransfer s m => MonadDialog s p (Dialog p m) where
-    packingType = Dialog ask
+    packingType = fst <$> Dialog ask
+    setForkStrategy fs = Dialog . local (_2 .~ fs) . getDialog
 
 
 -- * Instances
 
 instance MonadDialog s p m => MonadDialog s p (ReaderT r m) where
     packingType = lift packingType
+    setForkStrategy fs = hoist $ setForkStrategy fs
 
 deriving instance MonadDialog s p m => MonadDialog s p (LoggerNameBox m)
 
