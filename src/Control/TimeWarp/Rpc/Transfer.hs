@@ -66,6 +66,8 @@ module Control.TimeWarp.Rpc.Transfer
        , TransferException (..)
        , runTransfer
        , runTransferS
+       , runTransferRaw
+       , getConnPool
 
        -- * Settings
        , FailsInRow
@@ -414,12 +416,21 @@ newtype Transfer s a = Transfer
 
 type instance ThreadId (Transfer s) = C.ThreadId
 
+runTransferRaw
+  :: Settings
+  -> TV.TVar (ConnectionPool s)
+  -> IO s
+  -> Transfer s a
+  -> LoggerNameBox TimedIO a
+runTransferRaw s m us t =
+    flip runReaderT us $ flip runReaderT m $ flip runReaderT s $
+    getTransfer t
+
 -- | Run with specified settings.
 runTransferS :: Settings -> IO s -> Transfer s a -> LoggerNameBox TimedIO a
 runTransferS s us t = do
     m <- liftIO (TV.newTVarIO initConnectionPool)
-    flip runReaderT us $ flip runReaderT m $ flip runReaderT s $
-        getTransfer t
+    runTransferRaw s m us t
 
 -- | Run `Transfer`, with a way to create initial state for socket.
 runTransfer :: IO s -> Transfer s a -> LoggerNameBox TimedIO a
@@ -429,6 +440,8 @@ modifyManager :: StateT (ConnectionPool s) STM a -> Transfer s a
 modifyManager how = Transfer . lift $
     ask >>= liftIO . atomically . flip modifyTVarS how
 
+getConnPool :: Transfer s (TV.TVar (ConnectionPool s))
+getConnPool = Transfer $ lift ask
 
 -- * Logic
 
