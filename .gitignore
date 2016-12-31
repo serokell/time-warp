@@ -30,3 +30,6 @@ flycheck_*
 
 # measurement results
 *.csv
+
+# Emacs
+.dir-locals.el
