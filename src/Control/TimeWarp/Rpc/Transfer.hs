@@ -64,6 +64,7 @@ module Control.TimeWarp.Rpc.Transfer
        -- * Transfer
          Transfer (..)
        , TransferException (..)
+       , ConnectionPool
        , runTransfer
        , runTransferS
        , runTransferRaw
