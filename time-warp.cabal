@@ -29,7 +29,7 @@ library
                      , Control.TimeWarp.Timed.TimedIO
                      , Control.TimeWarp.Timed.TimedT
   build-depends:       ansi-terminal
-                     , base >=4.8 && <4.9
+                     , base >=4.8 && <100500
                      , bytestring >= 0.10.6.0
                      , containers
                      , data-default
