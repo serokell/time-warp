@@ -1,12 +1,14 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 module Control.TimeWarp.Rpc.TH
-    ( mkRequest
+    ( mkRequestWithErr
+    , mkRequest
     ) where
 
+import           Data.Void                     (Void)
 import           Language.Haskell.TH
 
-import           Control.TimeWarp.Rpc.MonadRpc    (RpcRequest (..))
+import           Control.TimeWarp.Rpc.MonadRpc (RpcRequest (..))
 
 -- | Generates `RpcRequest` instance by given names of request, response and
 -- expected exception types.
@@ -25,9 +27,8 @@ import           Control.TimeWarp.Rpc.MonadRpc    (RpcRequest (..))
 --     type ExpectedError MyRequest = MyError
 --     methodName _ = "<module name>.MyRequest"
 -- @
-
-mkRequest :: Name -> Name -> Name -> Q [Dec]
-mkRequest reqType respType errType =
+mkRequestWithErr :: Name -> Name -> Name -> Q [Dec]
+mkRequestWithErr reqType respType errType =
     (:[]) <$> mkInstance
   where
     mkInstance =
@@ -47,3 +48,6 @@ mkRequest reqType respType errType =
     func = return $ FunD 'methodName
         [ Clause [WildP] (NormalB . LitE . StringL $ show reqType) []
         ]
+
+mkRequest :: Name -> Name -> Q [Dec]
+mkRequest reqType respType = mkRequestWithErr reqType respType ''Void

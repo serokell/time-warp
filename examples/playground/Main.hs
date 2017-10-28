@@ -24,7 +24,7 @@ import          Control.TimeWarp.Timed      (MonadTimed (wait), sec, ms, sec', w
                                              interval, for, Microsecond)
 import          Control.TimeWarp.Rpc        (MonadRpc (..), MsgPackRpc, PureRpc,
                                              runMsgPackRpc, runPureRpc,
-                                             Method (..), mkRequest)
+                                             Method (..), mkRequestWithErr)
 
 main :: IO ()
 main = return ()  -- use ghci
@@ -52,7 +52,7 @@ data EpicException = EpicException String
 
 instance Exception EpicException
 
-$(mkRequest ''EpicRequest ''String ''EpicException)
+$(mkRequestWithErr ''EpicRequest ''String ''EpicException)
 
 -- * scenarios
 
