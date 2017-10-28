@@ -50,7 +50,6 @@ library
                      , quickcheck-instances
                      , random >= 1.1
                      , safe
-                     , serokell-core
                      , stm >= 2.4.4
                      , template-haskell
                      , text >= 1.2.2.0
@@ -88,7 +87,6 @@ test-suite time-warp-test
                      , msgpack >= 1.0.0
                      , mtl
                      , QuickCheck >= 2.8.1
-                     , serokell-core
                      , stm >= 2.4.4.1
                      , text >= 1.2.2.0
                      , text-format
@@ -118,7 +116,6 @@ executable playground
                      , msgpack >= 1.0.0
                      , mtl
                      , QuickCheck >= 2.8.1
-                     , serokell-core
                      , stm >= 2.4.4.1
                      , text >= 1.2.2.0
                      , text-format
