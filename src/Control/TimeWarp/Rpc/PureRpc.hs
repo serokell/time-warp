@@ -1,5 +1,6 @@
 {-# LANGUAGE ExplicitForAll        #-}
 {-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving    #-}
 {-# LANGUAGE TemplateHaskell       #-}
@@ -20,37 +21,58 @@
 module Control.TimeWarp.Rpc.PureRpc
        ( PureRpc
        , runPureRpc
+
        , DelaysSpecifier (..)
-       , Delays (..)
-       , ConnectionOutcome (..)
-       , getRandomTR
+       , Delays
+
+       -- * Delay rules
+       -- ** Primitives
+       , constant
+       , uniform
+       , blackout
+
+       -- ** Combinators
+       , frequency
+
+       -- *** Time filtering
+       , postponed
+       , temporal
+       , inTimeRange
+
+       -- *** Address filtering
+       , forAddress
+       , forAddressesList
+       , forAddresses
        ) where
 
-import           Control.Lens                  (both, makeLenses, to, use, (%%=),
-                                                (%~), at, (?=))
-import           Control.Monad                 (forM_, when)
+import           Control.Lens                  (at, both, makeLenses, to, use, (%%=),
+                                                (%~), (?=))
+import           Control.Monad                 (forM_, unless, when)
 import           Control.Monad.Catch           (MonadCatch, MonadMask, MonadThrow (..))
 import           Control.Monad.Random          (MonadRandom (getRandomR), Rand, runRand)
 import           Control.Monad.State           (MonadState (get, put, state), StateT,
                                                 evalStateT)
 import           Control.Monad.Trans           (MonadIO, MonadTrans, lift)
 import           Data.Default                  (Default, def)
-import           Formatting                    (sformat, (%), shown)
-import           Data.Map                      as Map
-import           Data.Time.Units               (fromMicroseconds, toMicroseconds)
+import           Data.List                     (find)
+import qualified Data.Map                      as Map
+import           Data.Maybe                    (fromMaybe)
+import qualified Data.Set                      as S
+import           Data.Time.Units               (TimeUnit, fromMicroseconds,
+                                                toMicroseconds)
+import           Formatting                    (sformat, shown, (%))
 import           System.Random                 (StdGen)
 
 import           Data.MessagePack.Object       (MessagePack, fromObject, toObject)
 
 import           Control.TimeWarp.Logging      (WithNamedLogger)
-import           Control.TimeWarp.Rpc.MonadRpc (MonadRpc (..), proxyOf,
-                                                NetworkAddress, Host, Port,
-                                                Method (..), getMethodName,
-                                                RpcRequest (..), RpcError (..))
+import           Control.TimeWarp.Rpc.MonadRpc (Host, Method (..), MonadRpc (..),
+                                                NetworkAddress, Port, RpcError (..),
+                                                RpcRequest (..), getMethodName, proxyOf)
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..),
-                                                PureThreadId, TimedT, for,
-                                                virtualTime, runTimedT, sleepForever,
-                                                wait, ThreadId)
+                                                PureThreadId, ThreadId, TimedT, for,
+                                                runTimedT, sleepForever, virtualTime,
+                                                wait)
 
 localhost :: Host
 localhost = "127.0.0.1"
@@ -61,6 +83,9 @@ data ConnectionOutcome
     = ConnectedIn Microsecond
     -- | Connection would be never established, client hangs.
     | NeverConnected
+    -- | Alternative rule will be tried. If no other rule specified, use 0 delay.
+    -- This allows to combine rules via 'Monoid' instance.
+    | UndefinedConnectionOutcome
 
 -- | Allows to describe most complicated behaviour of network.
 --
@@ -69,35 +94,30 @@ data ConnectionOutcome
 -- * Always 1 second delay:
 --
 -- @
--- Delays $ \\_ _ -> return $ ConnectedIn (interval 1 sec)
+-- constant @Second 1
 -- @
 --
 -- * Delay varies between 1 and 5 seconds (with granularity of 1 mcs):
 --
 -- @
--- Delays $ \\_ _ -> ConnectedIn \<$\> getRandomTR (interval 1 sec, interval 5 sec)
+-- uniform @Second (1, 5)
 -- @
 --
--- * For first 10 seconds after scenario start connection is established
--- with probability of 1/6:
+-- * For first 10 seconds after scenario start connection delay increases from
+-- 1 to 2 seconds.
 --
 -- @
--- Delays $ \\_ time -> do
---     p <- getRandomR (0, 5)
---     if (p == 0) && (time <= interval 10 sec)
---         then return $ ConnectedIn 0
---         else return NeverConnected
+-- mconcat
+--     [ temporal (interval 10 sec) $ constant @Second 1
+--     , constant @Second 2
+--     ]
 -- @
 --
 -- * Node with address `isolatedAddr` is not accessible:
 --
 -- @
--- Delays $ \\serverAddr _ ->
---     return if serverAddr == isolatedAddr
---            then NeverConnected
---            else ConnectedIn 0
+-- forAddress isolatedAddr blackout
 -- @
-
 newtype Delays = Delays
     { -- | Basing on current virtual time, rpc method server's
       -- address, returns delay after which server receives RPC request.
@@ -105,6 +125,84 @@ newtype Delays = Delays
                 -> Microsecond
                 -> Rand StdGen ConnectionOutcome
     }
+
+-- | This allows to combine delay rules so that, if first rule returns
+-- undefined outcome then second is tried and so on.
+instance Monoid Delays where
+    mempty = Delays $ \_ _ -> pure UndefinedConnectionOutcome
+
+    Delays d1 `mappend` Delays d2 =
+        Delays $ \addr time ->
+            d1 addr time >>= \case
+                UndefinedConnectionOutcome -> d2 addr time
+                outcome -> pure outcome
+
+-- | Delays vary in given range uniformly.
+uniform :: TimeUnit t => (t, t) -> Delays
+uniform range =
+    Delays $ \_ _ ->
+        ConnectedIn . fromMicroseconds <$>
+        getRandomR (both %~ toMicroseconds $ range)
+
+-- | Fixed delay.
+constant :: TimeUnit t => t -> Delays
+constant t = uniform (t, t)
+
+-- | Message never gets delivered.
+blackout :: Delays
+blackout = Delays $ \_ _ -> pure NeverConnected
+
+-- | Chooses one of the given delays, with a weighted random distribution.
+-- The input list must be non-empty.
+frequency :: [(Int, Delays)] -> Delays
+frequency [] = error "frequency: list should not be empty!"
+frequency distr =
+    Delays $ \addr time -> do
+        k <- getRandomR (0, total - 1)
+        let (_, Delays d) =
+              fromMaybe (error "Failed to get distr item") $
+              find ((> k) . fst) distr'
+        d addr time
+  where
+    boundaries = tail $ scanl1 (+) $ map fst distr
+    total = last boundaries
+    distr' = zip boundaries (map snd distr)
+
+-- | Rule activates after given amount of time.
+postponed :: Microsecond -> Delays -> Delays
+postponed start (Delays delays) =
+    Delays $ \addr time -> delays addr (time - start)
+
+-- | Rule is active for given period of time.
+temporal :: Microsecond -> Delays -> Delays
+temporal duration (Delays delays) =
+    Delays $ \addr time ->
+        if 0 <= time || time < duration
+        then delays addr time
+        else pure UndefinedConnectionOutcome
+
+-- | Rule is active in given time range.
+inTimeRange :: (Microsecond, Microsecond) -> Delays -> Delays
+inTimeRange (start, end) = postponed start . temporal (end - start)
+
+-- | Rule applies to destination addresses which comply predicate.
+forAddresses :: (NetworkAddress -> Bool) -> Delays -> Delays
+forAddresses fits (Delays delays) =
+    Delays $ \addr time ->
+        if fits addr
+        then delays addr time
+        else pure UndefinedConnectionOutcome
+
+-- | Rule applies to given address.
+forAddress :: NetworkAddress -> Delays -> Delays
+forAddress addr = forAddresses (== addr)
+
+-- | Rule applies to given list of addresses.
+forAddressesList :: [NetworkAddress] -> Delays -> Delays
+forAddressesList addrs =
+    let addrsSet = S.fromList addrs
+    in  forAddresses (`S.member` addrsSet)
+
 
 -- | Describes network nastiness.
 class DelaysSpecifier d where
@@ -116,15 +214,15 @@ instance DelaysSpecifier Delays where
 
 -- | Connection is never established.
 instance DelaysSpecifier () where
-    toDelays = const . Delays . const . const . return $ NeverConnected
+    toDelays () = blackout
 
 -- | Specifies permanent connection delay.
 instance DelaysSpecifier Microsecond where
-    toDelays = Delays . const . const . return . ConnectedIn
+    toDelays = constant
 
 -- | Connection delay varies is specified range.
 instance DelaysSpecifier (Microsecond, Microsecond) where
-    toDelays = Delays . const . const . fmap ConnectedIn . getRandomTR
+    toDelays = uniform
 
 -- This is needed for QC.
 instance Show Delays where
@@ -132,11 +230,7 @@ instance Show Delays where
 
 -- | Describes reliable network.
 instance Default Delays where
-    def = Delays . const . const . return . ConnectedIn $ 0
-
--- | Return a randomly-selected time value in specified range.
-getRandomTR :: MonadRandom m => (Microsecond, Microsecond) -> m Microsecond
-getRandomTR = fmap fromMicroseconds . getRandomR . (both %~ toMicroseconds)
+    def = constant (0 :: Microsecond)
 
 -- | Keeps servers' methods.
 type Listeners m = Map.Map (Port, String) (Method m)
@@ -213,14 +307,12 @@ request req listeners' port =
 
 instance (MonadIO m, MonadCatch m) =>
          MonadRpc (PureRpc m) where
-    send addr@(host, port) req =
-        if host /= localhost
-            then
-                error "Can't emulate for host /= localhost"
-            else do
-                waitDelay addr
-                ls <- PureRpc $ use listeners
-                request req ls port
+    send addr@(host, port) req = do
+        unless (host == localhost) $
+            error "Can't emulate for host /= localhost"
+        waitDelay addr
+        ls <- PureRpc $ use listeners
+        request req ls port
     serve port methods =
         PureRpc $
         do lift $
@@ -233,7 +325,7 @@ instance (MonadIO m, MonadCatch m) =>
            sleepForever
       where
         alreadyBindedError = error $ concat
-            ["Can't launch server, port "
+            [ "Can't launch server, port "
             , show port
             , " is already bisy"
             ]
@@ -248,5 +340,6 @@ waitDelay addr =
        time    <- virtualTime
        delay   <- randSeed %%= runRand (evalDelay delays' addr time)
        case delay of
-           ConnectedIn connDelay -> wait (for connDelay)
-           NeverConnected        -> sleepForever
+           ConnectedIn connDelay      -> wait (for connDelay)
+           NeverConnected             -> sleepForever
+           UndefinedConnectionOutcome -> pure ()
