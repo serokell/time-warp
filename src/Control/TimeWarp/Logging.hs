@@ -50,6 +50,7 @@ import           Control.Monad.Trans.Cont  (ContT, mapContT)
 
 import           Data.String               (IsString)
 import qualified Data.Text                 as T
+import           Data.Text.Buildable       (Buildable)
 import           Data.Typeable             (Typeable)
 import           GHC.Generics              (Generic)
 
@@ -77,7 +78,7 @@ data Severity
 -- | Logger name to keep in context.
 newtype LoggerName = LoggerName
     { loggerName :: String
-    } deriving (Show, IsString)
+    } deriving (Show, IsString, Buildable)
 
 -- | Defined such that @n1@ is parent for @(n1 <> n2)@
 -- (see <http://hackage.haskell.org/package/hslogger-1.2.10/docs/System-Log-Logger.html hslogger description>).
