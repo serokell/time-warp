@@ -20,15 +20,14 @@ module Bench.Network.Commons
     ) where
 
 import           Control.Applicative   ((<|>))
+import           Control.Lens          ((&), (?~))
 import           Control.Monad         (join)
 import           Control.Monad.Trans   (MonadIO (..))
 import           Data.Binary           (Binary)
 import           Data.Binary           (Binary (..))
 import qualified Data.ByteString.Lazy  as BL
 import           Data.Data             (Data)
-import           Data.Default          (def)
 import           Data.Functor          (($>))
-import qualified Data.HashMap.Strict   as M
 import           Data.Int              (Int64)
 import           Data.Monoid           ((<>))
 import           Data.Text.Buildable   (Buildable, build)
@@ -40,8 +39,9 @@ import           Prelude               hiding (takeWhile)
 import           Data.Attoparsec.Text  (Parser, char, decimal, string, takeWhile)
 
 import           Control.TimeWarp.Rpc  (Message (formatMessage), messageName')
-import           System.Wlog           (LoggerConfig (..), Severity (..), WithLogger,
-                                        logInfo, parseLoggerConfig, traverseLoggerConfig)
+import           System.Wlog           (Severity (..), WithLogger, initLoggingFromYaml,
+                                        lcTermSeverity, logInfo, productionB,
+                                        setupLogging)
 
 
 -- * Transfered data types
@@ -82,36 +82,13 @@ logMeasure miEvent miId miPayload = do
     miTime <- curTimeMcs
     logInfo $ F.sformat F.build $ LogMessage MeasureInfo{..}
 
-defaultLogConfig :: LoggerConfig
-defaultLogConfig = def
-    { lcSeverity   = Just Warning
-    , lcSubloggers = M.fromList
-        [ withName "sender" def
-            { lcSeverity = Just Info
-            , lcSubloggers = M.fromList
-                [ withName "comm" def
-                    { lcSeverity = Just Error
-                    }
-                ]
-            }
-        , withName "receiver" def
-            { lcSeverity = Just Info
-            , lcSubloggers = M.fromList
-                [ withName "comm" def
-                    { lcSeverity = Just Error
-                    }
-                ]
-            }
-        ]
-    }
+loadLogConfig :: MonadIO m => Maybe FilePath -> m ()
+loadLogConfig configFile = do
+    maybe setupDefaultLogging initLoggingFromYaml configFile
   where
-    withName = (,)
-
-loadLogConfig :: MonadIO m => Maybe FilePath -> Maybe FilePath -> m ()
-loadLogConfig logsPrefix configFile = do
-    loggerConfig <- maybe (return defaultLogConfig) parseLoggerConfig configFile
-    traverseLoggerConfig id loggerConfig logsPrefix
-
+    setupDefaultLogging =
+        let conf = productionB & lcTermSeverity ?~ Debug
+        in  setupLogging Nothing conf
 
 -- * Logging & parsing
 

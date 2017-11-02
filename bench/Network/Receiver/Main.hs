@@ -26,7 +26,7 @@ main = do
             empty
 
     runNode "receiver" $ do
-        loadLogConfig logsPrefix logConfig
+        loadLogConfig logConfig
         liftIO $ setLocaleEncoding utf8
 
         stopper <- listen (AtPort port)

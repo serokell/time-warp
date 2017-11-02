@@ -32,7 +32,7 @@ main = do
             empty
 
     runNode "sender" $ do
-        loadLogConfig logsPrefix logConfig
+        loadLogConfig logConfig
         liftIO $ setLocaleEncoding utf8
 
         let sendDelay :: Microsecond

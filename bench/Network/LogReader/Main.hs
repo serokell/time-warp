@@ -2,8 +2,7 @@
 
 import           Control.Applicative          (empty, (<|>))
 import           Control.Exception            (Exception)
-import           Control.Lens                 (at, (%=), (^.), _2,
-                                               _Just)
+import           Control.Lens                 (at, (%=), (^.), _2, _Just)
 import           Control.Monad                (forM_)
 import           Control.Monad.Catch          (handle)
 import           Control.Monad.State          (StateT (..), evalStateT, execStateT, get,
@@ -32,9 +31,10 @@ import           Bench.Network.Commons        (LogMessage (..), MeasureEvent (..
                                                Timestamp, logMessageParser,
                                                measureInfoParser)
 import           LogReaderOptions             (Args (..), argsParser)
-import           System.Wlog                  (LoggerNameBox, Severity (Info),
-                                               initLogging, logError, logWarning,
-                                               usingLoggerName, usingLoggerName)
+import           System.Wlog                  (LoggerConfig (..), LoggerNameBox,
+                                               Severity (Debug), logError, logWarning,
+                                               setupLogging, usingLoggerName,
+                                               usingLoggerName)
 
 
 type Measures = M.Map MsgId (Payload, [(MeasureEvent, Timestamp)])
@@ -128,7 +128,7 @@ getOptions = (\(a, ()) -> a) <$> simpleOptions
 
 main :: IO ()
 main = usingLoggerName mempty $ do
-    initLogging Info
+    setupLogging Nothing mempty{ _lcTermSeverity = Just Debug }
     Args{..} <- liftIO getOptions
     measures <- flip execStateT M.empty $
         forM_ inputFiles analyze

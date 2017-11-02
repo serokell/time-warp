@@ -91,7 +91,7 @@ import           Control.Monad.Catch                (Exception, MonadCatch,
                                                      throwM)
 import           Control.Monad.Morph                (hoist)
 import           Control.Monad.Reader               (MonadReader (ask), ReaderT (..))
-import           Control.Monad.State                (StateT (..))
+import           Control.Monad.State.Strict         (StateT (..))
 import           Control.Monad.Trans                (MonadIO (..), lift)
 import           Control.Monad.Trans.Control        (MonadBaseControl (..))
 

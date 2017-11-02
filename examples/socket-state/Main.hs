@@ -7,13 +7,12 @@ module Main where
 
 import           Control.Concurrent       (forkIO)
 import           Control.Concurrent.STM   (TVar, atomically, newTVar)
-import           Control.Lens             ((<+=))
+import           Control.Lens             ((&), (<+=), (?~))
 import           Control.Monad            (forM_, void)
 import           Control.Monad.IO.Class   (MonadIO (liftIO))
 import           Control.Monad.Loops      (whileM)
 import           Data.Binary              (Binary)
 import           Data.Data                (Data)
-import           Data.Default             (def)
 import           Data.Monoid              ((<>))
 import           Data.String              (fromString)
 import           Data.Time.Clock          (getCurrentTime)
@@ -22,7 +21,8 @@ import           GHC.Generics             (Generic)
 import           Serokell.Util.Concurrent (modifyTVarS, threadDelay)
 import           System.Random
 import           System.Wlog              (LoggerConfig (..), LoggerName, Severity (Info),
-                                           logInfo, traverseLoggerConfig, usingLoggerName)
+                                           lcTermSeverity, logInfo, productionB,
+                                           setupLogging, usingLoggerName)
 
 import           Control.TimeWarp.Rpc     (BinaryP, Binding (AtPort), Dialog,
                                            Listener (..), Message (..), Transfer, close,
@@ -39,12 +39,10 @@ runNode name = void . forkIO . runTimedIO . usingLoggerName name . runTransfer m
         mkState = atomically $ newTVar 0
 
 ppLoggerConfig :: LoggerConfig
-ppLoggerConfig = def { lcSubloggers = [("server", infoConf), ("client", infoConf)] }
-  where
-    infoConf = def { lcSeverity = Just Info }
+ppLoggerConfig = productionB & lcTermSeverity ?~ Info
 
 initLogging :: MonadIO m => m ()
-initLogging = traverseLoggerConfig id ppLoggerConfig Nothing
+initLogging = setupLogging Nothing ppLoggerConfig
 
 data Ping = Ping Int
     deriving (Generic, Binary, Data)

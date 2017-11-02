@@ -135,6 +135,7 @@ executable ping-pong
                      , data-default
                      , exceptions    >= 0.8.2.1
                      , formatting
+                     , lens
                      , log-warper    >= 0.2.0
                      , mtl
                      , serokell-util >= 0.1.1.1
@@ -239,6 +240,7 @@ executable bench-sender
                      , extra >= 1.4
                      , formatting
                      , hslogger
+                     , lens
                      , log-warper >= 0.2.0
                      , monad-control >= 1.0.1
                      , mtl
@@ -278,6 +280,7 @@ executable bench-receiver
                      , exceptions >= 0.8.2.1
                      , formatting
                      , hslogger
+                     , lens
                      , log-warper >= 0.2.0
                      , mtl
                      , optparse-simple >= 0.0.3
@@ -317,6 +320,7 @@ executable bench-log-reader
                      , exceptions >= 0.8.2.1
                      , formatting
                      , hslogger
+                     , lens
                      , log-warper >= 0.2.0
                      , lens >= 4.14
                      , mtl

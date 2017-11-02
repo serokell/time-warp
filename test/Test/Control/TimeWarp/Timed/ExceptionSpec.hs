@@ -13,7 +13,8 @@ import           Control.Exception.Base       (ArithException (Overflow),
 import           Control.Monad.Catch          (catch, catchAll, throwM)
 import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans          (MonadIO)
-import           System.Wlog                  (Severity (Error), initLogging)
+import           System.Wlog                  (LoggerConfig (..), Severity (Error),
+                                               setupLogging)
 import           Test.Hspec                   (Spec, before, describe)
 import           Test.Hspec.QuickCheck        (prop)
 import           Test.QuickCheck              (NonNegative (..), Property)
@@ -29,7 +30,7 @@ import           Test.Control.TimeWarp.Common ()
 
 spec :: Spec
 spec =
-    before (initLogging Error) $
+    before initLogging $
     describe "WorkMode" $ do
         describe "error" $ do
             prop "should abort the execution"
@@ -64,6 +65,8 @@ spec =
                 throwToThrowsCorrectException
             prop "throwTo can kell thread"
                 throwToCanKillThread
+  where
+    initLogging = setupLogging Nothing mempty{ _lcTermSeverity = Just Error }
 
 -- FIXME
 exceptionShouldAbortExecution

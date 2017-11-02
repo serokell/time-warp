@@ -36,9 +36,9 @@ import           Data.Word                         (Word16)
 import           Formatting                        (sformat, shown, string, (%))
 import           GHC.Generics                      (Generic)
 
-import           System.Wlog                       (LoggerName, Severity (Debug),
-                                                    initLogging, logDebug, logInfo,
-                                                    usingLoggerName)
+import           System.Wlog                       (LoggerConfig (..), LoggerName,
+                                                    Severity (Debug), logDebug, logInfo,
+                                                    setupLogging, usingLoggerName)
 
 import           Control.TimeWarp.Rpc              (BinaryP (..), Binding (..),
                                                     ForkStrategy (..), Listener (..),
@@ -100,6 +100,10 @@ instance Message EpicRequest
 narrator :: LoggerName
 narrator = "*"
 
+initLogging :: MonadIO m => m ()
+initLogging =
+    setupLogging Nothing mempty{ _lcTermSeverity = Just Debug }
+
 -- Emulates dialog of two guys, maybe several times, in parallel:
 -- 1: Ping
 -- 2: Pong
@@ -107,7 +111,7 @@ narrator = "*"
 -- 2: <prints result>
 yohohoScenario :: IO ()
 yohohoScenario = runTimedIO $ do
-    initLogging Debug
+    initLogging
     (saveWorker, killWorkers) <- newNode narrator workersManager
 
     -- guy 1
@@ -157,7 +161,7 @@ yohohoScenario = runTimedIO $ do
 -- | Example of `Transfer` usage
 transferScenario :: IO ()
 transferScenario = runTimedIO $ do
-    initLogging Debug
+    initLogging
     (saveWorker, killWorkers) <- newNode narrator workersManager
 
     newNode "node.server" $
@@ -237,7 +241,7 @@ rpcScenario = runTimedIO $ do
 -- * Blind proxy scenario, illustrates work with headers and raw data.
 proxyScenario :: IO ()
 proxyScenario = runTimedIO $ do
-    liftIO $ initLogging Debug
+    initLogging
     (saveWorker, killWorkers) <- newNode narrator workersManager
 
     lock <- liftIO newEmptyMVar
@@ -289,7 +293,7 @@ proxyScenario = runTimedIO $ do
 -- | Slowpoke server scenario
 slowpokeScenario :: IO ()
 slowpokeScenario = runTimedIO $ do
-    initLogging Debug
+    initLogging
     (saveWorker, killWorkers) <- newNode narrator workersManager
 
     newNode "server" . fork_ $ do
@@ -319,7 +323,7 @@ slowpokeScenario = runTimedIO $ do
 
 closingServerScenario :: IO ()
 closingServerScenario = runTimedIO $ do
-    initLogging Debug
+    initLogging
     (saveWorker, killWorkers) <- newNode narrator workersManager
 
     newNode "server" . fork_ $
@@ -344,7 +348,7 @@ closingServerScenario = runTimedIO $ do
 
 pendingForkStrategy :: IO ()
 pendingForkStrategy = runTimedIO $ do
-    initLogging Debug
+    initLogging
     (saveWorker, killWorkers) <- newNode narrator workersManager
 
     newNode "server" . fork_ $
