@@ -27,6 +27,7 @@ module Control.TimeWarp.Rpc.PureRpc
 
        -- * Delay rules
        -- ** Primitives
+       , steady
        , constant
        , uniform
        , blackout
@@ -148,6 +149,10 @@ uniform range =
 constant :: TimeUnit t => t -> Delays
 constant t = uniform (t, t)
 
+-- | No delays.
+steady :: Delays
+steady = constant (0 :: Microsecond)
+
 -- | Message never gets delivered.
 blackout :: Delays
 blackout = Delays $ \_ _ -> pure NeverConnected
@@ -230,7 +235,7 @@ instance Show Delays where
 
 -- | Describes reliable network.
 instance Default Delays where
-    def = constant (0 :: Microsecond)
+    def = steady
 
 -- | Keeps servers' methods.
 type Listeners m = Map.Map (Port, String) (Method m)
