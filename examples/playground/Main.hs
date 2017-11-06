@@ -2,29 +2,35 @@
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
 
 module Main
     ( main
     , yohohoScenario
+    , repeatedScenario
     , runEmulation
+    , runEmulationWithDelays
     , runReal
     ) where
 
-import          Control.Exception           (Exception)
+import           Control.Exception       (Exception)
 
-import          Control.Monad.Catch         (throwM)
-import          Control.Monad.Random        (newStdGen)
-import          Control.Monad.Trans         (MonadIO (..))
-import          Data.MessagePack.Object     (MessagePack)
-import          GHC.Generics                (Generic)
+import           Control.Monad           (forM_)
+import           Control.Monad.Catch     (MonadCatch, throwM)
+import           Control.Monad.Random    (newStdGen)
+import           Control.Monad.Trans     (MonadIO (..))
+import           Data.MessagePack.Object (MessagePack)
+import           Data.Monoid             ((<>))
+import           GHC.Generics            (Generic)
 
-import          Control.TimeWarp.Timed      (MonadTimed (wait), sec, ms, sec', work,
-                                             interval, for, Microsecond)
-import          Control.TimeWarp.Rpc        (MonadRpc (..), MsgPackRpc, PureRpc,
-                                             runMsgPackRpc, runPureRpc,
-                                             Method (..), mkRequestWithErr)
+import           Control.TimeWarp.Rpc    (Delays, Method (..), MonadRpc (..), MsgPackRpc,
+                                          PureRpc, constant, mkRequest, mkRequestWithErr,
+                                          runMsgPackRpc, runPureRpc, submit)
+import           Control.TimeWarp.Timed  (Millisecond, MonadTimed (wait), for, ms, sec,
+                                          sec', virtualTime, work)
 
 main :: IO ()
 main = return ()  -- use ghci
@@ -33,12 +39,12 @@ runReal :: MsgPackRpc a -> IO a
 runReal = runMsgPackRpc
 
 runEmulation :: PureRpc IO a -> IO a
-runEmulation scenario = do
+runEmulation scenario = runEmulationWithDelays scenario (constant @Millisecond 50)
+
+runEmulationWithDelays :: PureRpc IO a -> Delays -> IO a
+runEmulationWithDelays scenario delays = do
     gen <- newStdGen
     runPureRpc delays gen scenario
-  where
-    delays :: Microsecond
-    delays = interval 50 ms
 
 -- * data types
 
@@ -66,9 +72,28 @@ yohohoScenario = do
         EpicRequest 14 " men on the dead man's chest"
 
     liftIO $ print res
-  where 
+  where
     method = Method $ \EpicRequest{..} -> do
         liftIO $ putStrLn "Got request, forming answer..."
         wait (for 0.1 sec')
         _ <- throwM $ EpicException "kek"
         return $ show (num + 1) ++ msg
+
+data Msg = Msg Int
+    deriving (Generic, MessagePack)
+
+$(mkRequest ''Msg ''())
+
+repeatedScenario :: (MonadTimed m, MonadRpc m, MonadIO m, MonadCatch m) => m ()
+repeatedScenario  = do
+    work (for 12 sec) $
+        serve 1234
+            [Method $ \(Msg i) -> do
+                time <- virtualTime
+                liftIO $ putStrLn ("[" <> show time <> "] " <> "Lol " <> show i)
+            ]
+
+    wait (for 100 ms)
+    forM_ [0..9] $ \i -> do
+        submit ("127.0.0.1", 1234) (Msg i)
+        wait (for 1 sec)

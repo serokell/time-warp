@@ -27,6 +27,7 @@ module Control.TimeWarp.Rpc.MonadRpc
        , RpcRequest (..)
        , MonadRpc (..)
        , sendTimeout
+       , submit
        , Method (..)
        , MethodTry (..)
        , getMethodName
@@ -35,21 +36,22 @@ module Control.TimeWarp.Rpc.MonadRpc
        , RpcError (..)
        ) where
 
-import           Control.Exception          (Exception)
-import           Control.Monad.Catch        (MonadThrow (..), MonadCatch, try)
-import           Control.Monad.Reader       (ReaderT (..))
-import           Control.Monad.Trans        (lift)
-import           Data.ByteString            (ByteString)
-import           Data.Monoid                ((<>))
-import           Data.Proxy                 (Proxy (..), asProxyTypeOf)
-import           Data.Text                  (Text)
-import           Data.Text.Buildable        (Buildable (..))
+import           Control.Exception        (Exception)
+import           Control.Monad            (void)
+import           Control.Monad.Catch      (MonadCatch, MonadThrow (..), catchAll, try)
+import           Control.Monad.Reader     (ReaderT (..))
+import           Control.Monad.Trans      (lift)
+import           Data.ByteString          (ByteString)
+import           Data.Monoid              ((<>))
+import           Data.Proxy               (Proxy (..), asProxyTypeOf)
+import           Data.Text                (Text)
+import           Data.Text.Buildable      (Buildable (..))
 
-import           Data.MessagePack.Object    (MessagePack (..))
-import           Data.Time.Units            (TimeUnit)
+import           Data.MessagePack.Object  (MessagePack (..))
+import           Data.Time.Units          (Hour, TimeUnit)
 
-import           Control.TimeWarp.Logging   (LoggerNameBox (..))
-import           Control.TimeWarp.Timed     (MonadTimed (timeout))
+import           Control.TimeWarp.Logging (LoggerNameBox (..))
+import           Control.TimeWarp.Timed   (MonadTimed (timeout), fork_)
 
 
 -- | Port number.
@@ -100,12 +102,22 @@ class MonadThrow m => MonadRpc m where
     -- | Starts RPC server with a set of RPC methods.
     serve :: Port -> [Method m] -> m ()
 
--- | Same as `execClient`, but allows to set up timeout for a call (see
+-- | Same as `send`, but allows to set up timeout for a call (see
 -- `Control.TimeWarp.Timed.MonadTimed.timeout`).
 sendTimeout
     :: (MonadTimed m, MonadRpc m, RpcRequest r, TimeUnit t)
     => t -> NetworkAddress -> r -> m (Response r)
 sendTimeout t addr = timeout t . send addr
+
+-- | Similar to `send`, but doesn't wait for result.
+submit
+    :: (MonadCatch m, MonadTimed m, MonadRpc m, RpcRequest r)
+    => NetworkAddress -> r -> m ()
+submit addr req =
+    fork_ $ void (sendTimeout timeoutDelay addr req) `catchAll` \_ -> return ()
+  where
+    -- without timeout emulation has no choice but to hang on blackouts
+    timeoutDelay = 1 :: Hour
 
 getMethodName :: Method m -> String
 getMethodName (Method f) = let rp = Proxy :: RpcRequest r => Proxy r
@@ -144,7 +156,7 @@ data RpcError = -- | Can't find remote method on server's side die to
 instance Buildable RpcError where
     build (NetworkProblem msg) = "Network problem: " <> build msg
     build (InternalError msg)  = "Internal error: " <> build msg
-    build (ServerError e)    = "Server reports error: " <> build (show e)
+    build (ServerError e)      = "Server reports error: " <> build (show e)
 
 instance Show RpcError where
     show = show . build

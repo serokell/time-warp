@@ -4,7 +4,6 @@
 {-# LANGUAGE StandaloneDeriving    #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE ViewPatterns          #-}
 
 -- |
 -- Module      : Control.TimeWarp.Timed.MonadTimed
@@ -208,7 +207,7 @@ type instance ThreadId (ReaderT r m) = ThreadId m
 
 instance MonadTimed m => MonadTimed (ReaderT r m) where
     virtualTime = lift virtualTime
-    
+
     currentTime = lift currentTime
 
     wait = lift . wait
@@ -350,8 +349,8 @@ instance TimeAccR RelativeToNow where
     for'  = (+)
 
 instance (a ~ b, TimeAccR t) => TimeAccR (a -> (b -> Microsecond) -> t) where
-    till' acc t f = till'    $ f t + acc
-    for'  acc t f = for' $ f t + acc
+    till' acc t f = till' $ f t + acc
+    for'  acc t f = for'  $ f t + acc
 
 instance TimeUnit t => TimeAccR (t -> RelativeToNow) where
     till' acc t _   = acc + convertUnit t
