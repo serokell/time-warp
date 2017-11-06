@@ -169,7 +169,7 @@ frequency distr =
               find ((> k) . fst) distr'
         d addr time
   where
-    boundaries = tail $ scanl1 (+) $ map fst distr
+    boundaries = scanl1 (+) $ map fst distr
     total = last boundaries
     distr' = zip boundaries (map snd distr)
 
@@ -182,7 +182,7 @@ postponed start (Delays delays) =
 temporal :: Microsecond -> Delays -> Delays
 temporal duration (Delays delays) =
     Delays $ \addr time ->
-        if 0 <= time || time < duration
+        if 0 <= time && time < duration
         then delays addr time
         else pure UndefinedConnectionOutcome
 
