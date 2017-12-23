@@ -87,6 +87,7 @@ instance Monoid LoggerName where
 
     LoggerName base `mappend` LoggerName suffix
         | null base = LoggerName suffix
+        | null suffix = LoggerName base
         | otherwise = LoggerName $ base ++ "." ++ suffix
 
 convertSeverity :: Severity -> Priority
