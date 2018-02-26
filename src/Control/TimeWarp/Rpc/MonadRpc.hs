@@ -33,6 +33,7 @@ module Control.TimeWarp.Rpc.MonadRpc
        , getMethodName
        , proxyOf
        , mkMethodTry
+       , hoistMethod
        , RpcError (..)
        ) where
 
@@ -127,6 +128,9 @@ getMethodName (Method f) = let rp = Proxy :: RpcRequest r => Proxy r
 
 proxyOf :: a -> Proxy a
 proxyOf _ = Proxy
+
+hoistMethod :: (forall a. m a -> n a) -> Method m -> Method n
+hoistMethod hoist' (Method f) = Method (hoist' . f)
 
 -- * Instances
 

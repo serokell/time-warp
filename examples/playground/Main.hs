@@ -26,11 +26,12 @@ import           Data.MessagePack.Object (MessagePack)
 import           Data.Monoid             ((<>))
 import           GHC.Generics            (Generic)
 
-import           Control.TimeWarp.Rpc    (Delays, Method (..), MonadRpc (..), MsgPackRpc,
-                                          PureRpc, constant, mkRequest, mkRequestWithErr,
-                                          runMsgPackRpc, runPureRpc, submit)
-import           Control.TimeWarp.Timed  (Millisecond, MonadTimed (wait), for, ms, sec,
-                                          sec', virtualTime, work)
+import           Control.TimeWarp.Rpc    (Delays, DelaysLayer (..), Method (..),
+                                          MonadRpc (..), MsgPackRpc, PureRpc, mkRequest,
+                                          mkRequestWithErr, runDelaysLayer, runMsgPackRpc,
+                                          runPureRpc, submit)
+import           Control.TimeWarp.Timed  (MonadTimed (wait), for, ms, sec, sec',
+                                          virtualTime, work)
 
 main :: IO ()
 main = return ()  -- use ghci
@@ -39,12 +40,12 @@ runReal :: MsgPackRpc a -> IO a
 runReal = runMsgPackRpc
 
 runEmulation :: PureRpc IO a -> IO a
-runEmulation scenario = runEmulationWithDelays scenario (constant @Millisecond 50)
+runEmulation scenario = runPureRpc scenario
 
-runEmulationWithDelays :: PureRpc IO a -> Delays -> IO a
+runEmulationWithDelays :: DelaysLayer (PureRpc IO) a -> Delays -> IO a
 runEmulationWithDelays scenario delays = do
     gen <- newStdGen
-    runPureRpc delays gen scenario
+    runPureRpc $ runDelaysLayer delays gen scenario
 
 -- * data types
 
