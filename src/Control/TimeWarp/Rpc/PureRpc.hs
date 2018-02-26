@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE MultiWayIf            #-}
 {-# LANGUAGE StandaloneDeriving    #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeFamilies          #-}
@@ -122,10 +123,19 @@ data ConnectionOutcome
 newtype Delays = Delays
     { -- | Basing on current virtual time, rpc method server's
       -- address, returns delay after which server receives RPC request.
-      evalDelay :: NetworkAddress
-                -> Microsecond
-                -> Rand StdGen ConnectionOutcome
+      evalDelayUnsafe
+          :: NetworkAddress
+          -> Microsecond
+          -> Rand StdGen ConnectionOutcome
     }
+
+evalDelay :: Delays
+          -> NetworkAddress
+          -> Microsecond
+          -> Rand StdGen ConnectionOutcome
+evalDelay delays addr time =
+    if | time < 0  -> return NeverConnected
+       | otherwise -> evalDelayUnsafe delays addr time
 
 -- | This allows to combine delay rules so that, if first rule returns
 -- undefined outcome then second is tried and so on.
