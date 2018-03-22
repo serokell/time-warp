@@ -1,20 +1,24 @@
 {-# LANGUAGE ConstraintKinds           #-}
 {-# LANGUAGE DataKinds                 #-}
+{-# LANGUAGE DeriveGeneric             #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
 {-# LANGUAGE FunctionalDependencies    #-}
 {-# LANGUAGE GADTs                     #-}
+{-# LANGUAGE IncoherentInstances       #-}
 {-# LANGUAGE MultiParamTypeClasses     #-}
 {-# LANGUAGE PolyKinds                 #-}
 {-# LANGUAGE Rank2Types                #-}
+{-# LANGUAGE ScopedTypeVariables       #-}
 {-# LANGUAGE StandaloneDeriving        #-}
+{-# LANGUAGE TypeApplications          #-}
 {-# LANGUAGE TypeFamilies              #-}
 {-# LANGUAGE TypeOperators             #-}
 {-# LANGUAGE UndecidableInstances      #-}
 
 -- |
--- Module      : Control.TimeWarp.Rpc
+-- Module      : Control.TimeWarp.Rpc.MonadRpc
 -- Copyright   : (c) Serokell, 2016
 -- License     : GPL-3 (see the file LICENSE)
 -- Maintainer  : Ivanov Kostia <martoon.391@gmail.com>
@@ -31,6 +35,7 @@ module Control.TimeWarp.Rpc.MonadRpc
        , localhost
 
        , RpcRequest (..)
+       , MessageId (..)
 
        , RpcOptions (..)
        , RpcOptionMessagePack
@@ -38,47 +43,58 @@ module Control.TimeWarp.Rpc.MonadRpc
 
        , MonadRpc (..)
        , MonadMsgPackRpc
+       , MonadMsgPackUdp
        , sendTimeout
        , submit
        , Method (..)
        , MethodTry (..)
-       , getMethodName
+       , methodMessageId
        , proxyOf
        , mkMethodTry
        , hoistMethod
        , RpcError (..)
+
+       , ExtendedRpcOptions (..)
        ) where
 
 import           Control.Exception        (Exception)
 import           Control.Monad            (void)
-import           Control.Monad.Catch      (MonadCatch, MonadThrow (..), catchAll, try)
+import           Control.Monad.Catch      (MonadCatch, MonadMask, MonadThrow (..),
+                                           catchAll, try)
 import           Control.Monad.Reader     (ReaderT (..))
-import           Control.Monad.Trans      (lift)
-import           Data.ByteString          (ByteString)
+import           Control.Monad.Trans      (MonadIO, lift)
+import qualified Data.Constraint          as C
 import           Data.Monoid              ((<>))
 import           Data.Proxy               (Proxy (..), asProxyTypeOf)
 import           Data.Text                (Text)
 import           Data.Text.Buildable      (Buildable (..))
 import           GHC.Exts                 (Constraint)
+import           GHC.Generics             (Generic)
 
 import           Data.MessagePack.Object  (MessagePack (..))
 import           Data.Time.Units          (Hour, TimeUnit)
 
 import           Control.TimeWarp.Logging (LoggerNameBox (..))
-import           Control.TimeWarp.Timed   (MonadTimed (timeout), fork_)
+import           Control.TimeWarp.Timed   (MonadTimed (timeout), ThreadId, fork_)
 
 
 -- | Port number.
 type Port = Int
 
 -- | Host address.
-type Host = ByteString
+type Host = Text
 
 localhost :: Host
 localhost = "127.0.0.1"
 
 -- | Full node address.
 type NetworkAddress = (Host, Port)
+
+-- | Designates message type.
+newtype MessageId = MessageId Int
+    deriving (Eq, Ord, Show, Num, Generic)
+
+instance MessagePack MessageId
 
 -- | Defines name, response and expected error types of RPC-method to which data
 -- of @req@ type can be delivered.
@@ -92,7 +108,7 @@ class Exception (ExpectedError r) =>
 
     type ExpectedError r :: *
 
-    methodName :: Proxy r -> String
+    messageId :: Proxy r -> MessageId
 
 -- | Declares requirements of RPC implementation.
 class RpcOptions (o :: k) where
@@ -155,11 +171,12 @@ submit addr req =
     -- without timeout emulation has no choice but to hang on blackouts
     timeoutDelay = 1 :: Hour
 
-getMethodName :: Method o m -> String
-getMethodName (Method f) = let rp = Proxy :: RpcRequest r => Proxy r
-                               -- make rp contain type of f's argument
-                               _ = f $ undefined `asProxyTypeOf` rp
-                           in  methodName rp
+methodMessageId :: Method o m -> MessageId
+methodMessageId (Method f) =
+    let rp = Proxy :: RpcRequest r => Proxy r
+        -- make rp contain type of f's argument
+        _ = f $ undefined `asProxyTypeOf` rp
+    in  messageId rp
 
 proxyOf :: a -> Proxy a
 proxyOf _ = Proxy
@@ -181,6 +198,7 @@ deriving instance MonadRpc o m => MonadRpc o (LoggerNameBox m)
 -- * Aliases
 
 type MonadMsgPackRpc = MonadRpc RpcOptionMessagePack
+type MonadMsgPackUdp = MonadRpc '[RpcOptionMessagePack, RpcOptionNoReturn]
 
 -- * Exceptions
 
@@ -203,3 +221,52 @@ instance Show RpcError where
     show = show . build
 
 instance Exception RpcError
+
+-- * Util
+
+-- | Allows a monad to impement 'MonadRpc' with extra requirements.
+-- Assumes that options follow some global order.
+--
+-- Example: @MsgPackRpc@ implements 'MonadRpc \'[RpcOptionsMsgPack]',
+-- and options are fixated by monad due to functional dependency.
+-- If you need to instantiate 'MonadRpc \'[RpcOptionsMsgPack, AnotherOption]',
+-- use @ExtendedRpcOptions yourOptions MsgPackRpc@.
+newtype ExtendedRpcOptions o m a = ExtendedRpcOptions
+    { withExtendedRpcOptions :: m a
+    } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadMask
+               , MonadTimed)
+
+type instance ThreadId (ExtendedRpcOptions o m) = ThreadId m
+
+instance (RpcOptions os, MonadRpc o m, ExtendsOptions os o) => MonadRpc os (ExtendedRpcOptions os m) where
+    send addr (msg :: msg) =
+        ExtendedRpcOptions $
+        send addr msg C.\\ extendsOptions (Proxy @os, Proxy @o, Proxy @msg)
+
+    serve port methods =
+        ExtendedRpcOptions $
+        (serve port $ convert <$> methods)
+      where
+        convert :: Method os (ExtendedRpcOptions os m) -> Method o m
+        convert (Method (f :: msg -> ExtendedRpcOptions os m (Response msg))) =
+            Method (withExtendedRpcOptions . f)
+                C.\\ extendsOptions (Proxy @os, Proxy @o, Proxy :: Proxy msg)
+
+class ExtendsOptions o1 o2 where
+    extendsOptions
+        :: (Proxy o1, Proxy o2, Proxy r)
+        -> RpcConstraints o1 r C.:- RpcConstraints o2 r
+
+instance ExtendsOptions '[] '[] where
+    extendsOptions _ = C.refl
+
+instance (RpcOptions e, RpcOptions l, ExtendsOptions l l') =>
+         ExtendsOptions ((e :: *) ': (l :: [*])) (l' :: [*]) where
+    extendsOptions (_, _, Proxy :: Proxy r) =
+        C.trans (extendsOptions (Proxy @l, Proxy @l', Proxy @r)) C.weaken2
+
+instance {-# OVERLAPS #-}
+         ExtendsOptions l l' =>
+         ExtendsOptions (e ': l) (e ': l') where
+    extendsOptions (_, _, Proxy :: Proxy r) =
+        C.refl C.*** (extendsOptions (Proxy @l, Proxy @l', Proxy @r))

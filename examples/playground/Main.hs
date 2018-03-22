@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleContexts      #-}
@@ -10,11 +11,14 @@
 
 module Main
     ( main
+
     , yohohoScenario
     , repeatedScenario
+
     , runEmulation
     , runEmulationWithDelays
     , runReal
+    , runUdp
     ) where
 
 import           Control.Exception       (Exception)
@@ -29,10 +33,11 @@ import           GHC.Generics            (Generic)
 
 import           Control.TimeWarp.Rpc    (Delays, DelaysLayer (..), Method (..),
                                           MonadMsgPackRpc, MonadRpc (..), MsgPackRpc,
-                                          PureRpc, mkRequest, mkRequestWithErr,
-                                          runDelaysLayer, runMsgPackRpc, runPureRpc,
-                                          submit)
-import           Control.TimeWarp.Timed  (MonadTimed (wait), for, ms, sec, sec',
+                                          MsgPackUdp, PureRpc, RpcOptionMessagePack,
+                                          RpcOptionNoReturn, mkRequest, mkRequestWithErr,
+                                          runDelaysLayer, runMsgPackRpc, runMsgPackUdp,
+                                          runPureRpc, submit)
+import           Control.TimeWarp.Timed  (MonadTimed (wait), for, ms, sec, sec', till,
                                           virtualTime, work)
 
 main :: IO ()
@@ -40,6 +45,9 @@ main = return ()  -- use ghci
 
 runReal :: MsgPackRpc a -> IO a
 runReal = runMsgPackRpc
+
+runUdp :: MsgPackUdp a -> IO a
+runUdp = runMsgPackUdp
 
 runEmulation :: PureRpc IO a -> IO a
 runEmulation scenario = runPureRpc scenario
@@ -87,9 +95,9 @@ data Msg = Msg Int
 
 $(mkRequest ''Msg ''())
 
-repeatedScenario :: (MonadTimed m, MonadMsgPackRpc m, MonadIO m, MonadCatch m) => m ()
+repeatedScenario :: (MonadTimed m, MonadRpc '[RpcOptionMessagePack, RpcOptionNoReturn] m, MonadIO m, MonadCatch m) => m ()
 repeatedScenario  = do
-    work (for 12 sec) $
+    work (for 11 sec) $
         serve 1234
             [Method $ \(Msg i) -> do
                 time <- virtualTime
@@ -100,3 +108,6 @@ repeatedScenario  = do
     forM_ [0..9] $ \i -> do
         submit ("127.0.0.1", 1234) (Msg i)
         wait (for 1 sec)
+
+    wait (till 12 sec)
+

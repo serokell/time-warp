@@ -6,12 +6,28 @@ module Control.TimeWarp.Rpc.TH
     , mkRequest
     ) where
 
+import           Control.Concurrent.STM        (atomically)
+import           Control.Concurrent.STM.TVar   (TVar, newTVarIO, readTVar, writeTVar)
 import           Control.Monad                 (replicateM)
 import           Data.Monoid                   ((<>))
 import           Data.Void                     (Void)
+import           GHC.IO.Unsafe                 (unsafePerformIO)
 import           Language.Haskell.TH
+import           Language.Haskell.TH.Syntax    (lift)
 
-import           Control.TimeWarp.Rpc.MonadRpc (RpcRequest (..))
+import           Control.TimeWarp.Rpc.MonadRpc (MessageId (..), RpcRequest (..))
+
+-- | Counts used message ids.
+messageIdCounter :: TVar Int
+messageIdCounter = unsafePerformIO $ newTVarIO 0
+{-# NOINLINE messageIdCounter #-}
+
+-- | Acquires next free message id.
+getNextMessageId :: IO MessageId
+getNextMessageId = fmap MessageId . atomically $ do
+    msgId <- readTVar messageIdCounter
+    writeTVar messageIdCounter (msgId + 1)
+    return msgId
 
 -- | Generates `RpcRequest` instance by given names of request, response and
 -- expected exception types.
@@ -28,14 +44,18 @@ import           Control.TimeWarp.Rpc.MonadRpc (RpcRequest (..))
 -- instance RpcRequest MyRequest where
 --     type Response      MyRequest = MyResponse
 --     type ExpectedError MyRequest = MyError
---     methodName _ = "<module name>.MyRequest"
+--     messageId _ = <some unique number>
 -- @
+--
+-- Note that message ids are assigned in no determined order,
+-- if backward compatibilty is required one has to define message codes manually.
 mkRequestWithErr :: Name -> Name -> Name -> Q [Dec]
 mkRequestWithErr reqName respName errName = do
     let reqType = reifyType reqName
         respType = reifyType respName
         errType = reifyType errName
-    (:[]) <$> mkInstance reqType respType errType
+    MessageId msgId <- runIO getNextMessageId
+    mkInstance reqType respType errType msgId
   where
     reifyType :: Name -> Q Type
     reifyType name = reify name >>= \case
@@ -50,23 +70,14 @@ mkRequestWithErr reqName respName errName = do
         typeArgs <- replicateM (length typeVars) $ VarT <$> newName "a"
         pure $ foldl AppT (ConT typeConName) typeArgs
 
-    mkInstance reqType respType errType =
-        instanceD
-        (cxt [])
-        (appT (conT ''RpcRequest) reqType)
-        [ typeFamily reqType ''Response      respType
-        , typeFamily reqType ''ExpectedError errType
-        , func
-        ]
+    mkInstance reqType respType errType msgId =
+        [d|
+        instance RpcRequest $reqType where
+            type Response $reqType = $respType
+            type ExpectedError $reqType = $errType
 
-    typeFamily reqType typeFamilyName rvalueType = do
-        rc <- reqType
-        ct <- rvalueType
-        return $ TySynInstD typeFamilyName (TySynEqn [rc] ct)
-
-    func = return $ FunD 'methodName
-        [ Clause [WildP] (NormalB . LitE . StringL $ show reqName) []
-        ]
+            messageId _ = MessageId $(lift msgId)
+         |]
 
 mkRequest :: Name -> Name -> Q [Dec]
 mkRequest reqName respName = mkRequestWithErr reqName respName ''Void

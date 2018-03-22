@@ -32,10 +32,10 @@ import           Formatting                    (sformat, shown, (%))
 import           Data.MessagePack.Object       (MessagePack, fromObject, toObject)
 
 import           Control.TimeWarp.Logging      (WithNamedLogger)
-import           Control.TimeWarp.Rpc.MonadRpc (Method (..), MonadRpc (..), Port,
-                                                RpcError (..), RpcOptionMessagePack,
+import           Control.TimeWarp.Rpc.MonadRpc (MessageId, Method (..), MonadRpc (..),
+                                                Port, RpcError (..), RpcOptionMessagePack,
                                                 RpcOptions (..), RpcRequest (..),
-                                                getMethodName, localhost, proxyOf)
+                                                localhost, methodMessageId, proxyOf)
 import           Control.TimeWarp.Timed        (MonadTimed (..), PureThreadId, ThreadId,
                                                 TimedT, runTimedT, sleepForever)
 
@@ -43,7 +43,7 @@ import           Control.TimeWarp.Timed        (MonadTimed (..), PureThreadId, T
 type LocalOptions = RpcOptionMessagePack
 
 -- | Keeps servers' methods.
-type Listeners m = Map.Map (Port, String) (Method LocalOptions m)
+type Listeners m = Map.Map (Port, MessageId) (Method LocalOptions m)
 
 -- | Keeps global network information.
 data NetInfo m = NetInfo
@@ -102,7 +102,7 @@ request req listeners' port =
             name port
         Just (Method f) -> coerce =<< f =<< coerce req
   where
-    name = methodName $ proxyOf req
+    name = messageId $ proxyOf req
 
     -- TODO: how to deceive type checker without serialization?
     coerce :: (MessagePack a, MessagePack b, MonadThrow m) => a -> m b
@@ -125,7 +125,7 @@ instance (MonadIO m, MonadCatch m) =>
         do lift $
                forM_ methods $
                \method -> do
-                    let methodIx = (port, getMethodName method)
+                    let methodIx = (port, methodMessageId method)
                     defined <- use $ listeners . to (Map.member methodIx)
                     when defined alreadyBindedError
                     listeners . at methodIx ?= method

@@ -33,6 +33,7 @@ import           Control.Monad.Trans.Control       (MonadBaseControl, StM, liftB
 import           Data.IORef                        (newIORef, readIORef, writeIORef)
 import           Data.List                         (isPrefixOf)
 import qualified Data.Text                         as T
+import qualified Data.Text.Encoding                as Encoding
 import           Formatting                        (sformat, shown, (%))
 import           GHC.IO.Exception                  (IOException (IOError), ioe_errno)
 
@@ -41,11 +42,11 @@ import           Data.MessagePack.Object           (fromObject, toObject)
 import qualified Network.MessagePack.Client        as C
 import qualified Network.MessagePack.Server        as S
 
-import           Control.TimeWarp.Rpc.MonadRpc     (Method (..), MethodTry (..),
-                                                    MonadRpc (..), RpcConstraints (..),
-                                                    RpcError (..), RpcOptionMessagePack,
-                                                    RpcRequest (..), getMethodName,
-                                                    mkMethodTry, proxyOf)
+import           Control.TimeWarp.Rpc.MonadRpc     (MessageId (..), Method (..),
+                                                    MethodTry (..), MonadRpc (..),
+                                                    RpcConstraints (..), RpcError (..),
+                                                    RpcOptionMessagePack, RpcRequest (..),
+                                                    methodMessageId, mkMethodTry, proxyOf)
 import           Control.TimeWarp.Timed            (MonadTimed (..), ThreadId, TimedIO,
                                                     runTimedIO)
 
@@ -64,13 +65,13 @@ runMsgPackRpc = runTimedIO . unwrapMsgPackRpc
 -- message about unexpected error | (expected error | result)
 type ResponseData r = Either T.Text (Either (ExpectedError r) (Response r))
 
-type LocalOptions = RpcOptionMessagePack
+type LocalOptions = '[RpcOptionMessagePack]
 
 instance MonadRpc LocalOptions MsgPackRpc where
     send (addr, port) req = liftIO $ do
         box <- newIORef Nothing
-        handleExc $ C.execClient addr port $ do
-            res <- C.call name req
+        handleExc $ C.execClient (Encoding.encodeUtf8 addr) port $ do
+            res <- C.call msgId req
             liftIO . writeIORef box $ Just res
         maybeRes <- readIORef box
         (unwrapResponseData req =<<) $
@@ -79,7 +80,7 @@ instance MonadRpc LocalOptions MsgPackRpc where
                 return
                 maybeRes
       where
-        name = methodName $ proxyOf req
+        msgId = messageIdToName . messageId $ proxyOf req
 
         unwrapResponseData :: (MonadThrow m, RpcRequest r, RpcConstraints LocalOptions r)
                            => r -> ResponseData r -> m (Response r)
@@ -105,28 +106,30 @@ instance MonadRpc LocalOptions MsgPackRpc where
             case fromObject errObj of
                 Nothing  -> throwM $ InternalError "Failed to deserialize error msg"
                 Just err -> if "method" `isPrefixOf` err
-                            then throwM $ NetworkProblem noSuchMethodMsg
+                            then throwM $ NetworkProblem noSuchMethod
                             else throwM $ InternalError $ T.pack err
 
         -- when server has no needed method, somehow it ends with `ParseException`,
         -- not `C.ServerError`
         noSuchMethodH :: MonadThrow m => ParseError -> m a
-        noSuchMethodH _ = throwM $ NetworkProblem noSuchMethodMsg
+        noSuchMethodH _ = throwM $ NetworkProblem noSuchMethod
 
-        noSuchMethodMsg = sformat ("No method " % shown % " found at port " % shown)
-                              name port
+        noSuchMethod = sformat ("No method " % shown % " found at port " % shown)
+                              msgId port
 
     serve port methods = S.serve port $ convertMethod <$> methods
       where
         convertMethod :: Method LocalOptions MsgPackRpc -> S.Method MsgPackRpc
         convertMethod m =
             case mkMethodTry m of
-                MethodTry f -> S.method (getMethodName m) $
+                MethodTry f -> S.method (messageIdToName $ methodMessageId m) $
                     S.ServerT . fmap toObject . handleAny . fmap Right . f
 
         handleAny = handleAll $ return . Left .
                     sformat ("Got unexpected exception in server's method: " % shown)
 
+messageIdToName :: MessageId -> String
+messageIdToName (MessageId name) = [toEnum name]
 
 -- * Instances
 

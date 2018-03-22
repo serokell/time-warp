@@ -21,6 +21,7 @@ library
                      , Control.TimeWarp.Rpc.Delays
                      , Control.TimeWarp.Rpc.MonadRpc
                      , Control.TimeWarp.Rpc.MsgPackRpc
+                     , Control.TimeWarp.Rpc.MsgPackUdp
                      , Control.TimeWarp.Rpc.PureRpc
                      , Control.TimeWarp.Rpc.TH
 
@@ -31,9 +32,11 @@ library
                      , Control.TimeWarp.Timed.TimedT
   build-depends:       ansi-terminal
                      , base == 4.*
+                     , binary
                      , binary-conduit >= 1.2.4.1
                      , bytestring >= 0.10.6.0
                      , containers
+                     , constraints
                      , data-default
                      , exceptions
                      , formatting
@@ -46,6 +49,7 @@ library
                      , monad-control
                      , msgpack >= 1.0.0
                      , msgpack-rpc >= 1.0.0
+                     , network
                      , pqueue
                      , QuickCheck >= 2.8.1
                      , quickcheck-instances
