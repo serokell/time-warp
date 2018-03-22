@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
@@ -27,9 +28,10 @@ import           Data.Monoid             ((<>))
 import           GHC.Generics            (Generic)
 
 import           Control.TimeWarp.Rpc    (Delays, DelaysLayer (..), Method (..),
-                                          MonadRpc (..), MsgPackRpc, PureRpc, mkRequest,
-                                          mkRequestWithErr, runDelaysLayer, runMsgPackRpc,
-                                          runPureRpc, submit)
+                                          MonadMsgPackRpc, MonadRpc (..), MsgPackRpc,
+                                          PureRpc, mkRequest, mkRequestWithErr,
+                                          runDelaysLayer, runMsgPackRpc, runPureRpc,
+                                          submit)
 import           Control.TimeWarp.Timed  (MonadTimed (wait), for, ms, sec, sec',
                                           virtualTime, work)
 
@@ -63,7 +65,7 @@ $(mkRequestWithErr ''EpicRequest ''String ''EpicException)
 
 -- * scenarios
 
-yohohoScenario :: (MonadTimed m, MonadRpc m, MonadIO m) => m ()
+yohohoScenario :: (MonadTimed m, MonadMsgPackRpc m, MonadIO m) => m ()
 yohohoScenario = do
     work (for 5 sec) $
         serve 1234 [method]
@@ -85,7 +87,7 @@ data Msg = Msg Int
 
 $(mkRequest ''Msg ''())
 
-repeatedScenario :: (MonadTimed m, MonadRpc m, MonadIO m, MonadCatch m) => m ()
+repeatedScenario :: (MonadTimed m, MonadMsgPackRpc m, MonadIO m, MonadCatch m) => m ()
 repeatedScenario  = do
     work (for 12 sec) $
         serve 1234

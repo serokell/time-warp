@@ -33,13 +33,17 @@ import           Data.MessagePack.Object       (MessagePack, fromObject, toObjec
 
 import           Control.TimeWarp.Logging      (WithNamedLogger)
 import           Control.TimeWarp.Rpc.MonadRpc (Method (..), MonadRpc (..), Port,
-                                                RpcError (..), RpcRequest (..),
+                                                RpcError (..), RpcOptionMessagePack,
+                                                RpcOptions (..), RpcRequest (..),
                                                 getMethodName, localhost, proxyOf)
 import           Control.TimeWarp.Timed        (MonadTimed (..), PureThreadId, ThreadId,
                                                 TimedT, runTimedT, sleepForever)
 
+-- | Pure RPC uses MessagePack for serilization as well.
+type LocalOptions = RpcOptionMessagePack
+
 -- | Keeps servers' methods.
-type Listeners m = Map.Map (Port, String) (Method m)
+type Listeners m = Map.Map (Port, String) (Method LocalOptions m)
 
 -- | Keeps global network information.
 data NetInfo m = NetInfo
@@ -86,7 +90,7 @@ runPureRpc rpc =
     net        = NetInfo{..}
     _listeners = Map.empty
 
-request :: (MonadThrow m, RpcRequest r)
+request :: (MonadThrow m, RpcRequest r, RpcConstraints LocalOptions r)
         => r
         -> Listeners (PureRpc m)
         -> Port
@@ -110,7 +114,7 @@ request req listeners' port =
         "RpcRequest with same methodName?"
 
 instance (MonadIO m, MonadCatch m) =>
-         MonadRpc (PureRpc m) where
+         MonadRpc LocalOptions (PureRpc m) where
     send (host, port) req = do
         unless (host == localhost) $
             error "Can't emulate for host /= localhost"

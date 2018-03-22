@@ -4,6 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies          #-}
 
+{-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 
 -- |
@@ -24,28 +25,28 @@ module Control.TimeWarp.Rpc.MsgPackRpc
 
 import qualified Control.Concurrent                as C
 import           Control.Monad.Base                (MonadBase)
-import           Control.Monad.Catch               (MonadCatch, MonadMask,
-                                                    MonadThrow (..), handleAll,
-                                                    catches, Handler (..))
+import           Control.Monad.Catch               (Handler (..), MonadCatch, MonadMask,
+                                                    MonadThrow (..), catches, handleAll)
 import           Control.Monad.Trans               (MonadIO (..))
-import           Control.Monad.Trans.Control       (MonadBaseControl, StM,
-                                                    liftBaseWith, restoreM)
+import           Control.Monad.Trans.Control       (MonadBaseControl, StM, liftBaseWith,
+                                                    restoreM)
 import           Data.IORef                        (newIORef, readIORef, writeIORef)
 import           Data.List                         (isPrefixOf)
 import qualified Data.Text                         as T
-import           GHC.IO.Exception                  (IOException (IOError), ioe_errno)
 import           Formatting                        (sformat, shown, (%))
+import           GHC.IO.Exception                  (IOException (IOError), ioe_errno)
 
 import           Data.Conduit.Serialization.Binary (ParseError)
 import           Data.MessagePack.Object           (fromObject, toObject)
 import qualified Network.MessagePack.Client        as C
 import qualified Network.MessagePack.Server        as S
 
-import           Control.TimeWarp.Rpc.MonadRpc     (Method (..), MonadRpc (..),
+import           Control.TimeWarp.Rpc.MonadRpc     (Method (..), MethodTry (..),
+                                                    MonadRpc (..), RpcConstraints (..),
+                                                    RpcError (..), RpcOptionMessagePack,
                                                     RpcRequest (..), getMethodName,
-                                                    proxyOf, RpcError (..), MethodTry (..),
-                                                    mkMethodTry)
-import           Control.TimeWarp.Timed            (MonadTimed (..), TimedIO, ThreadId,
+                                                    mkMethodTry, proxyOf)
+import           Control.TimeWarp.Timed            (MonadTimed (..), ThreadId, TimedIO,
                                                     runTimedIO)
 
 -- | Wrapper over `Control.TimeWarp.Timed.TimedIO`, which implements `MonadRpc`
@@ -63,7 +64,9 @@ runMsgPackRpc = runTimedIO . unwrapMsgPackRpc
 -- message about unexpected error | (expected error | result)
 type ResponseData r = Either T.Text (Either (ExpectedError r) (Response r))
 
-instance MonadRpc MsgPackRpc where
+type LocalOptions = RpcOptionMessagePack
+
+instance MonadRpc LocalOptions MsgPackRpc where
     send (addr, port) req = liftIO $ do
         box <- newIORef Nothing
         handleExc $ C.execClient addr port $ do
@@ -78,7 +81,7 @@ instance MonadRpc MsgPackRpc where
       where
         name = methodName $ proxyOf req
 
-        unwrapResponseData :: (MonadThrow m, RpcRequest r)
+        unwrapResponseData :: (MonadThrow m, RpcRequest r, RpcConstraints LocalOptions r)
                            => r -> ResponseData r -> m (Response r)
         unwrapResponseData _ (Left msg)        = throwM $ InternalError msg
         unwrapResponseData _ (Right (Left e))  = throwM $ ServerError e
@@ -115,7 +118,7 @@ instance MonadRpc MsgPackRpc where
 
     serve port methods = S.serve port $ convertMethod <$> methods
       where
-        convertMethod :: Method MsgPackRpc -> S.Method MsgPackRpc
+        convertMethod :: Method LocalOptions MsgPackRpc -> S.Method MsgPackRpc
         convertMethod m =
             case mkMethodTry m of
                 MethodTry f -> S.method (getMethodName m) $

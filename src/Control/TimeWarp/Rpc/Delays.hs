@@ -4,6 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf            #-}
 {-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE UndecidableInstances  #-}
 {-# LANGUAGE ViewPatterns          #-}
 
 -- |
@@ -318,8 +319,8 @@ instance (MonadIO m, MonadTimed m) => MonadTimed (DelaysLayer m) where
 
 type instance ThreadId (DelaysLayer m) = ThreadId m
 
-instance (MonadIO m, MonadTimed m, MonadRpc m) =>
-         MonadRpc (DelaysLayer m) where
+instance (MonadIO m, MonadTimed m, MonadRpc o m) =>
+         MonadRpc o (DelaysLayer m) where
     send addr req = do
         waitDelay addr
         lift $ send addr req
