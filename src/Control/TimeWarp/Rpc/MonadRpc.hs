@@ -4,6 +4,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FunctionalDependencies    #-}
 {-# LANGUAGE GADTs                     #-}
+{-# LANGUAGE IncoherentInstances       #-}
 {-# LANGUAGE PolyKinds                 #-}
 {-# LANGUAGE Rank2Types                #-}
 {-# LANGUAGE TypeOperators             #-}
@@ -49,25 +50,27 @@ module Control.TimeWarp.Rpc.MonadRpc
        , ExtendedRpcOptions (..)
        ) where
 
-import           Control.Exception        (Exception)
-import           Control.Monad            (void)
-import           Control.Monad.Catch      (MonadCatch, MonadMask, MonadThrow (..),
-                                           catchAll, try)
-import           Control.Monad.Reader     (ReaderT (..))
-import           Control.Monad.Trans      (MonadIO, lift)
-import qualified Data.Constraint          as C
-import           Data.Monoid              ((<>))
-import           Data.Proxy               (Proxy (..), asProxyTypeOf)
-import           Data.Text                (Text)
-import           Data.Text.Buildable      (Buildable (..))
-import           GHC.Exts                 (Constraint)
-import           GHC.Generics             (Generic)
+import           Control.Exception           (Exception)
+import           Control.Monad               (void)
+import           Control.Monad.Base          (MonadBase)
+import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow (..),
+                                              catchAll, try)
+import           Control.Monad.Reader        (ReaderT (..))
+import           Control.Monad.Trans         (MonadIO, lift)
+import           Control.Monad.Trans.Control (MonadBaseControl (..))
+import qualified Data.Constraint             as C
+import           Data.Monoid                 ((<>))
+import           Data.Proxy                  (Proxy (..), asProxyTypeOf)
+import           Data.Text                   (Text)
+import           Data.Text.Buildable         (Buildable (..))
+import           GHC.Exts                    (Constraint)
+import           GHC.Generics                (Generic)
 
-import           Data.MessagePack.Object  (MessagePack (..))
-import           Data.Time.Units          (Hour, TimeUnit)
+import           Data.MessagePack.Object     (MessagePack (..))
+import           Data.Time.Units             (Hour, TimeUnit)
 
-import           Control.TimeWarp.Logging (LoggerNameBox (..))
-import           Control.TimeWarp.Timed   (MonadTimed (timeout), ThreadId, fork_)
+import           Control.TimeWarp.Logging    (LoggerNameBox (..))
+import           Control.TimeWarp.Timed      (MonadTimed (timeout), ThreadId, fork_)
 
 
 -- | Port number.
@@ -262,3 +265,13 @@ instance {-# OVERLAPS #-}
          ExtendsOptions (e ': l) (e ': l') where
     extendsOptions (_, _, Proxy :: Proxy r) =
         C.refl C.*** (extendsOptions (Proxy @l, Proxy @l', Proxy @r))
+
+deriving instance MonadBase IO m => MonadBase IO (ExtendedRpcOptions o m)
+
+instance MonadBaseControl IO m =>
+         MonadBaseControl IO (ExtendedRpcOptions o m) where
+    type StM (ExtendedRpcOptions o m) a = StM m a
+    liftBaseWith f =
+        ExtendedRpcOptions $
+        liftBaseWith $ \runInIO -> f $ runInIO . withExtendedRpcOptions
+    restoreM = ExtendedRpcOptions . restoreM

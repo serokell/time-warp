@@ -21,9 +21,10 @@ import           Control.Lens                  ((<&>))
 import           Control.Monad                 (forever, when)
 import           Control.Monad.Base            (MonadBase)
 import           Control.Monad.Catch           (Exception, MonadCatch, MonadMask,
-                                                MonadThrow, bracket, throwM)
+                                                MonadThrow, bracket, onException, throwM)
 import           Control.Monad.Reader          (ReaderT (..))
 import           Control.Monad.Trans           (MonadIO (..))
+import           Control.Monad.Trans.Control   (MonadBaseControl (..))
 import           Control.TimeWarp.Rpc.MonadRpc (Method (..), MonadRpc (..),
                                                 NetworkAddress, RpcOptionMessagePack,
                                                 RpcOptionNoReturn, messageId,
@@ -61,6 +62,13 @@ runMsgPackUdp (MsgPackUdp action) = do
 
 type instance ThreadId MsgPackUdp = ThreadId TimedIO
 
+instance MonadBaseControl IO MsgPackUdp where
+    type StM MsgPackUdp a = StM (ReaderT N.Socket TimedIO) a
+    liftBaseWith f =
+        MsgPackUdp $ liftBaseWith $ \runInIO ->
+            f $ runInIO . unwrapMsgPackRpc
+    restoreM = MsgPackUdp . restoreM
+
 newtype PacketSizeOverflow = PacketSizeOverflow Integer
     deriving (Eq, Show)
 
@@ -86,7 +94,7 @@ instance MonadRpc LocalOptions MsgPackUdp where
     serve (fromIntegral -> port) methods = do
         -- one socket per listener
         withUdpSocket $ \sock -> do
-            liftIO $ N.bind sock (N.SockAddrInet port N.iNADDR_ANY)
+            liftIO $ N.bind sock (N.SockAddrInet port N.iNADDR_ANY) `onException` putStrLn "bind failed"
             forever $ receive sock
       where
         methodsMap = M.fromList $ methods <&> \m -> (methodMessageId m, m)
