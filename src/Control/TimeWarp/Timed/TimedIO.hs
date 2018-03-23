@@ -1,9 +1,4 @@
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE Rank2Types            #-}
-{-# LANGUAGE TupleSections         #-}
-{-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE ViewPatterns          #-}
+{-# LANGUAGE Rank2Types #-}
 
 -- |
 -- Module      : Control.TimeWarp.Timed.TimedIO
@@ -23,22 +18,19 @@ module Control.TimeWarp.Timed.TimedIO
 
 import qualified Control.Concurrent                as C
 import           Control.Monad.Base                (MonadBase)
-import           Control.Monad.Catch               (MonadCatch, MonadMask,
-                                                    MonadThrow, throwM)
-import           Control.Monad.Reader              (ReaderT (..), ask,
-                                                    runReaderT)
+import           Control.Monad.Catch               (MonadCatch, MonadMask, MonadThrow,
+                                                    throwM)
+import           Control.Monad.Reader              (ReaderT (..), ask, runReaderT)
 import           Control.Monad.Trans               (MonadIO, lift, liftIO)
-import           Control.Monad.Trans.Control       (MonadBaseControl, StM,
-                                                    liftBaseWith, restoreM)
+import           Control.Monad.Trans.Control       (MonadBaseControl, StM, liftBaseWith,
+                                                    restoreM)
 import           Data.Time.Clock.POSIX             (getPOSIXTime)
 import           Data.Time.Units                   (toMicroseconds)
 import qualified System.Timeout                    as T
 
-import           Control.TimeWarp.Timed.MonadTimed (Microsecond,
-                                                    MonadTimed (..),
-                                                    ThreadId,
-                                                    MonadTimedError
-                                                    (MTTimeoutError))
+import           Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimed (..),
+                                                    MonadTimedError (MTTimeoutError),
+                                                    ThreadId)
 
 -- | Default implementation for `IO`, i.e. real mode.
 -- `wait` refers to `Control.Concurrent.threadDelay`,

@@ -71,6 +71,16 @@ library
                      , OverloadedStrings
                      , DeriveDataTypeable
                      , GeneralizedNewtypeDeriving
+                     , FlexibleContexts
+                     , FlexibleInstances
+                     , MultiParamTypeClasses
+                     , TypeFamilies
+                     , ViewPatterns
+                     , TypeApplications
+                     , ScopedTypeVariables
+                     , DefaultSignatures
+                     , LambdaCase
+                     , StandaloneDeriving
 
 test-suite time-warp-test
   main-is:             Test.hs

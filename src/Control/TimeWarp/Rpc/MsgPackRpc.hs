@@ -1,11 +1,5 @@
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE TypeFamilies          #-}
-
-{-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs     #-}
 
 -- |
 -- Module      : Control.TimeWarp.Rpc.MsgPackRpc

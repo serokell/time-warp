@@ -1,9 +1,5 @@
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE Rank2Types            #-}
-{-# LANGUAGE StandaloneDeriving    #-}
-{-# LANGUAGE TemplateHaskell       #-}
-{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE Rank2Types      #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- |
 -- Module      : Control.TimeWarp.Timed.MonadTimed

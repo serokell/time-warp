@@ -1,13 +1,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE FlexibleInstances         #-}
-{-# LANGUAGE MultiParamTypeClasses     #-}
-{-# LANGUAGE RankNTypes                #-}
-{-# LANGUAGE ScopedTypeVariables       #-}
-{-# LANGUAGE StandaloneDeriving        #-}
+{-# LANGUAGE Rank2Types                #-}
 {-# LANGUAGE TemplateHaskell           #-}
-{-# LANGUAGE TypeFamilies              #-}
 {-# LANGUAGE UndecidableInstances      #-}
-{-# LANGUAGE ViewPatterns              #-}
 
 -- |
 -- Module      : Control.TimeWarp.Timed.TimedT
@@ -30,17 +24,17 @@ import           Control.Exception.Base            (AsyncException (ThreadKilled
                                                     Exception (fromException),
                                                     SomeException (..))
 
-import           Control.Lens                      (makeLenses, use, view, (%=), (%~),
-                                                    (&), (.=), (<&>), (^.), at, (<<.=),
-                                                    (<<+=), (.~))
-import           Control.Monad                     (void, unless)
+import           Control.Lens                      (at, makeLenses, use, view, (%=), (%~),
+                                                    (&), (.=), (.~), (<&>), (<<+=),
+                                                    (<<.=), (^.))
+import           Control.Monad                     (unless, void)
 import           Control.Monad.Catch               (Handler (..), MonadCatch, MonadMask,
                                                     MonadThrow, catch, catchAll, catches,
-                                                    mask, throwM, try, finally,
+                                                    finally, mask, throwM, try,
                                                     uninterruptibleMask)
 import           Control.Monad.Cont                (ContT (..), runContT)
 import           Control.Monad.Loops               (whileM_)
-import           Control.Monad.Reader              (ReaderT (..), ask, runReaderT, local)
+import           Control.Monad.Reader              (ReaderT (..), ask, local, runReaderT)
 import           Control.Monad.State               (MonadState (get, put, state), StateT,
                                                     evalStateT)
 import           Control.Monad.Trans               (MonadIO, MonadTrans, lift, liftIO)
@@ -54,13 +48,12 @@ import qualified Data.Map                          as M
 import qualified Data.PQueue.Min                   as PQ
 import           Safe                              (fromJustNote)
 
-import           Control.TimeWarp.Logging          (WithNamedLogger (..), LoggerName,
+import           Control.TimeWarp.Logging          (LoggerName, WithNamedLogger (..),
                                                     logDebug, logWarning)
-import           Control.TimeWarp.Timed.MonadTimed (Microsecond,
-                                                    MonadTimed (..),
-                                                    MonadTimedError (MTTimeoutError), for,
-                                                    virtualTime, mcs,
-                                                    timeout, ThreadId, schedule, after)
+import           Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimed (..),
+                                                    MonadTimedError (MTTimeoutError),
+                                                    ThreadId, after, for, mcs, schedule,
+                                                    timeout, virtualTime)
 
 -- Summary, `TimedT` (implementation of emulation mode) consists of several
 -- layers (from outer to inner):
