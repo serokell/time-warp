@@ -1,10 +1,10 @@
+{-# LANGUAGE AllowAmbiguousTypes       #-}
 {-# LANGUAGE ConstraintKinds           #-}
 {-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE DeriveGeneric             #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FunctionalDependencies    #-}
 {-# LANGUAGE GADTs                     #-}
-{-# LANGUAGE IncoherentInstances       #-}
 {-# LANGUAGE PolyKinds                 #-}
 {-# LANGUAGE Rank2Types                #-}
 {-# LANGUAGE TypeOperators             #-}
@@ -48,6 +48,11 @@ module Control.TimeWarp.Rpc.MonadRpc
        , RpcError (..)
 
        , ExtendedRpcOptions (..)
+       , withExtendedRpcOptions
+       , (:<<) (..)
+
+       -- * Re-exports for convenience
+       , C.Dict (..)
        ) where
 
 import           Control.Exception           (Exception)
@@ -55,12 +60,12 @@ import           Control.Monad               (void)
 import           Control.Monad.Base          (MonadBase)
 import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow (..),
                                               catchAll, try)
-import           Control.Monad.Reader        (ReaderT (..))
+import           Control.Monad.Reader        (ReaderT (..), ask)
 import           Control.Monad.Trans         (MonadIO, lift)
 import           Control.Monad.Trans.Control (MonadBaseControl (..))
 import qualified Data.Constraint             as C
 import           Data.Monoid                 ((<>))
-import           Data.Proxy                  (Proxy (..), asProxyTypeOf)
+import           Data.Proxy                  (Proxy (..))
 import           Data.Text                   (Text)
 import           Data.Text.Buildable         (Buildable (..))
 import           GHC.Exts                    (Constraint)
@@ -167,14 +172,13 @@ submit addr req =
     timeoutDelay = 1 :: Hour
 
 methodMessageId :: Method o m -> MessageId
-methodMessageId (Method f) =
-    let rp = Proxy :: RpcRequest r => Proxy r
-        -- make rp contain type of f's argument
-        _ = f $ undefined `asProxyTypeOf` rp
-    in  messageId rp
+methodMessageId (Method f) = messageId $ proxyOfArg f
 
 proxyOf :: a -> Proxy a
 proxyOf _ = Proxy
+
+proxyOfArg :: (a -> b) -> Proxy a
+proxyOfArg _ = Proxy
 
 hoistMethod :: (forall a. m a -> n a) -> Method o m -> Method o n
 hoistMethod hoist' (Method f) = Method (hoist' . f)
@@ -219,59 +223,61 @@ instance Exception RpcError
 
 -- * Util
 
+data o :<< os = Evi
+    (forall r. RpcConstraints os r => C.Dict (RpcConstraints o r))
+
+evidenceOf :: o :<< os -> Proxy r -> RpcConstraints os r C.:- RpcConstraints o r
+evidenceOf (Evi evi) (Proxy :: Proxy r) = C.Sub (evi @r)
+
 -- | Allows a monad to impement 'MonadRpc' with extra requirements.
--- Assumes that options follow some global order.
+-- You have to provide an evidence of that excessive options induce
+-- larger 'RpcConstraints'.
 --
--- Example: @MsgPackRpc@ implements 'MonadRpc \'[RpcOptionsMsgPack]',
+-- Example: @MsgPackRpc@ implements 'MonadRpc '[RpcOptionsMsgPack]',
 -- and options are fixated by monad due to functional dependency.
--- If you need to instantiate 'MonadRpc \'[RpcOptionsMsgPack, AnotherOption]',
--- use @ExtendedRpcOptions yourOptions MsgPackRpc@.
-newtype ExtendedRpcOptions o m a = ExtendedRpcOptions
-    { withExtendedRpcOptions :: m a
+-- If you need to instantiate 'MonadRpc '[RpcOptionsMsgPack, AnotherOption]',
+-- use @ExtendedRpcOptions yourOptions instantiatedOptions MsgPackRpc@,
+-- and run it with
+--
+-- @
+-- withExtendedRpcOptions (Evi Dict) $ someLogic
+-- @
+newtype ExtendedRpcOptions os o m a = ExtendedRpcOptions
+    { unwrapExtendedRpcOptions :: ReaderT (o :<< os) m a
     } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadMask
                , MonadTimed)
 
-type instance ThreadId (ExtendedRpcOptions o m) = ThreadId m
+withExtendedRpcOptions
+    :: o :<< os
+    -> ExtendedRpcOptions os o m a
+    -> m a
+withExtendedRpcOptions dict (ExtendedRpcOptions action) = runReaderT action dict
 
-instance (RpcOptions os, MonadRpc o m, ExtendsOptions os o) => MonadRpc os (ExtendedRpcOptions os m) where
+type instance ThreadId (ExtendedRpcOptions o os m) = ThreadId m
+
+instance (RpcOptions os, MonadRpc o m) => MonadRpc os (ExtendedRpcOptions os o m) where
     send addr (msg :: msg) =
-        ExtendedRpcOptions $
-        send addr msg C.\\ extendsOptions (Proxy @os, Proxy @o, Proxy @msg)
+        ExtendedRpcOptions . ReaderT $ \evi ->
+        send addr msg C.\\ evidenceOf evi (Proxy @msg)
 
     serve port methods =
-        ExtendedRpcOptions $
-        (serve port $ convert <$> methods)
+        ExtendedRpcOptions $ do
+            evi <- ask
+            serve port $ convert evi <$> methods
       where
-        convert :: Method os (ExtendedRpcOptions os m) -> Method o m
-        convert (Method (f :: msg -> ExtendedRpcOptions os m (Response msg))) =
-            Method (withExtendedRpcOptions . f)
-                C.\\ extendsOptions (Proxy @os, Proxy @o, Proxy :: Proxy msg)
+        convert
+            :: o :<< os
+            -> Method os (ExtendedRpcOptions os o m)
+            -> Method o (ReaderT (o :<< os) m)
+        convert evi (Method f) =
+            Method (unwrapExtendedRpcOptions . f) C.\\ evidenceOf evi (proxyOfArg f)
 
-class ExtendsOptions o1 o2 where
-    extendsOptions
-        :: (Proxy o1, Proxy o2, Proxy r)
-        -> RpcConstraints o1 r C.:- RpcConstraints o2 r
-
-instance ExtendsOptions '[] '[] where
-    extendsOptions _ = C.refl
-
-instance (RpcOptions e, RpcOptions l, ExtendsOptions l l') =>
-         ExtendsOptions ((e :: *) ': (l :: [*])) (l' :: [*]) where
-    extendsOptions (_, _, Proxy :: Proxy r) =
-        C.trans (extendsOptions (Proxy @l, Proxy @l', Proxy @r)) C.weaken2
-
-instance {-# OVERLAPS #-}
-         ExtendsOptions l l' =>
-         ExtendsOptions (e ': l) (e ': l') where
-    extendsOptions (_, _, Proxy :: Proxy r) =
-        C.refl C.*** (extendsOptions (Proxy @l, Proxy @l', Proxy @r))
-
-deriving instance MonadBase IO m => MonadBase IO (ExtendedRpcOptions o m)
+deriving instance MonadBase IO m => MonadBase IO (ExtendedRpcOptions o os m)
 
 instance MonadBaseControl IO m =>
-         MonadBaseControl IO (ExtendedRpcOptions o m) where
-    type StM (ExtendedRpcOptions o m) a = StM m a
+         MonadBaseControl IO (ExtendedRpcOptions o os m) where
+    type StM (ExtendedRpcOptions o os m) a = StM m a
     liftBaseWith f =
         ExtendedRpcOptions $
-        liftBaseWith $ \runInIO -> f $ runInIO . withExtendedRpcOptions
+        liftBaseWith $ \runInIO -> f $ runInIO . unwrapExtendedRpcOptions
     restoreM = ExtendedRpcOptions . restoreM

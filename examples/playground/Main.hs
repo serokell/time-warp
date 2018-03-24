@@ -9,6 +9,8 @@
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
 
+{-# LANGUAGE TypeOperators         #-}
+
 module Main
     ( main
 
@@ -17,8 +19,10 @@ module Main
 
     , runEmulation
     , runEmulationWithDelays
-    , runReal
-    , runUdp
+    , runRealRpc
+    , runRealUdp
+
+    , runRepeatedScenarioWithRpc
     ) where
 
 import           Control.Exception       (Exception)
@@ -31,23 +35,24 @@ import           Data.MessagePack.Object (MessagePack)
 import           Data.Monoid             ((<>))
 import           GHC.Generics            (Generic)
 
-import           Control.TimeWarp.Rpc    (Delays, DelaysLayer (..), Method (..),
-                                          MonadMsgPackRpc, MonadRpc (..), MsgPackRpc,
-                                          MsgPackUdp, PureRpc, RpcOptionMessagePack,
-                                          RpcOptionNoReturn, mkRequest, mkRequestWithErr,
-                                          runDelaysLayer, runMsgPackRpc, runMsgPackUdp,
-                                          runPureRpc, submit)
+import           Control.TimeWarp.Rpc    ((:<<) (Evi), Delays, DelaysLayer (..),
+                                          Dict (..), Method (..), MonadMsgPackRpc,
+                                          MonadRpc (..), MsgPackRpc, MsgPackUdp, PureRpc,
+                                          RpcOptionMessagePack, RpcOptionNoReturn,
+                                          mkRequest, mkRequestWithErr, runDelaysLayer,
+                                          runMsgPackRpc, runMsgPackUdp, runPureRpc,
+                                          submit, withExtendedRpcOptions)
 import           Control.TimeWarp.Timed  (MonadTimed (wait), for, ms, sec, sec', till,
                                           virtualTime, work)
 
 main :: IO ()
 main = return ()  -- use ghci
 
-runReal :: MsgPackRpc a -> IO a
-runReal = runMsgPackRpc
+runRealRpc :: MsgPackRpc a -> IO a
+runRealRpc = runMsgPackRpc
 
-runUdp :: MsgPackUdp a -> IO a
-runUdp = runMsgPackUdp
+runRealUdp :: MsgPackUdp a -> IO a
+runRealUdp = runMsgPackUdp
 
 runEmulation :: PureRpc IO a -> IO a
 runEmulation scenario = runPureRpc scenario
@@ -111,3 +116,6 @@ repeatedScenario  = do
 
     wait (till 12 sec)
 
+-- | Example of how to use 'withExtendedRpcOptions'.
+runRepeatedScenarioWithRpc :: IO ()
+runRepeatedScenarioWithRpc = runRealRpc $ withExtendedRpcOptions (Evi Dict) repeatedScenario

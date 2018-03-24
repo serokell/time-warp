@@ -1,5 +1,4 @@
-{-# LANGUAGE IncoherentInstances #-}
-{-# LANGUAGE Rank2Types          #-}
+{-# LANGUAGE Rank2Types #-}
 
 -- | Contains benchmarks of emulation mode and networking.
 
@@ -39,7 +38,7 @@ udpVsRpcBenchmark name scenario =
     [ bench "udp" $
       perBatchEnvWithCleanupM N.runMsgPackUdp scenario
     , bench "rpc" $
-      perBatchEnvWithCleanupM (N.runMsgPackRpc . N.withExtendedRpcOptions)
+      perBatchEnvWithCleanupM (N.runMsgPackRpc . N.withExtendedRpcOptions (N.Evi N.Dict))
                               scenario
     ]
 
