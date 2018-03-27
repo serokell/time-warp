@@ -50,6 +50,7 @@
 
 module Control.TimeWarp.Rpc
        ( module Control.TimeWarp.Rpc.Delays
+       , module Control.TimeWarp.Rpc.ExtOpts
        , module Control.TimeWarp.Rpc.MonadRpc
        , module Control.TimeWarp.Rpc.MsgPackRpc
        , module Control.TimeWarp.Rpc.MsgPackUdp
@@ -58,7 +59,8 @@ module Control.TimeWarp.Rpc
        ) where
 
 import           Control.TimeWarp.Rpc.Delays
-import           Control.TimeWarp.Rpc.MonadRpc   hiding (proxyOf)
+import           Control.TimeWarp.Rpc.ExtOpts
+import           Control.TimeWarp.Rpc.MonadRpc   hiding (proxyOf, proxyOfArg)
 import           Control.TimeWarp.Rpc.MsgPackRpc
 import           Control.TimeWarp.Rpc.MsgPackUdp
 import           Control.TimeWarp.Rpc.PureRpc

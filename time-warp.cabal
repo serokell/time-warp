@@ -19,6 +19,7 @@ library
 
                      , Control.TimeWarp.Rpc
                      , Control.TimeWarp.Rpc.Delays
+                     , Control.TimeWarp.Rpc.ExtOpts
                      , Control.TimeWarp.Rpc.MonadRpc
                      , Control.TimeWarp.Rpc.MsgPackRpc
                      , Control.TimeWarp.Rpc.MsgPackUdp

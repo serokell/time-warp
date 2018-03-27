@@ -1,4 +1,3 @@
-{-# LANGUAGE AllowAmbiguousTypes       #-}
 {-# LANGUAGE ConstraintKinds           #-}
 {-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE DeriveGeneric             #-}
@@ -43,39 +42,29 @@ module Control.TimeWarp.Rpc.MonadRpc
        , MethodTry (..)
        , methodMessageId
        , proxyOf
+       , proxyOfArg
        , mkMethodTry
        , hoistMethod
        , RpcError (..)
-
-       , ExtendedRpcOptions (..)
-       , withExtendedRpcOptions
-       , (:<<) (..)
-
-       -- * Re-exports for convenience
-       , C.Dict (..)
        ) where
 
-import           Control.Exception           (Exception)
-import           Control.Monad               (void)
-import           Control.Monad.Base          (MonadBase)
-import           Control.Monad.Catch         (MonadCatch, MonadMask, MonadThrow (..),
-                                              catchAll, try)
-import           Control.Monad.Reader        (ReaderT (..), ask)
-import           Control.Monad.Trans         (MonadIO, lift)
-import           Control.Monad.Trans.Control (MonadBaseControl (..))
-import qualified Data.Constraint             as C
-import           Data.Monoid                 ((<>))
-import           Data.Proxy                  (Proxy (..))
-import           Data.Text                   (Text)
-import           Data.Text.Buildable         (Buildable (..))
-import           GHC.Exts                    (Constraint)
-import           GHC.Generics                (Generic)
+import           Control.Exception        (Exception)
+import           Control.Monad            (void)
+import           Control.Monad.Catch      (MonadCatch, MonadThrow (..), catchAll, try)
+import           Control.Monad.Reader     (ReaderT (..))
+import           Control.Monad.Trans      (lift)
+import           Data.Monoid              ((<>))
+import           Data.Proxy               (Proxy (..))
+import           Data.Text                (Text)
+import           Data.Text.Buildable      (Buildable (..))
+import           GHC.Exts                 (Constraint)
+import           GHC.Generics             (Generic)
 
-import           Data.MessagePack.Object     (MessagePack (..))
-import           Data.Time.Units             (Hour, TimeUnit)
+import           Data.MessagePack.Object  (MessagePack (..))
+import           Data.Time.Units          (Hour, TimeUnit)
 
-import           Control.TimeWarp.Logging    (LoggerNameBox (..))
-import           Control.TimeWarp.Timed      (MonadTimed (timeout), ThreadId, fork_)
+import           Control.TimeWarp.Logging (LoggerNameBox (..))
+import           Control.TimeWarp.Timed   (MonadTimed (timeout), fork_)
 
 
 -- | Port number.
@@ -221,63 +210,3 @@ instance Show RpcError where
 
 instance Exception RpcError
 
--- * Util
-
-data o :<< os = Evi
-    (forall r. RpcConstraints os r => C.Dict (RpcConstraints o r))
-
-evidenceOf :: o :<< os -> Proxy r -> RpcConstraints os r C.:- RpcConstraints o r
-evidenceOf (Evi evi) (Proxy :: Proxy r) = C.Sub (evi @r)
-
--- | Allows a monad to impement 'MonadRpc' with extra requirements.
--- You have to provide an evidence of that excessive options induce
--- larger 'RpcConstraints'.
---
--- Example: @MsgPackRpc@ implements 'MonadRpc '[RpcOptionsMsgPack]',
--- and options are fixated by monad due to functional dependency.
--- If you need to instantiate 'MonadRpc '[RpcOptionsMsgPack, AnotherOption]',
--- use @ExtendedRpcOptions yourOptions instantiatedOptions MsgPackRpc@,
--- and run it with
---
--- @
--- withExtendedRpcOptions (Evi Dict) $ someLogic
--- @
-newtype ExtendedRpcOptions os o m a = ExtendedRpcOptions
-    { unwrapExtendedRpcOptions :: ReaderT (o :<< os) m a
-    } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadMask
-               , MonadTimed)
-
-withExtendedRpcOptions
-    :: o :<< os
-    -> ExtendedRpcOptions os o m a
-    -> m a
-withExtendedRpcOptions dict (ExtendedRpcOptions action) = runReaderT action dict
-
-type instance ThreadId (ExtendedRpcOptions o os m) = ThreadId m
-
-instance (RpcOptions os, MonadRpc o m) => MonadRpc os (ExtendedRpcOptions os o m) where
-    send addr (msg :: msg) =
-        ExtendedRpcOptions . ReaderT $ \evi ->
-        send addr msg C.\\ evidenceOf evi (Proxy @msg)
-
-    serve port methods =
-        ExtendedRpcOptions $ do
-            evi <- ask
-            serve port $ convert evi <$> methods
-      where
-        convert
-            :: o :<< os
-            -> Method os (ExtendedRpcOptions os o m)
-            -> Method o (ReaderT (o :<< os) m)
-        convert evi (Method f) =
-            Method (unwrapExtendedRpcOptions . f) C.\\ evidenceOf evi (proxyOfArg f)
-
-deriving instance MonadBase IO m => MonadBase IO (ExtendedRpcOptions o os m)
-
-instance MonadBaseControl IO m =>
-         MonadBaseControl IO (ExtendedRpcOptions o os m) where
-    type StM (ExtendedRpcOptions o os m) a = StM m a
-    liftBaseWith f =
-        ExtendedRpcOptions $
-        liftBaseWith $ \runInIO -> f $ runInIO . unwrapExtendedRpcOptions
-    restoreM = ExtendedRpcOptions . restoreM
