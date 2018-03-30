@@ -185,7 +185,7 @@ deriving instance MonadRpc o m => MonadRpc o (LoggerNameBox m)
 
 -- * Aliases
 
-type MonadMsgPackRpc = MonadRpc RpcOptionMessagePack
+type MonadMsgPackRpc = MonadRpc '[RpcOptionMessagePack]
 type MonadMsgPackUdp = MonadRpc '[RpcOptionMessagePack, RpcOptionNoReturn]
 
 -- * Exceptions
