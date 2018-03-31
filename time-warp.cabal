@@ -64,6 +64,7 @@ library
                      , time-units >= 1.0.0
                      , transformers >= 0.4.2.0
                      , transformers-base
+                     , unordered-containers
   hs-source-dirs:      src
   default-language:    Haskell2010
   ghc-options:         -Wall -O2
@@ -81,6 +82,7 @@ library
                      , DefaultSignatures
                      , LambdaCase
                      , StandaloneDeriving
+                     , TupleSections
 
 test-suite time-warp-test
   main-is:             Test.hs
@@ -112,7 +114,7 @@ test-suite time-warp-test
                      , random >= 1.1
   hs-source-dirs:      test
   default-language:    Haskell2010
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-TN -Wall
+  ghc-options:         -threaded -rtsopts -Wall
   default-extensions:  OverloadedStrings
                      , RecordWildCards
                      , DeriveDataTypeable
@@ -141,7 +143,7 @@ executable playground
                      , random >= 1.1
   hs-source-dirs:      examples/playground
   default-language:    Haskell2010  
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-TN -Wall -fno-warn-orphans
+  ghc-options:         -threaded -rtsopts -Wall -fno-warn-orphans
   default-extensions:  OverloadedStrings
                      , RecordWildCards
                      , DeriveDataTypeable
