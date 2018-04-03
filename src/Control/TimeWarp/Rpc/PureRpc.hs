@@ -14,6 +14,7 @@
 module Control.TimeWarp.Rpc.PureRpc
        ( PureRpc
        , runPureRpc
+       , runPureRpcExt
        ) where
 
 import           Control.Lens                  (at, makeLenses, to, use, (?=))
@@ -22,6 +23,7 @@ import           Control.Monad.Catch           (MonadCatch, MonadMask, MonadThro
 import           Control.Monad.State           (MonadState (get, put, state), StateT,
                                                 evalStateT)
 import           Control.Monad.Trans           (MonadIO, MonadTrans, lift)
+import           Data.Default                  (def)
 import qualified Data.Map                      as Map
 import           Formatting                    (sformat, shown, (%))
 
@@ -33,7 +35,8 @@ import           Control.TimeWarp.Rpc.MonadRpc (MessageId, Method (..), MonadRpc
                                                 RpcOptions (..), RpcRequest (..),
                                                 localhost, methodMessageId, proxyOf)
 import           Control.TimeWarp.Timed        (MonadTimed (..), PureThreadId, ThreadId,
-                                                TimedT, runTimedT, sleepForever)
+                                                TimedT, TimedTOptions (..), runTimedTExt,
+                                                sleepForever)
 
 -- | Pure RPC uses MessagePack for serilization as well.
 type LocalOptions = RpcOptionMessagePack
@@ -80,8 +83,14 @@ instance MonadState s m => MonadState s (PureRpc m) where
 runPureRpc
     :: (MonadIO m, MonadCatch m)
     => PureRpc m a -> m a
-runPureRpc rpc =
-    evalStateT (runTimedT $ unwrapPureRpc rpc) net
+runPureRpc = runPureRpcExt def
+
+-- | Launches distributed scenario, emulating work of network.
+runPureRpcExt
+    :: (MonadIO m, MonadCatch m)
+    => TimedTOptions -> PureRpc m a -> m a
+runPureRpcExt options rpc =
+    evalStateT (runTimedTExt options $ unwrapPureRpc rpc) net
   where
     net        = NetInfo{..}
     _listeners = Map.empty

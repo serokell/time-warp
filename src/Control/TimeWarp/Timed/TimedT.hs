@@ -15,7 +15,9 @@
 module Control.TimeWarp.Timed.TimedT
        ( TimedT
        , PureThreadId
+       , TimedTOptions (..)
        , runTimedT
+       , runTimedTExt
        , defaultLoggerName
        ) where
 
@@ -38,6 +40,7 @@ import           Control.Monad.Reader              (ReaderT (..), ask, local, ru
 import           Control.Monad.State               (MonadState (get, put, state), StateT,
                                                     evalStateT)
 import           Control.Monad.Trans               (MonadIO, MonadTrans, lift, liftIO)
+import           Data.Default                      (Default (..))
 import           Data.Function                     (on)
 import           Data.IORef                        (newIORef, readIORef, writeIORef)
 import           Data.List                         (foldl')
@@ -107,6 +110,8 @@ data Scenario m c = Scenario
     , _asyncExceptions :: M.Map PureThreadId SomeException
       -- | Number of created threads ever
     , _threadsCounter  :: Integer
+      -- | Whether main thread has terminated
+    , _mainThreadDone  :: Bool
     }
 
 $(makeLenses ''Scenario)
@@ -118,7 +123,20 @@ emptyScenario =
     , _curTime = 0
     , _asyncExceptions = M.empty
     , _threadsCounter = 0
+    , _mainThreadDone = False
     }
+
+data TimedTOptions = TimedTOptions
+    { -- | Finish execution on main thread termination even if there are other
+      -- threads running.
+      shutdownOnMainEnd :: Bool
+    } deriving (Show)
+
+instance Default TimedTOptions where
+    def =
+        TimedTOptions
+        { shutdownOnMainEnd = False
+        }
 
 -- | Heart of TimedT monad
 newtype Core m a = Core
@@ -223,10 +241,14 @@ getTimedT t = flip evalStateT emptyScenario
     vacuumCtx = error "Access to thread context from nowhere"
 
 -- | Launches all the machinery of emulation.
-launchTimedT :: (MonadIO m, MonadCatch m) => TimedT m () -> m ()
-launchTimedT timed = getTimedT $ do
+launchTimedT :: (MonadIO m, MonadCatch m) => TimedTOptions -> TimedT m () -> m ()
+launchTimedT options timed = getTimedT $ do
     -- execute first action (main thread)
-    mainThreadCtx >>= flip runInSandbox timed
+    do
+        let markMainTerminated = TimedT $ mainThreadDone .= True
+        ctx <- mainThreadCtx
+        runInSandbox ctx (timed `finally` markMainTerminated)
+
     -- event loop
     whileM_ notDone $ do
         -- take next awaiting thread
@@ -256,7 +278,13 @@ launchTimedT timed = getTimedT $ do
 
   where
     notDone :: Monad m => TimedT m Bool
-    notDone = not . PQ.null <$> TimedT (use events)
+    notDone = TimedT $ do
+        hasThreadsRunning <- not . PQ.null <$> use events
+        mainTerminated <- use mainThreadDone
+        return $ and
+            [ hasThreadsRunning
+            , not (mainTerminated && shutdownOnMainEnd options)
+            ]
 
     -- put empty continuation to an action (not our own!)
     runInSandbox r = wrapCore . unwrapCore' r
@@ -285,10 +313,16 @@ getNextThreadId = TimedT . fmap PureThreadId $ threadsCounter <<+= 1
 runTimedT
     :: (MonadIO m, MonadCatch m)
     => TimedT m a -> m a
-runTimedT timed = do
+runTimedT = runTimedTExt def
+
+-- | Similar to 'runTimedT', allows to provide options.
+runTimedTExt
+    :: (MonadIO m, MonadCatch m)
+    => TimedTOptions -> TimedT m a -> m a
+runTimedTExt options timed = do
     -- use `launchTimedT`, extracting result
     ref <- liftIO $ newIORef Nothing
-    launchTimedT $ do
+    launchTimedT options $ do
         m <- try timed
         liftIO . writeIORef ref . Just $ m
     res :: Either SomeException a <- fromJustNote "runTimedT: no result"
