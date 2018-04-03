@@ -61,7 +61,7 @@ import           Data.Time.Units               (TimeUnit, fromMicroseconds,
                                                 toMicroseconds)
 import           System.Random                 (StdGen)
 
-
+import           Control.TimeWarp.Logging      (WithNamedLogger)
 import           Control.TimeWarp.Rpc.MonadRpc (MonadRpc (..), NetworkAddress,
                                                 hoistMethod)
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..), ThreadId,
@@ -322,3 +322,5 @@ instance (MonadIO m, MonadTimed m, MonadRpc o m) =>
     serve port listeners =
         let listeners' = map (hoistMethod getDelaysLayer) listeners
         in  DelaysLayer $ serve port listeners'
+
+deriving instance (Monad m, WithNamedLogger m) => WithNamedLogger (DelaysLayer m)

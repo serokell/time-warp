@@ -21,11 +21,12 @@ module Control.TimeWarp.Rpc.ExtOpts
 import           Control.Monad.Base            (MonadBase)
 import           Control.Monad.Catch           (MonadCatch, MonadMask, MonadThrow)
 import           Control.Monad.Reader          (ReaderT (..), ask)
-import           Control.Monad.Trans           (MonadIO)
+import           Control.Monad.Trans           (MonadIO, MonadTrans (..))
 import           Control.Monad.Trans.Control   (MonadBaseControl (..))
 import qualified Data.Constraint               as C
 import           Data.Proxy                    (Proxy (..))
 
+import           Control.TimeWarp.Logging      (WithNamedLogger)
 import           Control.TimeWarp.Rpc.MonadRpc (Method (..), MonadRpc (..),
                                                 RpcOptions (..), proxyOfArg)
 import           Control.TimeWarp.Timed        (MonadTimed, ThreadId)
@@ -82,7 +83,11 @@ instance (RpcOptions os, MonadRpc o m) => MonadRpc os (ExtendedRpcOptions os o m
         convert evi (Method f) =
             Method (unwrapExtendedRpcOptions . f) C.\\ evidenceOf evi (proxyOfArg f)
 
+instance MonadTrans (ExtendedRpcOptions o os) where
+    lift = ExtendedRpcOptions . lift
+
 deriving instance MonadBase IO m => MonadBase IO (ExtendedRpcOptions o os m)
+deriving instance (WithNamedLogger m, Monad m) => WithNamedLogger (ExtendedRpcOptions o os m)
 
 instance MonadBaseControl IO m =>
          MonadBaseControl IO (ExtendedRpcOptions o os m) where
