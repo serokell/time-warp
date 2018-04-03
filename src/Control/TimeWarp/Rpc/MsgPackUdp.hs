@@ -14,6 +14,7 @@
 
 module Control.TimeWarp.Rpc.MsgPackUdp
     ( MsgPackUdp (..)
+    , MsgPackUdpOptions (..)
     , runMsgPackUdp
     , runMsgPackUdpOpts
     ) where
