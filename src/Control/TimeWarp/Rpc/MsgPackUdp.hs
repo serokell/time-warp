@@ -30,7 +30,8 @@ import           Control.TimeWarp.Rpc.MonadRpc (Host, Method (..), MonadRpc (..)
                                                 NetworkAddress, RpcOptionMessagePack,
                                                 RpcOptionNoReturn, messageId,
                                                 methodMessageId)
-import           Control.TimeWarp.Timed        (MonadTimed, ThreadId, TimedIO, runTimedIO)
+import           Control.TimeWarp.Timed        (MonadTimed, ThreadId, TimedIO, fork_,
+                                                runTimedIO)
 import qualified Data.Binary                   as Binary
 import qualified Data.ByteString.Lazy          as LBS
 import           Data.Default                  (Default (..))
@@ -132,7 +133,7 @@ instance MonadRpc LocalOptions MsgPackUdp where
             (MsgPackUdpOptions{..}, _) <- MsgPackUdp ask
             dat <- liftIO $ N.recv sock udpMessageSizeLimit
 
-            either (throwM . DecodeException) id $ do
+            fork_ . either (throwM . DecodeException) id $ do
                 obj <- case Binary.decodeOrFail (LBS.fromStrict dat) of
                     Left _            -> Left "failed to decode to MessagePack"
                     Right (_, _, obj) -> Right obj
