@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds            #-}
 {-# LANGUAGE TemplateHaskell      #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -39,7 +40,7 @@ import           Control.TimeWarp.Timed        (MonadTimed (..), PureThreadId, T
                                                 sleepForever)
 
 -- | Pure RPC uses MessagePack for serilization as well.
-type LocalOptions = RpcOptionMessagePack
+type LocalOptions = '[RpcOptionMessagePack]
 
 -- | Keeps servers' methods.
 type Listeners m = Map.Map (Port, MessageId) (Method LocalOptions m)

@@ -35,13 +35,13 @@ import           Data.MessagePack.Object (MessagePack)
 import           Data.Monoid             ((<>))
 import           GHC.Generics            (Generic)
 
-import           Control.TimeWarp.Rpc    ((:<<) (Evi), Delays, DelaysLayer (..),
-                                          Dict (..), Method (..), MonadMsgPackRpc,
-                                          MonadRpc (..), MsgPackRpc, MsgPackUdp, PureRpc,
+import           Control.TimeWarp.Rpc    (Delays, DelaysLayer (..), Dict (..),
+                                          Method (..), MonadMsgPackRpc, MonadRpc (..),
+                                          MsgPackRpc, MsgPackUdp, PureRpc,
                                           RpcOptionMessagePack, RpcOptionNoReturn,
-                                          mkRequest, mkRequestWithErr, runDelaysLayer,
-                                          runMsgPackRpc, runMsgPackUdp, runPureRpc,
-                                          submit, withExtendedRpcOptions)
+                                          mkRequest, mkRequestWithErr, pickEvi,
+                                          runDelaysLayer, runMsgPackRpc, runMsgPackUdp,
+                                          runPureRpc, withExtendedRpcOptions)
 import           Control.TimeWarp.Timed  (MonadTimed (wait), for, ms, sec, sec', till,
                                           virtualTime, work)
 
@@ -57,8 +57,8 @@ runRealUdp = runMsgPackUdp
 runEmulation :: PureRpc IO a -> IO a
 runEmulation scenario = runPureRpc scenario
 
-runEmulationWithDelays :: DelaysLayer (PureRpc IO) a -> Delays -> IO a
-runEmulationWithDelays scenario delays = do
+runEmulationWithDelays :: Delays -> DelaysLayer (PureRpc IO) a -> IO a
+runEmulationWithDelays delays scenario = do
     gen <- newStdGen
     runPureRpc $ runDelaysLayer delays gen scenario
 
@@ -111,11 +111,11 @@ repeatedScenario  = do
 
     wait (for 100 ms)
     forM_ [0..9] $ \i -> do
-        submit ("127.0.0.1", 1234) (Msg i)
+        send ("127.0.0.1", 1234) (Msg i)
         wait (for 1 sec)
 
     wait (till 12 sec)
 
 -- | Example of how to use 'withExtendedRpcOptions'.
 runRepeatedScenarioWithRpc :: IO ()
-runRepeatedScenarioWithRpc = runRealRpc $ withExtendedRpcOptions (Evi Dict) repeatedScenario
+runRepeatedScenarioWithRpc = runRealRpc $ withExtendedRpcOptions (pickEvi Dict) repeatedScenario

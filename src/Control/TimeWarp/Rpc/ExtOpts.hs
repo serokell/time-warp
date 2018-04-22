@@ -13,6 +13,10 @@ module Control.TimeWarp.Rpc.ExtOpts
     ( ExtendedRpcOptions (..)
     , withExtendedRpcOptions
     , (:<<) (..)
+    , pickEvi
+
+    , NoReturnOptionPresence (..)
+    , NoReturnOptionJudgement (..)
 
     -- * Re-exports for convenience
     , C.Dict (..)
@@ -28,15 +32,21 @@ import           Data.Proxy                    (Proxy (..))
 
 import           Control.TimeWarp.Logging      (WithNamedLogger)
 import           Control.TimeWarp.Rpc.MonadRpc (Method (..), MonadRpc (..),
-                                                RpcOptions (..), proxyOfArg)
+                                                RpcOptionNoReturn, RpcOptions (..),
+                                                proxyOfArg)
 import           Control.TimeWarp.Timed        (MonadTimed, ThreadId)
+
 
 -- | @o :<< os@ is evidence of that @os@ options extend @o@ options.
 data o :<< os = Evi
-    (forall r. RpcConstraints os r => C.Dict (RpcConstraints o r))
+    (forall r. RpcConstraints os r => Proxy r -> C.Dict (RpcConstraints o r))
+
+pickEvi :: (forall r. RpcConstraints os r => C.Dict (RpcConstraints o r))
+    -> o :<< os
+pickEvi dict = Evi $ \(Proxy :: Proxy r) -> (dict @r)
 
 evidenceOf :: o :<< os -> Proxy r -> RpcConstraints os r C.:- RpcConstraints o r
-evidenceOf (Evi evi) (Proxy :: Proxy r) = C.Sub (evi @r)
+evidenceOf (Evi evi) pr = C.Sub (evi pr)
 
 -- | Allows a monad to impement 'MonadRpc' with extra requirements.
 -- You have to provide an evidence of that excessive options induce
@@ -97,3 +107,22 @@ instance MonadBaseControl IO m =>
         liftBaseWith $ \runInIO -> f $ runInIO . unwrapExtendedRpcOptions
     restoreM = ExtendedRpcOptions . restoreM
 
+
+data NoReturnOptionPresence os
+    = NoReturnOptionPresent ('[RpcOptionNoReturn] :<< os)
+    | NoReturnOptionAbsent
+
+class NoReturnOptionJudgement (os :: [*]) where
+    hasNoReturnOption :: NoReturnOptionPresence os
+
+instance NoReturnOptionJudgement '[] where
+    hasNoReturnOption = NoReturnOptionAbsent
+
+instance {-# OVERLAPS #-} NoReturnOptionJudgement (RpcOptionNoReturn : os) where
+    hasNoReturnOption = NoReturnOptionPresent (pickEvi C.Dict)
+
+instance NoReturnOptionJudgement os => NoReturnOptionJudgement (o : os) where
+    hasNoReturnOption =
+        case hasNoReturnOption @os of
+            NoReturnOptionAbsent            -> NoReturnOptionAbsent
+            NoReturnOptionPresent (Evi evi) -> NoReturnOptionPresent (Evi evi)

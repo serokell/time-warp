@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds            #-}
 {-# LANGUAGE MultiWayIf           #-}
+{-# LANGUAGE Rank2Types           #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- |
@@ -51,21 +52,26 @@ import           Control.Monad.Random          (MonadRandom (getRandomR), Rand, 
                                                 split)
 import           Control.Monad.Reader          (ReaderT (..))
 import           Control.Monad.State           (MonadState, StateT)
-import           Control.Monad.Trans           (liftIO)
-import           Control.Monad.Trans           (MonadIO, MonadTrans, lift)
+import           Control.Monad.Trans           (MonadIO, MonadTrans, lift, liftIO)
 import           Data.Default                  (Default, def)
 import           Data.List                     (find)
 import           Data.Maybe                    (fromMaybe)
+import           Data.Proxy                    (Proxy (..))
 import qualified Data.Set                      as S
 import           Data.Time.Units               (TimeUnit, fromMicroseconds,
                                                 toMicroseconds)
 import           System.Random                 (StdGen)
 
 import           Control.TimeWarp.Logging      (WithNamedLogger)
+import           Control.TimeWarp.Rpc.ExtOpts  ((:<<) (Evi), Dict (..),
+                                                NoReturnOptionJudgement (..),
+                                                NoReturnOptionPresence (..))
 import           Control.TimeWarp.Rpc.MonadRpc (MonadRpc (..), NetworkAddress,
                                                 hoistMethod)
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..), ThreadId,
-                                                for, sleepForever, virtualTime, wait)
+                                                for, fork_, sleepForever, virtualTime,
+                                                wait)
+
 
 -- * Delays management
 
@@ -78,6 +84,7 @@ data ConnectionOutcome
     -- | Alternative rule will be tried. If no other rule specified, use 0 delay.
     -- This allows to combine rules via 'Monoid' instance.
     | UndefinedConnectionOutcome
+    deriving (Show)
 
 -- | Allows to describe most complicated behaviour of network.
 --
@@ -314,13 +321,19 @@ instance (MonadIO m, MonadTimed m) => MonadTimed (DelaysLayer m) where
 
 type instance ThreadId (DelaysLayer m) = ThreadId m
 
-instance (MonadIO m, MonadTimed m, MonadRpc o m) =>
+instance (MonadIO m, MonadTimed m, MonadRpc o m, NoReturnOptionJudgement o) =>
          MonadRpc (o :: [*]) (DelaysLayer m) where
-    send addr req = do
-        waitDelay addr
-        lift $ send addr req
+    send addr (req :: r) =
+        -- make awaitance asynchronous if we do not wait for result
+        case hasNoReturnOption @o of
+            NoReturnOptionAbsent ->
+                waitDelay addr >> lift (send addr req)
+            NoReturnOptionPresent (Evi evi) -> do
+                Dict <- pure (evi @r Proxy)
+                fork_ $ waitDelay addr >> lift (send addr req)
     serve port listeners =
         let listeners' = map (hoistMethod getDelaysLayer) listeners
         in  DelaysLayer $ serve port listeners'
+
 
 deriving instance (Monad m, WithNamedLogger m) => WithNamedLogger (DelaysLayer m)
