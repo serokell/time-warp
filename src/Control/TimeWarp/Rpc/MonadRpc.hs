@@ -57,6 +57,7 @@ import           Data.Monoid              ((<>))
 import           Data.Proxy               (Proxy (..))
 import           Data.Text                (Text)
 import           Data.Text.Buildable      (Buildable (..))
+import           Data.Void                (Void)
 import           GHC.Exts                 (Constraint)
 import           GHC.Generics             (Generic)
 
@@ -96,6 +97,7 @@ class Exception (ExpectedError r) =>
     type Response r :: *
 
     type ExpectedError r :: *
+    type ExpectedError r = Void
 
     messageId :: Proxy r -> MessageId
 
