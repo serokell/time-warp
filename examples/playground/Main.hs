@@ -39,7 +39,7 @@ import           Control.TimeWarp.Rpc    (Delays, DelaysLayer (..), Dict (..),
                                           Method (..), MonadMsgPackRpc, MonadRpc (..),
                                           MsgPackRpc, MsgPackUdp, PureRpc,
                                           RpcOptionMessagePack, RpcOptionNoReturn,
-                                          mkRequest, mkRequestWithErr, pickEvi,
+                                          mkRequestAuto, mkRequestWithErrAuto, pickEvi,
                                           runDelaysLayer, runMsgPackRpc, runMsgPackUdp,
                                           runPureRpc, withExtendedRpcOptions)
 import           Control.TimeWarp.Timed  (MonadTimed (wait), for, ms, sec, sec', till,
@@ -74,7 +74,7 @@ data EpicException = EpicException String
 
 instance Exception EpicException
 
-$(mkRequestWithErr ''EpicRequest ''String ''EpicException)
+$(mkRequestWithErrAuto ''EpicRequest ''String ''EpicException)
 
 -- * scenarios
 
@@ -98,7 +98,7 @@ yohohoScenario = do
 data Msg = Msg Int
     deriving (Generic, MessagePack)
 
-$(mkRequest ''Msg ''())
+$(mkRequestAuto ''Msg ''())
 
 repeatedScenario :: (MonadTimed m, MonadRpc '[RpcOptionMessagePack, RpcOptionNoReturn] m, MonadIO m, MonadCatch m) => m ()
 repeatedScenario  = do

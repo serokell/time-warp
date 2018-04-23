@@ -3,6 +3,9 @@
 module Control.TimeWarp.Rpc.TH
     ( mkRequestWithErr
     , mkRequest
+
+    , mkRequestWithErrAuto
+    , mkRequestAuto
     ) where
 
 import           Control.Concurrent.STM        (atomically)
@@ -34,7 +37,7 @@ getNextMessageId = fmap MessageId . atomically $ do
 -- The following code
 --
 -- @
--- $(mkRequest ''MyRequest ''MyResponse ''MyError)
+-- $(mkRequest ''MyRequest ''MyResponse ''MyError 7)
 -- @
 --
 -- generates
@@ -43,18 +46,14 @@ getNextMessageId = fmap MessageId . atomically $ do
 -- instance RpcRequest MyRequest where
 --     type Response      MyRequest = MyResponse
 --     type ExpectedError MyRequest = MyError
---     messageId _ = <some unique number>
+--     messageId _ = MessageId 7
 -- @
---
--- Note that message ids are assigned in no determined order,
--- if backward compatibilty is required one has to define message codes manually.
-mkRequestWithErr :: Name -> Name -> Name -> Q [Dec]
-mkRequestWithErr reqName respName errName = do
+mkRequestWithErr :: Name -> Name -> Name -> MessageId -> Q [Dec]
+mkRequestWithErr reqName respName errName (MessageId msgId) = do
     let reqType = reifyType reqName
         respType = reifyType respName
         errType = reifyType errName
-    MessageId msgId <- runIO getNextMessageId
-    mkInstance reqType respType errType msgId
+    mkInstance reqType respType errType
   where
     reifyType :: Name -> Q Type
     reifyType name = reify name >>= \case
@@ -69,7 +68,7 @@ mkRequestWithErr reqName respName errName = do
         typeArgs <- replicateM (length typeVars) $ VarT <$> newName "a"
         pure $ foldl AppT (ConT typeConName) typeArgs
 
-    mkInstance reqType respType errType msgId =
+    mkInstance reqType respType errType =
         [d|
         instance RpcRequest $reqType where
             type Response $reqType = $respType
@@ -78,5 +77,19 @@ mkRequestWithErr reqName respName errName = do
             messageId _ = MessageId $(lift msgId)
          |]
 
-mkRequest :: Name -> Name -> Q [Dec]
-mkRequest reqName respName = mkRequestWithErr reqName respName ''Void
+mkRequest :: Name -> Name -> MessageId -> Q [Dec]
+mkRequest reqName respName msgId = mkRequestWithErr reqName respName ''Void msgId
+
+-- | Simplified version of 'mkRequestWithErr', assignes unique 'MessageId's
+-- automatically.
+-- Note, it wreaks a backward compatibilty, and also works badly
+-- when actually several executables are launched.
+mkRequestWithErrAuto :: Name -> Name -> Name -> Q [Dec]
+mkRequestWithErrAuto reqName respName errName = do
+    msgId <- runIO getNextMessageId
+    mkRequestWithErr reqName respName errName msgId
+
+mkRequestAuto :: Name -> Name -> Q [Dec]
+mkRequestAuto reqName respName = do
+    msgId <- runIO getNextMessageId
+    mkRequest reqName respName msgId
