@@ -19,7 +19,6 @@ module Control.TimeWarp.Rpc.MsgPackUdp
     , runMsgPackUdpOpts
     ) where
 
-import           Control.Lens                  ((<&>))
 import           Control.Monad                 (forever, when)
 import           Control.Monad.Base            (MonadBase)
 import           Control.Monad.Catch           (Exception, MonadCatch, MonadMask,
@@ -29,8 +28,8 @@ import           Control.Monad.Trans           (MonadIO (..))
 import           Control.Monad.Trans.Control   (MonadBaseControl (..))
 import           Control.TimeWarp.Rpc.MonadRpc (Host, Method (..), MonadRpc (..),
                                                 NetworkAddress, RpcOptionMessagePack,
-                                                RpcOptionNoReturn, messageId,
-                                                methodMessageId)
+                                                RpcOptionNoReturn, buildMethodsMap,
+                                                messageId)
 import           Control.TimeWarp.Timed        (MonadTimed, ThreadId, TimedIO, fork_,
                                                 runTimedIO)
 import qualified Data.Binary                   as Binary
@@ -128,7 +127,7 @@ instance MonadRpc LocalOptions MsgPackUdp where
             liftIO $ N.bind sock (N.SockAddrInet port N.iNADDR_ANY)
             forever $ receive sock
       where
-        methodsMap = M.fromList $ methods <&> \m -> (methodMessageId m, m)
+        methodsMap = either (error . T.unpack) id $ buildMethodsMap methods
         receive :: N.Socket -> MsgPackUdp ()
         receive sock = do
             (MsgPackUdpOptions{..}, _) <- MsgPackUdp ask

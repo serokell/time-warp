@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns              #-}
 {-# LANGUAGE ConstraintKinds           #-}
 {-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE DeriveGeneric             #-}
@@ -45,19 +46,24 @@ module Control.TimeWarp.Rpc.MonadRpc
        , proxyOfArg
        , mkMethodTry
        , hoistMethod
+       , buildMethodsMap
        , RpcError (..)
        ) where
 
 import           Control.Exception        (Exception)
-import           Control.Monad            (void)
+import           Control.Monad            (void, when)
 import           Control.Monad.Catch      (MonadCatch, MonadThrow (..), catchAll, try)
 import           Control.Monad.Reader     (ReaderT (..))
 import           Control.Monad.Trans      (lift)
+import           Data.Foldable            (foldlM)
+import qualified Data.Map                 as M
 import           Data.Monoid              ((<>))
 import           Data.Proxy               (Proxy (..))
 import           Data.Text                (Text)
 import           Data.Text.Buildable      (Buildable (..))
 import           Data.Void                (Void)
+import           Formatting               (bprint, sformat, (%))
+import qualified Formatting               as F (build)
 import           GHC.Exts                 (Constraint)
 import           GHC.Generics             (Generic)
 
@@ -84,14 +90,15 @@ type NetworkAddress = (Host, Port)
 newtype MessageId = MessageId Int
     deriving (Eq, Ord, Show, Num, Generic)
 
+instance Buildable MessageId where
+    build (MessageId i) = bprint ("#"%F.build) i
+
 instance MessagePack MessageId
 
 -- | Defines name, response and expected error types of RPC-method to which data
 -- of @req@ type can be delivered.
 -- Expected error is the one which remote method can catch and send to client;
 -- any other error in remote method raises `InternalError` at client side.
---
--- TODO: create instances of this class by TH.
 class Exception (ExpectedError r) =>
       RpcRequest r where
     type Response r :: *
@@ -173,6 +180,15 @@ proxyOfArg _ = Proxy
 
 hoistMethod :: (forall a. m a -> n a) -> Method o m -> Method o n
 hoistMethod hoist' (Method f) = Method (hoist' . f)
+
+buildMethodsMap :: [Method o m] -> Either Text (M.Map MessageId (Method o m))
+buildMethodsMap = foldlM addMethod mempty
+  where
+    addMethod !acc method = do
+        let mid = methodMessageId method
+        when (M.member mid acc) $
+            Left $ sformat ("Several methods with "%F.build%" given") mid
+        return $ M.insert mid method acc
 
 -- * Instances
 
