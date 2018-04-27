@@ -15,8 +15,9 @@ module Control.TimeWarp.Rpc.ExtOpts
     , (:<<) (..)
     , pickEvi
 
-    , NoReturnOptionPresence (..)
-    , NoReturnOptionJudgement (..)
+    , HasOption (..)
+    , OptionPresence (..)
+    , OptionJudgement (..)
 
     -- * Re-exports for convenience
     , C.Dict (..)
@@ -32,8 +33,7 @@ import           Data.Proxy                    (Proxy (..))
 
 import           Control.TimeWarp.Logging      (WithNamedLogger)
 import           Control.TimeWarp.Rpc.MonadRpc (Method (..), MonadRpc (..),
-                                                RpcOptionNoReturn, RpcOptions (..),
-                                                proxyOfArg)
+                                                RpcOptions (..), proxyOfArg)
 import           Control.TimeWarp.Timed        (MonadTimed, ThreadId)
 
 
@@ -108,21 +108,31 @@ instance MonadBaseControl IO m =>
     restoreM = ExtendedRpcOptions . restoreM
 
 
-data NoReturnOptionPresence os
-    = NoReturnOptionPresent ('[RpcOptionNoReturn] :<< os)
-    | NoReturnOptionAbsent
+data OptionPresence o os
+    = OptionPresent (o :<< os)
+    | OptionAbsent
 
-class NoReturnOptionJudgement (os :: [*]) where
-    hasNoReturnOption :: NoReturnOptionPresence os
+class OptionJudgement o (os :: [*]) where
+    isOptionPresent :: OptionPresence o os
 
-instance NoReturnOptionJudgement '[] where
-    hasNoReturnOption = NoReturnOptionAbsent
+instance OptionJudgement o '[] where
+    isOptionPresent = OptionAbsent
 
-instance {-# OVERLAPS #-} NoReturnOptionJudgement (RpcOptionNoReturn : os) where
-    hasNoReturnOption = NoReturnOptionPresent (pickEvi C.Dict)
+instance {-# OVERLAPS #-} OptionJudgement o (o : os) where
+    isOptionPresent = OptionPresent (pickEvi C.Dict)
 
-instance NoReturnOptionJudgement os => NoReturnOptionJudgement (o : os) where
-    hasNoReturnOption =
-        case hasNoReturnOption @os of
-            NoReturnOptionAbsent            -> NoReturnOptionAbsent
-            NoReturnOptionPresent (Evi evi) -> NoReturnOptionPresent (Evi evi)
+instance OptionJudgement x os => OptionJudgement x (o : os) where
+    isOptionPresent =
+        case isOptionPresent @x @os of
+            OptionAbsent            -> OptionAbsent
+            OptionPresent (Evi evi) -> OptionPresent (Evi evi)
+
+
+class HasOption o (os :: [*]) where
+    hasOption :: o :<< os
+
+instance {-# OVERLAPS #-} HasOption o (o : os) where
+    hasOption = pickEvi C.Dict
+
+instance HasOption x os => HasOption x (o : os) where
+    hasOption = case hasOption @x @os of Evi evi -> Evi evi

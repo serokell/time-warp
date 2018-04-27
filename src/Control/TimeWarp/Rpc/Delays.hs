@@ -64,10 +64,9 @@ import           System.Random                 (StdGen)
 
 import           Control.TimeWarp.Logging      (WithNamedLogger)
 import           Control.TimeWarp.Rpc.ExtOpts  ((:<<) (Evi), Dict (..),
-                                                NoReturnOptionJudgement (..),
-                                                NoReturnOptionPresence (..))
+                                                OptionJudgement (..), OptionPresence (..))
 import           Control.TimeWarp.Rpc.MonadRpc (MonadRpc (..), NetworkAddress,
-                                                hoistMethod)
+                                                RpcOptionNoReturn, hoistMethod)
 import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..), ThreadId,
                                                 for, fork_, sleepForever, virtualTime,
                                                 wait)
@@ -321,14 +320,14 @@ instance (MonadIO m, MonadTimed m) => MonadTimed (DelaysLayer m) where
 
 type instance ThreadId (DelaysLayer m) = ThreadId m
 
-instance (MonadIO m, MonadTimed m, MonadRpc o m, NoReturnOptionJudgement o) =>
+instance (MonadIO m, MonadTimed m, MonadRpc o m, OptionJudgement RpcOptionNoReturn o) =>
          MonadRpc (o :: [*]) (DelaysLayer m) where
     send addr (req :: r) =
         -- make awaitance asynchronous if we do not wait for result
-        case hasNoReturnOption @o of
-            NoReturnOptionAbsent ->
+        case isOptionPresent @RpcOptionNoReturn @o of
+            OptionAbsent ->
                 waitDelay addr >> lift (send addr req)
-            NoReturnOptionPresent (Evi evi) -> do
+            OptionPresent (Evi evi) -> do
                 Dict <- pure (evi @r Proxy)
                 fork_ $ waitDelay addr >> lift (send addr req)
     serve port listeners =
