@@ -5,26 +5,27 @@ module Control.TimeWarp.Timed.Misc
        , sleepForever
        ) where
 
-import           Control.Concurrent.STM.TVar       (newTVarIO, readTVarIO, writeTVar)
-import           Control.Exception.Base            (SomeException)
-import           Control.Monad                     (forever)
-import           Control.Monad.Catch               (MonadCatch, catch)
-import           Control.Monad.STM                 (atomically)
-import           Control.Monad.Trans               (MonadIO, liftIO)
+import Control.Concurrent.STM.TVar (newTVarIO, readTVarIO, writeTVar)
+import Control.Exception.Base (SomeException)
+import Control.Monad (forever)
+import Control.Monad.Catch (MonadCatch, catch)
+import Control.Monad.STM (atomically)
+import Control.Monad.Trans (MonadIO, liftIO)
+import Monad.Capabilities (CapsT, HasCap)
 
-import           Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimed, for, fork_,
-                                                    minute, ms, startTimer, wait)
+import Control.TimeWarp.Timed.MonadTimed (Microsecond, Timed, for, fork_, minute, ms, startTimer,
+                                          wait)
 
 -- | Repeats an action periodically.
 --   If it fails, handler is invoked, determining delay before retrying.
 --   Can be interrupted with asynchronous exception.
 repeatForever
-    :: (MonadTimed m, MonadIO m, MonadCatch m)
-    => Microsecond                      -- ^ Period between action launches
-    -> (SomeException -> m Microsecond) -- ^ What to do on exception,
-                                        --   returns delay before retrying
-    -> m ()                             -- ^ Action
-    -> m ()
+    :: (HasCap Timed caps, MonadIO m, MonadCatch m)
+    => Microsecond                                 -- ^ Period between action launches
+    -> (SomeException -> CapsT caps m Microsecond) -- ^ What to do on exception,
+                                                   --   returns delay before retrying
+    -> CapsT caps m ()                             -- ^ Action
+    -> CapsT caps m ()
 repeatForever period handler action = do
     timer <- startTimer
     nextDelay <- liftIO $ newTVarIO Nothing
@@ -47,5 +48,5 @@ repeatForever period handler action = do
 -- | Sleep forever.
 
 -- TODO: would be better to use `MVar` to block thread
-sleepForever :: MonadTimed m => m ()
+sleepForever :: (Monad m, HasCap Timed caps) => CapsT caps m a
 sleepForever = forever $ wait (for 100500 minute)

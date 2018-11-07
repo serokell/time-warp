@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes       #-}
 {-# LANGUAGE BangPatterns              #-}
 {-# LANGUAGE ConstraintKinds           #-}
 {-# LANGUAGE DataKinds                 #-}
@@ -29,15 +30,17 @@ module Control.TimeWarp.Rpc.MonadRpc
 
        , RpcRequest (..)
        , MessageId (..)
+       , Mode (..)
+       , IsMode (..)
+       , ModeResponseMod
 
-       , RpcOptions (..)
-       , RpcOptionMessagePack
-       , RpcOptionNoReturn
-
-       , MonadRpc (..)
-       , MonadMsgPackRpc
-       , MonadMsgPackUdp
-       , sendTimeout
+       , Send (..)
+       , Rpc (..)
+       , send
+       , listen
+       , call
+       , serve
+       , callTimeout
        , submit
        , Method (..)
        , MethodTry (..)
@@ -50,28 +53,26 @@ module Control.TimeWarp.Rpc.MonadRpc
        , RpcError (..)
        ) where
 
-import           Control.Exception        (Exception)
-import           Control.Monad            (void, when)
-import           Control.Monad.Catch      (MonadCatch, MonadThrow (..), catchAll, try)
-import           Control.Monad.Reader     (ReaderT (..))
-import           Control.Monad.Trans      (lift)
-import           Data.Foldable            (foldlM)
-import qualified Data.Map                 as M
-import           Data.Monoid              ((<>))
-import           Data.Proxy               (Proxy (..))
-import           Data.Text                (Text)
-import           Data.Text.Buildable      (Buildable (..))
-import           Data.Void                (Void)
-import           Formatting               (bprint, sformat, (%))
-import qualified Formatting               as F (build)
-import           GHC.Exts                 (Constraint)
-import           GHC.Generics             (Generic)
+import Control.Exception (Exception)
+import Control.Monad (void, when)
+import Control.Monad.Catch (MonadCatch, catchAll, try)
+import Data.Foldable (foldlM)
+import qualified Data.Map as M
+import Data.Monoid ((<>))
+import Data.Proxy (Proxy (..))
+import Data.Text (Text)
+import Data.Text.Buildable (Buildable (..))
+import Data.Typeable (Typeable)
+import Data.Void (Void)
+import Formatting (bprint, sformat, (%))
+import qualified Formatting as F (build)
+import GHC.Generics (Generic)
+import Monad.Capabilities (CapsT, HasCaps, withCap)
 
-import           Data.MessagePack.Object  (MessagePack (..))
-import           Data.Time.Units          (Hour, TimeUnit)
+import Data.MessagePack.Object (MessagePack (..))
+import Data.Time.Units (Hour, TimeUnit)
 
-import           Control.TimeWarp.Logging (LoggerNameBox (..))
-import           Control.TimeWarp.Timed   (MonadTimed (timeout), fork_)
+import Control.TimeWarp.Timed (Timed, fork_, timeout)
 
 
 -- | Port number.
@@ -99,7 +100,8 @@ instance MessagePack MessageId
 -- of @req@ type can be delivered.
 -- Expected error is the one which remote method can catch and send to client;
 -- any other error in remote method raises `InternalError` at client side.
-class Exception (ExpectedError r) =>
+class (MessagePack r, MessagePack (Response r), MessagePack (ExpectedError r),
+       Exception (ExpectedError r), Typeable r) =>
       RpcRequest r where
     type Response r :: *
 
@@ -108,68 +110,96 @@ class Exception (ExpectedError r) =>
 
     messageId :: Proxy r -> MessageId
 
--- | Declares requirements of RPC implementation.
-class RpcOptions (o :: k) where
-    type family RpcConstraints o r :: Constraint
+-- | Submission mode.
+data Mode
+    = OneWay
+      -- ^ No respond
+    | RemoteCall
+      -- ^ Response required
 
-instance RpcOptions '[] where
-    type RpcConstraints '[] r = ()
+type family ModeResponseMod (mode :: Mode) r where
+    ModeResponseMod 'OneWay r = ()
+    ModeResponseMod 'RemoteCall r = r
 
--- | Options can be grouped into lists.
-instance (RpcOptions o, RpcOptions os) => RpcOptions (o : os) where
-    type RpcConstraints (o : os) r = (RpcConstraints o r, RpcConstraints os r)
-
-data RpcOptionMessagePack
-instance RpcOptions RpcOptionMessagePack where
-    type RpcConstraints RpcOptionMessagePack r =
-        ( MessagePack r
-        , MessagePack (Response r)
-        , MessagePack (ExpectedError r)
-        )
-
-data RpcOptionNoReturn
-instance RpcOptions RpcOptionNoReturn where
-    type RpcConstraints RpcOptionNoReturn r = Response r ~ ()
+class IsMode (mode :: Mode) where
+    finaliseResponse :: Proxy mode -> r -> ModeResponseMod mode r
+instance IsMode 'OneWay where
+    finaliseResponse _ _ = ()
+instance IsMode 'RemoteCall where
+    finaliseResponse _ = id
 
 -- | Creates RPC-method.
-data Method o m =
-    forall r . (RpcRequest r, RpcConstraints o r) => Method (r -> m (Response r))
+data Method (mode :: Mode) m =
+    forall r. RpcRequest r => Method (r -> m (ModeResponseMod mode (Response r)))
 
 -- | Creates RPC-method, which catches exception of `err` type.
-data MethodTry o m =
-    forall r . (RpcRequest r, RpcConstraints o r) =>
-    MethodTry (r -> m (Either (ExpectedError r) (Response r)))
+data MethodTry (mode :: Mode) m =
+    forall r. RpcRequest r =>
+    MethodTry (r -> m (Either (ExpectedError r) (ModeResponseMod mode (Response r))))
 
-mkMethodTry :: MonadCatch m => Method o m -> MethodTry o m
+mkMethodTry :: MonadCatch m => Method mode m -> MethodTry mode m
 mkMethodTry (Method f) = MethodTry $ try . f
 
--- | Defines protocol of RPC layer.
-class (MonadThrow m, RpcOptions o) => MonadRpc o m | m -> o where
-    -- | Executes remote method call.
-    send :: (RpcRequest r, RpcConstraints o r)
-         => NetworkAddress -> r -> m (Response r)
+-- | Actions with one-way messages submission.
+data Send m = Send
+    { _send
+        :: forall r. RpcRequest r
+        => NetworkAddress -> r -> m ()
+    , _listen
+        :: Port -> [Method 'OneWay m] -> m ()
+    }
 
-    -- | Starts RPC server with a set of RPC methods.
-    serve :: Port -> [Method o m] -> m ()
+-- | Actions with remote call messages passing.
+data Rpc m = Rpc
+    { _call
+        :: forall r. RpcRequest r
+        => NetworkAddress -> r -> m (Response r)
+    , _serve
+        :: Port -> [Method 'RemoteCall m] -> m ()
+    }
 
--- | Same as `send`, but allows to set up timeout for a call (see
+-- | Sends a message.
+send
+    :: (HasCaps [Timed, Send] caps, RpcRequest r)
+    => NetworkAddress -> r -> CapsT caps m ()
+send addr msg = withCap $ \cap -> _send cap addr msg
+
+-- | Starts listening on incoming messages.
+listen
+    :: (HasCaps [Timed, Send] caps, RpcRequest r)
+    => Port -> [Method 'OneWay (CapsT caps m)] -> CapsT caps m ()
+listen addr msg = withCap $ \cap -> _listen cap addr msg
+
+-- | Executes remote method call.
+call
+    :: (HasCaps [Timed, Rpc] caps, RpcRequest r)
+    => NetworkAddress -> r -> CapsT caps m (Response r)
+call addr msg = withCap $ \cap -> _call cap addr msg
+
+-- | Starts RPC server with a set of RPC methods.
+serve
+    :: (HasCaps [Timed, Rpc] caps, RpcRequest r)
+    => Port -> [Method 'RemoteCall (CapsT caps m)] -> CapsT caps m ()
+serve addr msg = withCap $ \cap -> _serve cap addr msg
+
+-- | Same as `call`, but allows to set up timeout for a call (see
 -- `Control.TimeWarp.Timed.MonadTimed.timeout`).
-sendTimeout
-    :: (MonadTimed m, MonadRpc o m, RpcRequest r, RpcConstraints o r, TimeUnit t)
-    => t -> NetworkAddress -> r -> m (Response r)
-sendTimeout t addr = timeout t . send addr
+callTimeout
+    :: (HasCaps [Timed, Rpc] caps, RpcRequest r, TimeUnit t)
+    => t -> NetworkAddress -> r -> CapsT caps m (Response r)
+callTimeout t addr = timeout t . call addr
 
--- | Similar to `send`, but doesn't wait for result.
+-- | Similar to `call`, but doesn't wait for result.
 submit
-    :: (MonadCatch m, MonadTimed m, MonadRpc o m, RpcConstraints o r, RpcRequest r)
-    => NetworkAddress -> r -> m ()
+    :: (MonadCatch m, HasCaps [Timed, Rpc] caps, RpcRequest r)
+    => NetworkAddress -> r -> CapsT caps m ()
 submit addr req =
-    fork_ $ void (sendTimeout timeoutDelay addr req) `catchAll` \_ -> return ()
+    fork_ $ void (callTimeout timeoutDelay addr req) `catchAll` \_ -> return ()
   where
     -- without timeout emulation has no choice but to hang on blackouts
     timeoutDelay = 1 :: Hour
 
-methodMessageId :: Method o m -> MessageId
+methodMessageId :: Method mode m -> MessageId
 methodMessageId (Method f) = messageId $ proxyOfArg f
 
 proxyOf :: a -> Proxy a
@@ -189,22 +219,6 @@ buildMethodsMap = foldlM addMethod mempty
         when (M.member mid acc) $
             Left $ sformat ("Several methods with "%F.build%" given") mid
         return $ M.insert mid method acc
-
--- * Instances
-
-instance MonadRpc o m => MonadRpc o (ReaderT r m) where
-    send addr req = lift $ send addr req
-
-    serve port methods =
-        ReaderT $ \r ->
-            serve port (hoistMethod (`runReaderT` r) <$> methods)
-
-deriving instance MonadRpc o m => MonadRpc o (LoggerNameBox m)
-
--- * Aliases
-
-type MonadMsgPackRpc = MonadRpc '[RpcOptionMessagePack]
-type MonadMsgPackUdp = MonadRpc '[RpcOptionMessagePack, RpcOptionNoReturn]
 
 -- * Exceptions
 
@@ -227,4 +241,3 @@ instance Show RpcError where
     show = show . build
 
 instance Exception RpcError
-

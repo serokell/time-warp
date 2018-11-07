@@ -13,42 +13,33 @@
 -- Implements 'MonadRpc' via UDP protocol.
 
 module Control.TimeWarp.Rpc.MsgPackUdp
-    ( MsgPackUdp (..)
-    , MsgPackUdpOptions (..)
-    , runMsgPackUdp
-    , runMsgPackUdpOpts
+    ( udpCap
     ) where
 
-import           Control.Monad                 (forever, when)
-import           Control.Monad.Base            (MonadBase)
-import           Control.Monad.Catch           (Exception, MonadCatch, MonadMask,
-                                                MonadThrow, bracket, throwM)
-import           Control.Monad.Reader          (ReaderT (..), ask)
-import           Control.Monad.Trans           (MonadIO (..))
-import           Control.Monad.Trans.Control   (MonadBaseControl (..))
-import           Control.TimeWarp.Rpc.MonadRpc (Host, Method (..), MonadRpc (..),
-                                                NetworkAddress, RpcOptionMessagePack,
-                                                RpcOptionNoReturn, buildMethodsMap,
-                                                messageId)
-import           Control.TimeWarp.Timed        (MonadTimed, ThreadId, TimedIO, fork_,
-                                                runTimedIO)
-import qualified Data.Binary                   as Binary
-import qualified Data.ByteString.Lazy          as LBS
-import           Data.Default                  (Default (..))
-import qualified Data.HashMap.Strict           as HM
-import qualified Data.IORef.Lifted             as Ref
-import qualified Data.Map                      as M
-import           Data.Maybe                    (fromMaybe)
-import qualified Data.MessagePack              as MsgPack
-import           Data.Proxy                    (Proxy (..))
-import qualified Data.Text                     as T
-import           Formatting                    (sformat, shown, (%))
-import           GHC.IO.Unsafe                 (unsafePerformIO)
-import qualified Network.Socket                as N hiding (recv, sendTo)
-import qualified Network.Socket.ByteString     as N
-import           Text.Read                     (readMaybe)
+import Control.Monad (forever, when)
+import Control.Monad.Base (MonadBase)
+import Control.Monad.Catch (Exception, MonadMask, MonadThrow, bracket, throwM)
+import Control.Monad.Trans (MonadIO (..))
+import qualified Data.Binary as Binary
+import qualified Data.ByteString.Lazy as LBS
+import Data.Default (Default (..))
+import qualified Data.HashMap.Strict as HM
+import qualified Data.IORef.Lifted as Ref
+import qualified Data.Map as M
+import Data.Maybe (fromMaybe)
+import qualified Data.MessagePack as MsgPack
+import Data.Proxy (Proxy (..))
+import qualified Data.Text as T
+import Formatting (sformat, shown, (%))
+import GHC.IO.Unsafe (unsafePerformIO)
+import Monad.Capabilities (CapImpl (..), CapsT, HasCap)
+import qualified Network.Socket as N hiding (recv, sendTo)
+import qualified Network.Socket.ByteString as N
+import Text.Read (readMaybe)
 
-type LocalOptions = '[RpcOptionMessagePack, RpcOptionNoReturn]
+import Control.TimeWarp.Rpc.MonadRpc (Host, Method (..), Mode (..), NetworkAddress, Send (..),
+                                      buildMethodsMap, messageId)
+import Control.TimeWarp.Timed (Timed, fork_)
 
 withUdpSocket :: (MonadIO m, MonadMask m) => (N.Socket -> m a) -> m a
 withUdpSocket = bracket mkSocket close
@@ -73,30 +64,6 @@ instance Default MsgPackUdpOptions where
         , udpMessageSizeLimit = 1500
         }
 
-type LocalEnv = (MsgPackUdpOptions, N.Socket)
-
-newtype MsgPackUdp a = MsgPackUdp
-    { unwrapMsgPackRpc :: ReaderT LocalEnv TimedIO a
-    } deriving (Functor, Applicative, Monad, MonadIO, MonadBase IO,
-                MonadThrow, MonadCatch, MonadMask, MonadTimed)
-
-runMsgPackUdpOpts :: MsgPackUdpOptions -> MsgPackUdp a -> IO a
-runMsgPackUdpOpts options (MsgPackUdp action) = do
-    withUdpSocket $ \sock ->
-        runTimedIO $ runReaderT action (options, sock)
-
-runMsgPackUdp :: MsgPackUdp a -> IO a
-runMsgPackUdp = runMsgPackUdpOpts def
-
-type instance ThreadId MsgPackUdp = ThreadId TimedIO
-
-instance MonadBaseControl IO MsgPackUdp where
-    type StM MsgPackUdp a = StM (ReaderT N.Socket TimedIO) a
-    liftBaseWith f =
-        MsgPackUdp $ liftBaseWith $ \runInIO ->
-            f $ runInIO . unwrapMsgPackRpc
-    restoreM = MsgPackUdp . restoreM
-
 newtype PacketSizeOverflow = PacketSizeOverflow Integer
     deriving (Eq, Show)
 
@@ -107,50 +74,53 @@ newtype DecodeException = DecodeException T.Text
 
 instance Exception DecodeException
 
-instance MonadRpc LocalOptions MsgPackUdp where
-    send addr (msg :: msg) = MsgPackUdp . ReaderT $
-      \(MsgPackUdpOptions{..}, sock) -> do
-        let msgName = messageId @msg Proxy
-            rawMsg = (msgName, msg)
-            dat = Binary.encode $ MsgPack.toObject rawMsg
+udpCap :: (MonadIO m, MonadMask m) => MsgPackUdpOptions -> m (CapImpl Send '[Timed] IO)
+udpCap MsgPackUdpOptions{..} =
+    withUdpSocket $ \globalSock ->
+    return $ CapImpl $ Send
+        { _send = \addr (msg :: msg) -> do
+            let msgName = messageId @msg Proxy
+                rawMsg = (msgName, msg)
+                dat = Binary.encode $ MsgPack.toObject rawMsg
 
-        let msgSize = fromIntegral $ LBS.length dat
-        when (msgSize > fromIntegral udpMessageSizeLimit) $
-            throwM $ PacketSizeOverflow msgSize
+            let msgSize = fromIntegral $ LBS.length dat
+            when (msgSize > fromIntegral udpMessageSizeLimit) $
+                throwM $ PacketSizeOverflow msgSize
 
-        sockAddr <- networkAddrToSockAddr udpCacheAddresses addr
-        liftIO $ N.sendManyTo sock (LBS.toChunks dat) sockAddr
+            sockAddr <- networkAddrToSockAddr udpCacheAddresses addr
+            liftIO $ N.sendManyTo globalSock (LBS.toChunks dat) sockAddr
 
-    serve (fromIntegral -> port) methods = do
-        -- one socket per listener
-        withUdpSocket $ \sock -> do
-            liftIO $ N.bind sock (N.SockAddrInet port N.iNADDR_ANY)
-            forever $ receive sock
-      where
-        methodsMap = either (error . T.unpack) id $ buildMethodsMap methods
-        receive :: N.Socket -> MsgPackUdp ()
-        receive sock = do
-            (MsgPackUdpOptions{..}, _) <- MsgPackUdp ask
-            dat <- liftIO $ N.recv sock udpMessageSizeLimit
+        , _listen = \(fromIntegral -> port) methods -> do
+            -- one socket per listener
+            withUdpSocket $ \sock -> do
+                liftIO $ N.bind sock (N.SockAddrInet port N.iNADDR_ANY)
+                forever $ receive methods sock
+        }
+  where
+    methodsMap methods = either (error . T.unpack) id $ buildMethodsMap methods
+    receive :: (MonadIO m, MonadThrow m, HasCap Timed caps)
+            => [Method 'OneWay (CapsT caps m)] -> N.Socket -> CapsT caps m ()
+    receive methods sock = do
+        dat <- liftIO $ N.recv sock udpMessageSizeLimit
 
-            fork_ . either (throwM . DecodeException) id $ do
-                obj <- case Binary.decodeOrFail (LBS.fromStrict dat) of
-                    Left _            -> Left "failed to decode to MessagePack"
-                    Right (_, _, obj) -> Right obj
+        fork_ . either (throwM . DecodeException) id $ do
+            obj <- case Binary.decodeOrFail (LBS.fromStrict dat) of
+                Left _            -> Left "failed to decode to MessagePack"
+                Right (_, _, obj) -> Right obj
 
-                (msgId, msgObj :: MsgPack.Object)
-                    <- maybe (Left "failed to get message id") Right $
-                       MsgPack.fromObject obj
+            (msgId, msgObj :: MsgPack.Object)
+                <- maybe (Left "failed to get message id") Right $
+                  MsgPack.fromObject obj
 
-                Method f <-
-                    maybe (Left $ sformat ("No method " % shown % " found") msgId) Right $
-                    M.lookup msgId methodsMap
+            Method f <-
+                maybe (Left $ sformat ("No method " % shown % " found") msgId) Right $
+                M.lookup msgId $ methodsMap methods
 
-                action <-
-                    maybe (Left "failed to decode from MessagePack") (Right . f) $
-                    MsgPack.fromObject msgObj
+            action <-
+                maybe (Left "failed to decode from MessagePack") (Right . f) $
+                MsgPack.fromObject msgObj
 
-                return action
+            return action
 
 addrCache :: Ref.IORef (HM.HashMap Host N.HostAddress)
 addrCache = unsafePerformIO $ Ref.newIORef mempty
@@ -179,4 +149,3 @@ networkAddrToSockAddr (CacheAddrs useCaching) (ip, port) = do
     incorrectIp = error "send: incorrect api"
     split = T.splitOn "."
     parse = fromMaybe incorrectIp . readMaybe . T.unpack
-

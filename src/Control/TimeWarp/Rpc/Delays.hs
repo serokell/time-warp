@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds            #-}
 {-# LANGUAGE MultiWayIf           #-}
 {-# LANGUAGE Rank2Types           #-}
+{-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- |
@@ -38,39 +39,26 @@ module Control.TimeWarp.Rpc.Delays
        , forAddressesList
        , forAddresses
 
-       -- * Delay layer
-       , DelaysLayer (..)
-       , runDelaysLayer
-       , waitDelay
+       -- * Applying delay
+       , sendDelaysCap
+       , rpcDelaysCap
        ) where
 
-import           Control.Concurrent.STM        (atomically)
-import           Control.Concurrent.STM.TVar   (TVar, newTVarIO, readTVar, writeTVar)
-import           Control.Lens                  (both, (%~))
-import           Control.Monad.Catch           (MonadCatch, MonadMask, MonadThrow)
-import           Control.Monad.Random          (MonadRandom (getRandomR), Rand, evalRand,
-                                                split)
-import           Control.Monad.Reader          (ReaderT (..))
-import           Control.Monad.State           (MonadState, StateT)
-import           Control.Monad.Trans           (MonadIO, MonadTrans, lift, liftIO)
-import           Data.Default                  (Default, def)
-import           Data.List                     (find)
-import           Data.Maybe                    (fromMaybe)
-import           Data.Proxy                    (Proxy (..))
-import qualified Data.Set                      as S
-import           Data.Time.Units               (TimeUnit, fromMicroseconds,
-                                                toMicroseconds)
-import           System.Random                 (StdGen)
+import Control.Concurrent.STM (atomically)
+import Control.Concurrent.STM.TVar (TVar, newTVarIO, readTVar, writeTVar)
+import Control.Lens (both, (%~))
+import Control.Monad.Random (MonadRandom (getRandomR), Rand, evalRand, split)
+import Control.Monad.Trans (MonadIO, liftIO)
+import Data.Default (Default, def)
+import Data.List (find)
+import Data.Maybe (fromMaybe)
+import qualified Data.Set as S
+import Data.Time.Units (TimeUnit, fromMicroseconds, toMicroseconds)
+import Monad.Capabilities (CapImpl (..), CapsT, HasCap)
+import System.Random (StdGen)
 
-import           Control.TimeWarp.Logging      (WithNamedLogger)
-import           Control.TimeWarp.Rpc.ExtOpts  ((:<<) (Evi), Dict (..),
-                                                OptionJudgement (..), OptionPresence (..))
-import           Control.TimeWarp.Rpc.MonadRpc (MonadRpc (..), NetworkAddress,
-                                                RpcOptionNoReturn, hoistMethod)
-import           Control.TimeWarp.Timed        (Microsecond, MonadTimed (..), ThreadId,
-                                                for, fork_, sleepForever, virtualTime,
-                                                wait)
-
+import Control.TimeWarp.Rpc.MonadRpc (NetworkAddress, Rpc (..), Send (..))
+import Control.TimeWarp.Timed (Microsecond, Timed, for, fork_, sleepForever, virtualTime, wait)
 
 -- * Delays management
 
@@ -246,93 +234,50 @@ instance Default Delays where
 
 -- * Delays layer
 
--- | Time delays.
-class Monad m => MonadDelay p m where
-    -- | Wait for some time, defined by inner state and given parameters @p@.
-    waitDelay :: p -> m ()
-    default waitDelay
-        :: (Monad n, MonadTrans t, MonadDelay p n, t n ~ m)
-        => p -> m ()
-    waitDelay = lift . waitDelay
+waitDelay
+    :: (MonadIO m, HasCap Timed caps)
+    => TVar StdGen -> Delays -> NetworkAddress -> CapsT caps m ()
+waitDelay genVar delays addr = do
+    time <- virtualTime
+    -- better to fork new gen because delays evaluation may be
+    -- inefficient
+    gen <- forkGen genVar
+    let delay = evalRand (evalDelay delays addr time) gen
+    case delay of
+        ConnectedIn connDelay      -> wait (for connDelay)
+        NeverConnected             -> sleepForever
+        UndefinedConnectionOutcome -> pure ()
+  where
+    forkGen var = liftIO . atomically $ do
+        gen <- readTVar var
+        let (gen1, gen2) = split gen
+        writeTVar var gen1
+        return gen2
 
-instance MonadDelay p m => MonadDelay p (ReaderT __ m)
-instance MonadDelay p m => MonadDelay p (StateT __ m)
+-- | Modifies 'Send' actions so that messages are delivered with delay.
+sendDelaysCap
+    :: (MonadIO m, MonadIO n, DelaysSpecifier delays, HasCap Timed deps)
+    => delays -> StdGen -> m (CapImpl Send deps n -> CapImpl Send (Timed ': deps) n)
+sendDelaysCap (toDelays -> delays) gen = do
+    genVar <- liftIO $ newTVarIO gen
+    return $ \(CapImpl sendCap) -> CapImpl sendCap
+        { _send = \addr req ->
+            fork_ $ do
+                waitDelay genVar delays addr
+                _send sendCap addr req
+        }
 
-
--- | State for @DelaysLayer@
-data DelaysState = DelaysState
-    { dsDelays :: Delays
-      -- ^ Given delay rules.
-    , dsGen    :: TVar StdGen
-      -- ^ Random generator seed for delays evaluation.
-    }
-
--- | Provides means of reproducible network delays emulation
--- according to specified 'Delays' rules.
-newtype DelaysLayer m a = DelaysLayer
-    { getDelaysLayer :: ReaderT DelaysState m a
-    } deriving (Functor, Applicative, Monad, MonadIO, MonadState __,
-                MonadThrow, MonadCatch, MonadMask)
-
--- | Run 'DelaysLayer'.
-runDelaysLayer
-    :: (MonadIO m, DelaysSpecifier delays)
-    => delays -> StdGen -> DelaysLayer m a -> m a
-runDelaysLayer (toDelays -> d) s (DelaysLayer action) = do
-    sv <- liftIO $ newTVarIO s
-    runReaderT action (DelaysState d sv)
-
-instance MonadTrans DelaysLayer where
-    lift = DelaysLayer . lift
-
-instance (MonadIO m, MonadTimed m) =>
-         MonadDelay NetworkAddress (DelaysLayer m) where
-    waitDelay addr = DelaysLayer . ReaderT $ \DelaysState{..} -> do
-        time <- virtualTime
-        -- better to fork new gen because delays evaluation may be
-        -- inefficient
-        gen  <- forkGen dsGen
-        let delay = evalRand (evalDelay dsDelays addr time) gen
-        case delay of
-            ConnectedIn connDelay      -> wait (for connDelay)
-            NeverConnected             -> sleepForever
-            UndefinedConnectionOutcome -> pure ()
-      where
-        forkGen var = liftIO . atomically $ do
-            gen <- readTVar var
-            let (gen1, gen2) = split gen
-            writeTVar var gen1
-            return gen2
-
-instance (MonadIO m, MonadTimed m) => MonadTimed (DelaysLayer m) where
-    virtualTime = lift virtualTime
-    currentTime = lift currentTime
-    wait = lift . wait
-    myThreadId = lift myThreadId
-    throwTo tid e = lift $ throwTo tid e
-    timeout t = DelaysLayer . timeout t . getDelaysLayer
-    fork action =
-        DelaysLayer . ReaderT $ \ds -> do
-            -- producing special gen for new thread
-            gen <- liftIO . atomically $ readTVar (dsGen ds)
-            let (newGen, _) = split gen
-            fork $ runDelaysLayer (dsDelays ds) newGen action
-
-type instance ThreadId (DelaysLayer m) = ThreadId m
-
-instance (MonadIO m, MonadTimed m, MonadRpc o m, OptionJudgement RpcOptionNoReturn o) =>
-         MonadRpc (o :: [*]) (DelaysLayer m) where
-    send addr (req :: r) =
-        -- make awaitance asynchronous if we do not wait for result
-        case isOptionPresent @RpcOptionNoReturn @o of
-            OptionAbsent ->
-                waitDelay addr >> lift (send addr req)
-            OptionPresent (Evi evi) -> do
-                Dict <- pure (evi @r Proxy)
-                fork_ $ waitDelay addr >> lift (send addr req)
-    serve port listeners =
-        let listeners' = map (hoistMethod getDelaysLayer) listeners
-        in  DelaysLayer $ serve port listeners'
-
-
-deriving instance (Monad m, WithNamedLogger m) => WithNamedLogger (DelaysLayer m)
+-- | Modifies 'Rpc' actions so that message passing is delayed; note that
+-- delay is applied twice, both on request and response.
+rpcDelaysCap
+    :: (MonadIO m, MonadIO n, DelaysSpecifier delays, HasCap Timed deps)
+    => delays -> StdGen -> m (CapImpl Rpc deps n -> CapImpl Rpc (Timed ': deps) n)
+rpcDelaysCap (toDelays -> delays) gen = do
+    genVar <- liftIO $ newTVarIO gen
+    return $ \(CapImpl rpcCap) -> CapImpl rpcCap
+        { _call = \addr req -> do
+            waitDelay genVar delays addr
+            res <- _call rpcCap addr req
+            waitDelay genVar delays addr
+            return res
+        }

@@ -19,44 +19,39 @@ module Control.TimeWarp.Timed.TimedT
        , runTimedT
        , runTimedTExt
        , defaultLoggerName
+       , pureTimedCap
        ) where
 
-import           Control.Applicative               ((<|>))
-import           Control.Exception.Base            (AsyncException (ThreadKilled),
-                                                    Exception (fromException),
-                                                    SomeException (..))
+import Control.Applicative ((<|>))
+import Control.Exception.Base (AsyncException (ThreadKilled), Exception (fromException),
+                               SomeException (..))
 
-import           Control.Lens                      (at, makeLenses, use, view, (%=), (%~),
-                                                    (&), (.=), (.~), (<&>), (<<+=),
-                                                    (<<.=), (^.))
-import           Control.Monad                     (unless, void)
-import           Control.Monad.Catch               (Handler (..), MonadCatch, MonadMask,
-                                                    MonadThrow, catch, catchAll, catches,
-                                                    finally, mask, throwM, try,
-                                                    uninterruptibleMask)
-import           Control.Monad.Cont                (ContT (..), runContT)
-import           Control.Monad.Loops               (whileM_)
-import           Control.Monad.Reader              (ReaderT (..), ask, local, runReaderT)
-import           Control.Monad.State               (MonadState (get, put, state), StateT,
-                                                    evalStateT)
-import           Control.Monad.Trans               (MonadIO, MonadTrans, lift, liftIO)
-import           Data.Default                      (Default (..))
-import           Data.Function                     (on)
-import           Data.IORef                        (newIORef, readIORef, writeIORef)
-import           Data.List                         (foldl')
-import           Data.Ord                          (comparing)
-import           Formatting                        (sformat, shown, (%))
+import Control.Lens (at, makeLenses, use, view, (%=), (%~), (&), (.=), (.~), (<&>), (<<+=), (<<.=),
+                     (^.))
+import Control.Monad (unless, void)
+import Control.Monad.Catch (Handler (..), MonadCatch, MonadMask, MonadThrow, catch, catchAll,
+                            catches, finally, mask, throwM, try, uninterruptibleMask)
+import Control.Monad.Cont (ContT (..), runContT)
+import Control.Monad.Fix (fix)
+import Control.Monad.Loops (whileM_)
+import Control.Monad.Reader (ReaderT (..), ask, local, runReaderT)
+import Control.Monad.State (MonadState (get, put, state), StateT, evalStateT)
+import Control.Monad.Trans (MonadIO, MonadTrans, lift, liftIO)
+import Data.Default (Default (..))
+import Data.Function (on)
+import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.List (foldl')
+import Data.Ord (comparing)
+import Formatting (sformat, shown, (%))
+import Monad.Capabilities (CapImpl (..))
 
-import qualified Data.Map                          as M
-import qualified Data.PQueue.Min                   as PQ
-import           Safe                              (fromJustNote)
+import qualified Data.Map as M
+import qualified Data.PQueue.Min as PQ
+import Safe (fromJustNote)
 
-import           Control.TimeWarp.Logging          (LoggerName, WithNamedLogger (..),
-                                                    logDebug, logWarning)
-import           Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimed (..),
-                                                    MonadTimedError (MTTimeoutError),
-                                                    ThreadId, after, for, mcs, schedule,
-                                                    timeout, virtualTime)
+import Control.TimeWarp.Logging (LoggerName, WithNamedLogger (..), logDebug, logWarning)
+import Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimedError (MTTimeoutError),
+                                          ThreadId (..), Timed (..), for, mcs)
 
 -- Summary, `TimedT` (implementation of emulation mode) consists of several
 -- layers (from outer to inner):
@@ -66,7 +61,7 @@ import           Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimed (..)
 -- * StateT Scenario    -- keeps global information of emulation
 
 -- | Analogy to `Control.Concurrent.ThreadId` for emulation.
-newtype PureThreadId = PureThreadId Integer
+newtype PureThreadId = PureThreadId { unPureThreadId :: Integer }
     deriving (Eq, Ord)
 
 instance Show PureThreadId where
@@ -341,34 +336,33 @@ threadKilledNotifier e
   where
     msg = sformat ("Thread killed by exception: " % shown) e
 
-type instance ThreadId (TimedT m) = PureThreadId
-
-instance (MonadIO m, MonadThrow m, MonadCatch m) =>
-         MonadTimed (TimedT m) where
-    virtualTime = TimedT $ use curTime
-    currentTime = virtualTime
-    -- | Take note, created thread may be killed by async exception
-    --   only when it calls "wait"
-    fork act
-         -- just put new thread to event queue
-     = do
-        _timestamp <- virtualTime
-        tid        <- getNextThreadId
+pureTimedCap :: (MonadIO m, MonadCatch m) => CapImpl Timed '[] (TimedT m)
+pureTimedCap = CapImpl $ fix $ \Timed{..} -> Timed
+    { _virtualTime = lift . TimedT $ use curTime
+    , _currentTime = _virtualTime
+    -- Take note, created thread may be killed by async exception
+    -- only when it calls "wait"
+    , _fork = \act -> do
+        -- just put new thread to event queue
+        _timestamp <- _virtualTime
+        tid <- lift getNextThreadId
         logName    <- getLoggerName
+        caps <- ask
         let _threadCtx =
                 ThreadCtx
                 { _threadId   = tid
                 , _handlers   = []   -- top-level exceptions are caught below
                 , _loggerName = logName
                 }
-            _action = act `catch` threadKilledNotifier
-        TimedT $ events %= PQ.insert Event {..}
-        wait $ for 1 mcs  -- real `forkIO` seems to yield execution
-                          -- to newly created thread
-        return tid
-    wait relativeToNow = do
-        cur <- virtualTime
-        ctx <- TimedT ask
+            _action = flip runReaderT caps $
+                      act `catch` threadKilledNotifier
+        lift . TimedT $ events %= PQ.insert Event {..}
+        _wait $ for 1 mcs  -- real `forkIO` seems to yield execution
+                           -- to newly created thread
+        return $ EmuThreadId (unPureThreadId tid)
+    , _wait = \relativeToNow -> do
+        cur <- _virtualTime
+        ctx <- lift $ TimedT ask
         let event following =
                 Event
                 { _threadCtx = ctx
@@ -377,29 +371,34 @@ instance (MonadIO m, MonadThrow m, MonadCatch m) =>
                 }
         -- grab our continuation, put it to event queue
         -- and finish execution
-        TimedT . lift . ContT $
+        lift . TimedT . lift . ContT $
             \c -> events %= PQ.insert (event $ c ())
-    myThreadId = TimedT $ view threadId
-    throwTo tid e = do
-        wakeUpThread
-        TimedT $ asyncExceptions . at tid %= (<|> Just (SomeException e))
-      where
-        -- TODO: make more efficient
-        wakeUpThread = TimedT $ do
+    , _myThreadId = fmap (EmuThreadId . unPureThreadId) $
+                    lift $ TimedT $ view threadId
+    , _throwTo = \case
+        RealThreadId _ ->
+            error "throwTo: real and pure 'Timed' are mixed up"
+        EmuThreadId (PureThreadId -> tid) -> \e -> lift . TimedT $ do
+            -- wake up thread
             time <- use curTime
             let modifyRequired event =
                     if event ^. threadCtx . threadId == tid
                     then event & timestamp .~ time
                     else event
             events %= PQ.fromList . map modifyRequired . PQ.toList
+            -- throw (TODO: make it more efficient)
+            asyncExceptions . at tid %= (<|> Just (SomeException e))
 
-    timeout t action' = do
-        pid  <- myThreadId
+    , _timeout = \t action' -> do
+        pid  <- _myThreadId
         done <- liftIO $ newIORef False
-        schedule (after t) $
-            (liftIO (readIORef done) >>=) . flip unless $
-                throwTo pid $ MTTimeoutError "Timeout exceeded"
+        void . _fork $ do
+            _wait (for t)
+            done' <- liftIO (readIORef done)
+            unless done' $
+                _throwTo pid $ MTTimeoutError "Timeout exceeded"
         action' `finally` liftIO (writeIORef done True)
+    }
 
 -- | Name which is used by logger (see `WithNamedLogger`) if no other one was specified.
 defaultLoggerName :: LoggerName

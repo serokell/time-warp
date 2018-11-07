@@ -12,67 +12,43 @@
 -- Each function in inplementation refers to plain `IO`.
 
 module Control.TimeWarp.Timed.TimedIO
-       ( TimedIO
-       , runTimedIO
+       ( timedIOCap
        ) where
 
-import qualified Control.Concurrent                as C
-import           Control.Monad.Base                (MonadBase)
-import           Control.Monad.Catch               (MonadCatch, MonadMask, MonadThrow,
-                                                    throwM)
-import           Control.Monad.Reader              (ReaderT (..), ask, runReaderT)
-import           Control.Monad.Trans               (MonadIO, lift, liftIO)
-import           Control.Monad.Trans.Control       (MonadBaseControl, StM, liftBaseWith,
-                                                    restoreM)
-import           Data.Time.Clock.POSIX             (getPOSIXTime)
-import           Data.Time.Units                   (toMicroseconds)
-import qualified System.Timeout                    as T
+import qualified Control.Concurrent as C
+import Control.Monad.Catch (throwM)
+import Control.Monad.Fix (fix)
+import Control.Monad.Reader (ReaderT (..), ask, runReaderT)
+import Control.Monad.Trans (MonadIO, lift, liftIO)
+import Data.Time.Clock.POSIX (getPOSIXTime)
+import Data.Time.Units (toMicroseconds)
+import Monad.Capabilities (CapImpl (..))
+import qualified System.Timeout as T
 
-import           Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimed (..),
-                                                    MonadTimedError (MTTimeoutError),
-                                                    ThreadId)
+import Control.TimeWarp.Timed.MonadTimed (Microsecond, MonadTimedError (MTTimeoutError),
+                                          ThreadId (..), Timed (..))
 
 -- | Default implementation for `IO`, i.e. real mode.
 -- `wait` refers to `Control.Concurrent.threadDelay`,
 -- `fork` refers to `Control.Concurrent.forkIO`, and so on.
-newtype TimedIO a = TimedIO
-    { -- Reader's environment stores the /origin/ point and logger name for
-      -- `WithNamedLogger` instance.
-      getTimedIO :: ReaderT Microsecond IO a
-    } deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch,
-               MonadBase IO, MonadMask)
-
-instance MonadBaseControl IO TimedIO where
-    type StM TimedIO a = a
-
-    liftBaseWith f = TimedIO $ liftBaseWith $ \g -> f $ g . getTimedIO
-
-    restoreM = TimedIO . restoreM
-
-type instance ThreadId TimedIO = C.ThreadId
-
-instance MonadTimed TimedIO where
-    virtualTime = TimedIO $ (-) <$> lift curTime <*> ask
-
-    currentTime = TimedIO $ lift curTime
-
-    wait relativeToNow = do
-        cur <- virtualTime
-        liftIO $ C.threadDelay $ fromIntegral $ relativeToNow cur - cur
-
-    fork (TimedIO a) = TimedIO $ lift . C.forkIO . runReaderT a =<< ask
-
-    myThreadId = TimedIO $ lift $ C.myThreadId
-
-    throwTo tid e = TimedIO $ lift $ C.throwTo tid e
-
-    timeout (toMicroseconds -> t) (TimedIO action) = TimedIO $ do
-        res <- liftIO . T.timeout (fromIntegral t) . runReaderT action =<< ask
-        maybe (throwM $ MTTimeoutError "Timeout has exceeded") return res
-
--- | Launches scenario using real time and threads.
-runTimedIO :: TimedIO a -> IO a
-runTimedIO = (curTime >>= ) . runReaderT . getTimedIO
+timedIOCap :: MonadIO m => m (CapImpl Timed '[] IO)
+timedIOCap = do
+    startTime <- liftIO curTime
+    return $ CapImpl $ fix $ \timed -> Timed
+        { _virtualTime = (-) <$> lift curTime <*> pure startTime
+        , _currentTime = lift curTime
+        , _wait = \relTime -> do
+            cur <- _virtualTime timed
+            liftIO $ C.threadDelay $ fromIntegral $ relTime cur - cur
+        , _fork = \act -> lift . fmap RealThreadId . C.forkIO . runReaderT act =<< ask
+        , _myThreadId = RealThreadId <$> lift C.myThreadId
+        , _throwTo = \case
+            RealThreadId tid -> lift . C.throwTo tid
+            _ -> error "throwTo: real and pure 'Timed' are mixed up"
+        , _timeout = \(toMicroseconds -> t) action -> do
+            res <- liftIO . T.timeout (fromIntegral t) . runReaderT action =<< ask
+            maybe (throwM $ MTTimeoutError "Timeout has exceeded") return res
+        }
 
 curTime :: IO Microsecond
 curTime = round . ( * 1000000) <$> getPOSIXTime

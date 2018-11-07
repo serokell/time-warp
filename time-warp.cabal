@@ -19,7 +19,6 @@ library
 
                      , Control.TimeWarp.Rpc
                      , Control.TimeWarp.Rpc.Delays
-                     , Control.TimeWarp.Rpc.ExtOpts
                      , Control.TimeWarp.Rpc.MonadRpc
                      , Control.TimeWarp.Rpc.MsgPackRpc
                      , Control.TimeWarp.Rpc.MsgPackUdp
@@ -84,6 +83,8 @@ library
                      , LambdaCase
                      , StandaloneDeriving
                      , TupleSections
+                     , DataKinds
+                     , ConstraintKinds
 
 test-suite time-warp-test
   main-is:             Test.hs
