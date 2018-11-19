@@ -39,7 +39,7 @@ create a new issue.
 
 ## For Contributors [↑](#time-warp)
 
-Please see [CONTRIBUTING.md](CONTRIBUTING.md) for more information.
+Please see [CONTRIBUTING.md](/.github/CONTRIBUTING.md) for more information.
 
 ## About Serokell [↑](#time-warp)
 
